@@ -1,0 +1,16 @@
+{
+  "id": "SIG_GBPUSD_001",
+  "pair": "GBPUSD",
+  "trade_type": "BUY",
+  "order_type": "MARKET",
+  "entry_price": 0,
+  "stop_loss": 1.34750,
+  "take_profit": 1.35200,
+  "take_profit_2": 1.35500,
+  "lot_size": 0.01,
+  "comment": "AutoBot_GBP",
+  "magic_number": 999001,
+  "expiry_minutes": 60,
+  "move_sl_to_be_after_tp1": true,
+  "sl_to_be_trigger_pct": 0.6
+}
