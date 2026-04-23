@@ -36,6 +36,8 @@ namespace MT5TradingBot.Services
 
         // ── State ─────────────────────────────────────────────────
         private readonly HashSet<string> _processing = [];   // files currently being handled
+        private readonly HashSet<long> _slMovedTickets = []; // tickets where SL was already moved to BE
+        private readonly Dictionary<long, LivePosition> _knownPositions = []; // for close detection
         private volatile bool _running;
         private int _tradesToday;
         private DateTime _dayReset = DateTime.Today;
@@ -50,10 +52,15 @@ namespace MT5TradingBot.Services
         public bool IsRunning => _running;
 
         // ── Paths ─────────────────────────────────────────────────
-        private string ExecutedDir => Path.Combine(_cfg.WatchFolder, "executed");
-        private string RejectedDir => Path.Combine(_cfg.WatchFolder, "rejected");
-        private string ErrorDir    => Path.Combine(_cfg.WatchFolder, "error");
-        private string LogFile     => Path.Combine(_cfg.WatchFolder, "trade_history.csv");
+        private string ExecutedDir    => Path.Combine(_cfg.WatchFolder, "executed");
+        private string RejectedDir    => Path.Combine(_cfg.WatchFolder, "rejected");
+        private string ErrorDir       => Path.Combine(_cfg.WatchFolder, "error");
+        private string LogFile        => Path.Combine(_cfg.WatchFolder, "trade_history.csv");
+        private string ProcessedIdsFile => Path.Combine(_cfg.WatchFolder, "processed_ids.txt");
+
+        // ── Processed signal ID registry ──────────────────────────
+        // Key: signal ID, Value: UTC timestamp when processed
+        private readonly Dictionary<string, DateTime> _processedIds = [];
 
         // ═════════════════════════════════════════════════════════
         public AutoBotService(MT5Bridge bridge, BotConfig cfg)
@@ -74,6 +81,7 @@ namespace MT5TradingBot.Services
 
             EnsureFolders();
             EnsureTradeLogHeader();
+            LoadProcessedIds();
 
             // Capture baseline equity for drawdown protection
             var account = await _bridge.GetAccountInfoAsync().ConfigureAwait(false);
@@ -130,6 +138,7 @@ namespace MT5TradingBot.Services
                         _emergencyStopFired = false;
                         var acct = await _bridge.GetAccountInfoAsync().ConfigureAwait(false);
                         _startOfDayEquity = acct?.Equity ?? _startOfDayEquity;
+                        PruneProcessedIds();
                         Log("📅 Daily counters reset");
                     }
 
@@ -139,6 +148,9 @@ namespace MT5TradingBot.Services
 
                     // SL → Breakeven
                     await CheckSLToBreakevenAsync().ConfigureAwait(false);
+
+                    // Detect and log closed positions
+                    await CheckClosedPositionsAsync().ConfigureAwait(false);
 
                     // Poll for unprocessed files (watcher backup)
                     await PollFolderAsync().ConfigureAwait(false);
@@ -234,8 +246,19 @@ namespace MT5TradingBot.Services
                     return;
                 }
 
+                // Duplicate signal ID check (survives restarts)
+                if (_processedIds.ContainsKey(request.Id))
+                {
+                    Log($"⏭ Duplicate signal ID [{request.Id}] already processed — skipping");
+                    Archive(path, RejectedDir);
+                    return;
+                }
+
                 Log($"📄 Signal: {request}");
                 result = await ExecuteWithRetryAsync(request).ConfigureAwait(false);
+
+                // Record ID after any execution attempt (success or rejection — not error)
+                RecordProcessedId(request.Id);
 
                 Archive(path, result.IsSuccess ? ExecutedDir : RejectedDir);
                 LogTrade(request, result);
@@ -304,6 +327,15 @@ namespace MT5TradingBot.Services
                 var (valid, validErr) = request.Validate();
                 if (!valid) return Fail(request.Id, "VALIDATION", validErr);
 
+                // ── 1b. Signal age check ───────────────────────────
+                if (request.ExpiryMinutes > 0)
+                {
+                    double ageMinutes = (DateTime.UtcNow - request.CreatedAt).TotalMinutes;
+                    if (ageMinutes > request.ExpiryMinutes)
+                        return Fail(request.Id, "SIGNAL_EXPIRED",
+                            $"Signal is {ageMinutes:F0} min old (limit {request.ExpiryMinutes} min). Discard.");
+                }
+
                 // ── 2. Pair allowlist ──────────────────────────────
                 if (_cfg.AllowedPairs.Count > 0 &&
                     !_cfg.AllowedPairs.Contains(request.Pair.ToUpperInvariant()))
@@ -320,29 +352,32 @@ namespace MT5TradingBot.Services
                 if (account == null)
                     return Fail(request.Id, "NO_ACCOUNT", "Could not fetch account info from MT5");
 
-                // ── 5. Auto lot calculation ────────────────────────
+                // ── 5. Fetch live symbol info (price + spread) ─────
+                // Single call reused for auto-lot, R:R, portfolio risk, and spread check.
+                var symbolInfo = await _bridge.GetSymbolInfoAsync(request.Pair).ConfigureAwait(false);
+
+                // Real market price: Ask for BUY, Bid for SELL
+                double livePrice = symbolInfo != null
+                    ? (request.TradeType == Models.TradeType.BUY ? symbolInfo.Ask : symbolInfo.Bid)
+                    : 0;
+
+                double refEntry = request.EntryPrice > 0 ? request.EntryPrice
+                                : livePrice > 0          ? livePrice
+                                : EstimateMarketPrice(request); // last-resort fallback
+
+                // ── 6. Auto lot calculation ────────────────────────
                 if (_cfg.AutoLotCalculation)
                 {
-                    double refPrice = request.EntryPrice > 0
-                        ? request.EntryPrice
-                        : EstimateMarketPrice(request);
-
                     request.LotSize = LotCalculator.Calculate(
-                        account.Equity,
-                        _cfg.MaxRiskPercent,
-                        refPrice,
-                        request.StopLoss,
-                        request.Pair);
+                        account.Equity, _cfg.MaxRiskPercent,
+                        refEntry, request.StopLoss, request.Pair);
 
                     Log($"📊 Auto lot: {request.LotSize:F2} " +
-                        $"(${LotCalculator.DollarRisk(request.LotSize, refPrice, request.StopLoss, request.Pair):F2} risk)");
+                        $"(${LotCalculator.DollarRisk(request.LotSize, refEntry, request.StopLoss, request.Pair):F2} risk)" +
+                        (livePrice > 0 ? $" @ live {(request.TradeType == Models.TradeType.BUY ? "Ask" : "Bid")} {livePrice:F5}" : " @ estimated price"));
                 }
 
-                // ── 6. R:R check ───────────────────────────────────
-                double refEntry = request.EntryPrice > 0
-                    ? request.EntryPrice
-                    : EstimateMarketPrice(request);
-
+                // ── 7. R:R check ───────────────────────────────────
                 double rr = LotCalculator.RiskRewardRatio(refEntry, request.StopLoss, request.TakeProfit);
                 if (_cfg.EnforceRR && rr < _cfg.MinRRRatio)
                     return Fail(request.Id, "REJECTED_CONFIG",
@@ -351,12 +386,94 @@ namespace MT5TradingBot.Services
                 if (rr < _cfg.MinRRRatio)
                     Log($"⚠ R:R {rr:F2} below minimum {_cfg.MinRRRatio:F2} — proceeding (enforce_rr=false)");
 
-                // ── 7. Margin check ────────────────────────────────
+                // ── 8. Margin check ────────────────────────────────
                 if (account.FreeMargin < account.Balance * 0.05)
                     return Fail(request.Id, "LOW_MARGIN",
                         $"Free margin ${account.FreeMargin:F2} is critically low");
 
-                // ── 8. Execute ─────────────────────────────────────
+                // ── 9. Total portfolio risk cap ────────────────────
+                if (_cfg.MaxTotalRiskPercent > 0 && account.Equity > 0)
+                {
+                    var openPositions = await _bridge.GetPositionsAsync().ConfigureAwait(false);
+                    double totalOpenRisk = openPositions
+                        .Where(p => p.StopLoss > 0)
+                        .Sum(p => LotCalculator.DollarRisk(p.Lots, p.OpenPrice, p.StopLoss, p.Symbol));
+
+                    double newTradeRisk = LotCalculator.DollarRisk(
+                        request.LotSize, refEntry, request.StopLoss, request.Pair);
+
+                    double totalRiskPct = (totalOpenRisk + newTradeRisk) / account.Equity * 100.0;
+
+                    if (totalRiskPct > _cfg.MaxTotalRiskPercent)
+                        return Fail(request.Id, "PORTFOLIO_RISK_CAP",
+                            $"Total risk would be {totalRiskPct:F1}% (${totalOpenRisk + newTradeRisk:F0}) — cap is {_cfg.MaxTotalRiskPercent:F1}%");
+
+                    Log($"📊 Portfolio risk: {totalRiskPct:F1}% / {_cfg.MaxTotalRiskPercent:F1}% cap");
+                }
+
+                // ── 10. Spread check ───────────────────────────────
+                if (_cfg.MaxSpreadPips > 0)
+                {
+                    if (symbolInfo != null)
+                    {
+                        if (symbolInfo.SpreadPips > _cfg.MaxSpreadPips)
+                            return Fail(request.Id, "HIGH_SPREAD",
+                                $"{request.Pair} spread {symbolInfo.SpreadPips:F1} pips exceeds max {_cfg.MaxSpreadPips:F1} pips");
+
+                        Log($"📡 Spread: {symbolInfo.SpreadPips:F1} pips (max {_cfg.MaxSpreadPips:F1})");
+                    }
+                    else
+                    {
+                        Log($"⚠ Could not fetch spread for {request.Pair} — proceeding without check");
+                    }
+                }
+
+                // ── 11. Execute ────────────────────────────────────
+                bool hasTp2 = request.TakeProfit2 > 0;
+
+                if (hasTp2)
+                {
+                    // Split into two half-lot positions: TP1 + TP2
+                    double halfLot = Math.Max(0.01, Math.Round(request.LotSize / 2.0, 2));
+                    Log($"⚡ TP2 split: 2 × {halfLot:F2} lots — TP1:{request.TakeProfit:F5} TP2:{request.TakeProfit2:F5}");
+
+                    var req1 = ShallowClone(request);
+                    req1.LotSize = halfLot;
+                    req1.TakeProfit = request.TakeProfit;
+                    req1.Comment = request.Comment + "_TP1";
+
+                    var req2 = ShallowClone(request);
+                    req2.LotSize = halfLot;
+                    req2.TakeProfit = request.TakeProfit2;
+                    req2.Comment = request.Comment + "_TP2";
+
+                    var r1 = await _bridge.OpenTradeAsync(req1).ConfigureAwait(false);
+                    if (r1.IsSuccess)
+                    {
+                        _tradesToday++;
+                        Log($"✅ TP1 #{r1.Ticket} filled @ {r1.ExecutedPrice:F5}");
+                    }
+                    else
+                    {
+                        Log($"❌ TP1 rejected: {r1.ErrorMessage}");
+                        return r1; // don't open TP2 if TP1 failed
+                    }
+
+                    var r2 = await _bridge.OpenTradeAsync(req2).ConfigureAwait(false);
+                    if (r2.IsSuccess)
+                    {
+                        _tradesToday++;
+                        Log($"✅ TP2 #{r2.Ticket} filled @ {r2.ExecutedPrice:F5}");
+                    }
+                    else
+                    {
+                        Log($"⚠ TP2 rejected (TP1 is open): {r2.ErrorMessage}");
+                    }
+
+                    Log($"📊 Trades today: {_tradesToday}/{_cfg.MaxTradesPerDay}");
+                    return r1; // return TP1 result as the primary
+                }
+
                 Log($"⚡ Executing trade (R:R {rr:F2}, lot {request.LotSize:F2})");
                 var result = await _bridge.OpenTradeAsync(request).ConfigureAwait(false);
 
@@ -364,6 +481,21 @@ namespace MT5TradingBot.Services
                 {
                     _tradesToday++;
                     Log($"✅ #{result.Ticket} | Trades today: {_tradesToday}/{_cfg.MaxTradesPerDay}");
+
+                    // Slippage check: only for MARKET orders where we have a live reference price
+                    if (request.OrderType == OrderType.MARKET &&
+                        _cfg.MaxSlippagePips > 0 &&
+                        livePrice > 0 &&
+                        result.ExecutedPrice > 0)
+                    {
+                        double pipSize = LotCalculator.GetPipSize(request.Pair.ToUpperInvariant());
+                        double slippagePips = Math.Abs(result.ExecutedPrice - livePrice) / pipSize;
+                        if (slippagePips > _cfg.MaxSlippagePips)
+                            Log($"⚠ HIGH SLIPPAGE on #{result.Ticket}: {slippagePips:F1} pips " +
+                                $"(expected {livePrice:F5}, filled {result.ExecutedPrice:F5})");
+                        else
+                            Log($"📌 Slippage: {slippagePips:F1} pips (max {_cfg.MaxSlippagePips:F1})");
+                    }
                 }
                 else
                 {
@@ -387,25 +519,33 @@ namespace MT5TradingBot.Services
             try { positions = await _bridge.GetPositionsAsync().ConfigureAwait(false); }
             catch { return; }
 
+            // Prune tickets that are no longer open
+            var openTickets = new HashSet<long>(positions.Select(p => p.Ticket));
+            _slMovedTickets.IntersectWith(openTickets);
+
             foreach (var pos in positions)
             {
                 if (pos.MagicNumber != _cfg.MagicNumber) continue;
-                if (pos.SlMovedToBreakeven) continue;
 
-                // Skip if SL already at or past breakeven
+                // Skip if we already moved SL to BE for this ticket this session
+                if (_slMovedTickets.Contains(pos.Ticket)) continue;
+
+                // Skip if SL is already at or past breakeven on the broker side
                 bool alreadyAtBE = pos.Type == Models.TradeType.BUY
                     ? pos.StopLoss >= pos.OpenPrice - 0.00001
                     : pos.StopLoss <= pos.OpenPrice + 0.00001;
-                if (alreadyAtBE) continue;
+                if (alreadyAtBE)
+                {
+                    _slMovedTickets.Add(pos.Ticket); // broker already has it, don't check again
+                    continue;
+                }
 
                 double tpDistance = Math.Abs(pos.TakeProfit - pos.OpenPrice);
                 double currentMove = pos.Type == Models.TradeType.BUY
                     ? pos.CurrentPrice - pos.OpenPrice
                     : pos.OpenPrice - pos.CurrentPrice;
 
-                // Use configurable trigger (default 60% of TP)
-                double triggerPct = 0.6;
-                bool shouldMoveSL = currentMove >= tpDistance * triggerPct;
+                bool shouldMoveSL = currentMove >= tpDistance * 0.6;
 
                 if (shouldMoveSL)
                 {
@@ -415,11 +555,63 @@ namespace MT5TradingBot.Services
                         pos.Ticket, pos.OpenPrice, pos.TakeProfit).ConfigureAwait(false);
                     if (ok)
                     {
-                        pos.SlMovedToBreakeven = true;
+                        _slMovedTickets.Add(pos.Ticket); // persist across heartbeat ticks
                         Log($"✅ SL moved to breakeven for #{pos.Ticket}");
                     }
                 }
             }
+        }
+
+        // ══════════════════════════════════════════════════════════
+        //  CLOSED POSITION DETECTION
+        // ══════════════════════════════════════════════════════════
+
+        private async Task CheckClosedPositionsAsync()
+        {
+            if (!_bridge.IsConnected) return;
+            List<LivePosition> current;
+            try { current = await _bridge.GetPositionsAsync().ConfigureAwait(false); }
+            catch { return; }
+
+            var currentTickets = new HashSet<long>(current.Select(p => p.Ticket));
+
+            foreach (var kv in _knownPositions)
+            {
+                if (!currentTickets.Contains(kv.Key))
+                {
+                    var closed = kv.Value;
+                    Log($"📕 Closed: #{closed.Ticket} {closed.Symbol} {closed.Type} " +
+                        $"P&L: ${closed.Profit:F2}");
+                    LogClose(closed);
+                }
+            }
+
+            // Update snapshot: add new positions, remove closed ones
+            foreach (var pos in current)
+                _knownPositions[pos.Ticket] = pos;
+
+            foreach (var t in _knownPositions.Keys.Except(currentTickets).ToList())
+                _knownPositions.Remove(t);
+        }
+
+        private void LogClose(LivePosition pos)
+        {
+            try
+            {
+                string line = string.Join(",",
+                    DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss"),
+                    "CLOSE", pos.Symbol, pos.Type,
+                    pos.Lots.ToString("F2"),
+                    pos.OpenPrice.ToString("F5"),
+                    pos.StopLoss.ToString("F5"),
+                    pos.TakeProfit.ToString("F5"),
+                    pos.Ticket, "Closed",
+                    pos.CurrentPrice.ToString("F5"),
+                    $"\"P&L: ${pos.Profit:F2}\"");
+
+                File.AppendAllText(LogFile, line + Environment.NewLine);
+            }
+            catch (Exception ex) { Log($"LogClose error: {ex.Message}"); }
         }
 
         // ══════════════════════════════════════════════════════════
@@ -516,11 +708,14 @@ namespace MT5TradingBot.Services
 
         private static double EstimateMarketPrice(TradeRequest r)
         {
-            // Rough estimate when entry=0 for auto-lot calculation
+            // Last-resort estimate when entry=0 and symbol info unavailable
             return r.TradeType == Models.TradeType.BUY
                 ? r.StopLoss * 1.002
                 : r.StopLoss * 0.998;
         }
+
+        private static TradeRequest ShallowClone(TradeRequest r) =>
+            JsonConvert.DeserializeObject<TradeRequest>(JsonConvert.SerializeObject(r))!;
 
         private static TradeResult Fail(string reqId, string code, string msg)
         {
@@ -535,6 +730,47 @@ namespace MT5TradingBot.Services
             Directory.CreateDirectory(ExecutedDir);
             Directory.CreateDirectory(RejectedDir);
             Directory.CreateDirectory(ErrorDir);
+        }
+
+        // ── Processed ID persistence ──────────────────────────────
+
+        private void LoadProcessedIds()
+        {
+            _processedIds.Clear();
+            if (!File.Exists(ProcessedIdsFile)) return;
+            try
+            {
+                foreach (var line in File.ReadAllLines(ProcessedIdsFile))
+                {
+                    var parts = line.Split('\t');
+                    if (parts.Length == 2 && DateTime.TryParse(parts[1], out var ts))
+                        _processedIds[parts[0]] = ts;
+                }
+                Log($"📋 Loaded {_processedIds.Count} processed signal IDs");
+            }
+            catch (Exception ex) { Log($"ProcessedIds load error: {ex.Message}"); }
+        }
+
+        private void RecordProcessedId(string id)
+        {
+            _processedIds[id] = DateTime.UtcNow;
+            try { File.AppendAllText(ProcessedIdsFile, $"{id}\t{DateTime.UtcNow:O}{Environment.NewLine}"); }
+            catch (Exception ex) { Log($"ProcessedIds write error: {ex.Message}"); }
+        }
+
+        private void PruneProcessedIds()
+        {
+            var cutoff = DateTime.UtcNow.AddDays(-7);
+            var stale = _processedIds.Where(kv => kv.Value < cutoff).Select(kv => kv.Key).ToList();
+            foreach (var k in stale) _processedIds.Remove(k);
+
+            try
+            {
+                var lines = _processedIds.Select(kv => $"{kv.Key}\t{kv.Value:O}");
+                File.WriteAllLines(ProcessedIdsFile, lines);
+                if (stale.Count > 0) Log($"🗑 Pruned {stale.Count} old signal IDs from registry");
+            }
+            catch (Exception ex) { Log($"ProcessedIds prune error: {ex.Message}"); }
         }
 
         private void Log(string msg)

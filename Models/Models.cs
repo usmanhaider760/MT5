@@ -238,10 +238,18 @@ namespace MT5TradingBot.Models
         public bool AutoStartOnLaunch { get; set; } = false;
 
         [JsonProperty("emergency_close_all_on_drawdown_pct")]
-        public double EmergencyCloseDrawdownPct { get; set; } = 10.0; // close all if equity drops 10%
+        public double EmergencyCloseDrawdownPct { get; set; } = 10.0;
 
         [JsonProperty("drawdown_protection_enabled")]
         public bool DrawdownProtectionEnabled { get; set; } = true;
+
+        /// <summary>Max total risk across ALL open positions as % of equity. 0 = disabled.</summary>
+        [JsonProperty("max_total_risk_percent")]
+        public double MaxTotalRiskPercent { get; set; } = 5.0;
+
+        /// <summary>Warn if market order fills more than this many pips from expected price. 0 = disabled.</summary>
+        [JsonProperty("max_slippage_pips")]
+        public double MaxSlippagePips { get; set; } = 3.0;
     }
 
     // ══════════════════════════════════════════════════════════════
@@ -301,9 +309,78 @@ namespace MT5TradingBot.Models
     {
         public MT5Settings Mt5 { get; set; } = new();
         public BotConfig Bot { get; set; } = new();
+        public ClaudeConfig Claude { get; set; } = new();
         public string Theme { get; set; } = "Dark";
         public bool AutoConnectOnLaunch { get; set; } = false;
         public DateTime LastSaved { get; set; } = DateTime.UtcNow;
+    }
+
+    // ══════════════════════════════════════════════════════════════
+    //  SYMBOL INFO  — live spread + pricing from MT5
+    // ══════════════════════════════════════════════════════════════
+
+    public sealed class SymbolInfo
+    {
+        public string Symbol { get; set; } = "";
+        public double Ask { get; set; }
+        public double Bid { get; set; }
+        public double Spread { get; set; }   // in points (MT5 native unit)
+        public double MinLot { get; set; }
+        public double MaxLot { get; set; }
+        public int Digits { get; set; }
+
+        /// <summary>Spread converted to pips (1 pip = 10 points for 5-decimal pairs)</summary>
+        public double SpreadPips => Digits == 3 || Digits == 5 ? Spread / 10.0 : Spread;
+    }
+
+    // ══════════════════════════════════════════════════════════════
+    //  CLAUDE AI CONFIG
+    // ══════════════════════════════════════════════════════════════
+
+    public sealed class ClaudeConfig
+    {
+        [JsonProperty("enabled")]
+        public bool Enabled { get; set; } = false;
+
+        [JsonProperty("api_key")]
+        public string ApiKey { get; set; } = "";
+
+        [JsonProperty("model")]
+        public string Model { get; set; } = "claude-opus-4-7";
+
+        [JsonProperty("poll_interval_seconds")]
+        public int PollIntervalSeconds { get; set; } = 60;
+
+        [JsonProperty("watch_symbols")]
+        public List<string> WatchSymbols { get; set; } = ["GBPUSD", "EURUSD", "USDJPY"];
+
+        [JsonProperty("system_prompt")]
+        public string SystemPrompt { get; set; } = DefaultPrompt;
+
+        public static readonly string DefaultPrompt =
+            "You are a professional FX trading analyst. Analyze the live market data and decide whether to trade.\n\n" +
+            "RULES:\n" +
+            "- Only trade with clear, high-probability setups\n" +
+            "- Minimum R:R = 1.5:1\n" +
+            "- Use key support/resistance for SL and TP\n" +
+            "- Return ONLY a JSON object — no markdown, no extra text\n\n" +
+            "If NO clear setup:\n" +
+            "{\"action\":\"NO_TRADE\",\"reason\":\"your reason\"}\n\n" +
+            "If you identify a trade:\n" +
+            "{\n" +
+            "  \"action\":\"TRADE\",\n" +
+            "  \"pair\":\"GBPUSD\",\n" +
+            "  \"trade_type\":\"BUY\",\n" +
+            "  \"order_type\":\"MARKET\",\n" +
+            "  \"entry_price\":0,\n" +
+            "  \"stop_loss\":1.34750,\n" +
+            "  \"take_profit\":1.35200,\n" +
+            "  \"take_profit_2\":1.35600,\n" +
+            "  \"lot_size\":0.01,\n" +
+            "  \"comment\":\"Claude_AI\",\n" +
+            "  \"magic_number\":999001,\n" +
+            "  \"move_sl_to_be_after_tp1\":true\n" +
+            "}";
     }
 
     // ══════════════════════════════════════════════════════════════

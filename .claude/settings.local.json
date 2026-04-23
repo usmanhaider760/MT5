@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(dotnet build *)",
+      "Skill(claude-api)",
+      "Skill(claude-api:*)",
+      "Bash(dotnet add *)",
+      "Bash(dir \"C:\\\\Users\\\\usman\\\\.nuget\\\\packages\\\\anthropic\\\\12.16.0\\\\lib\\\\net8.0\\\\\" 2>&1 | head -20)"
+    ]
+  }
+}

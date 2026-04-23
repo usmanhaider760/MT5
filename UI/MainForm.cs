@@ -11,6 +11,7 @@ namespace MT5TradingBot.UI
         // ── Services ──────────────────────────────────────────────
         private MT5Bridge? _bridge;
         private AutoBotService? _bot;
+        private ClaudeSignalService? _claude;
         private readonly SettingsManager _settings = new();
         private AppSettings _cfg = new();
 
@@ -29,60 +30,20 @@ namespace MT5TradingBot.UI
         private static readonly Color C_MUTED   = Color.FromArgb(110, 110, 130);
         private static readonly Color C_BORDER  = Color.FromArgb(45, 45, 65);
 
-        // ── Control references (set in Build*) ────────────────────
-
-        // Header
-        private Panel _pnlDot = null!;
-        private Label _lblConnStatus = null!;
-        private Label _lblTime = null!;
-
-        // Account bar
-        private Label _lblAccNum = null!, _lblBalance = null!, _lblEquity = null!;
-        private Label _lblFreeMargin = null!, _lblPnl = null!, _lblMarginLvl = null!;
-
-        // Connection
-        private ComboBox _cmbMode = null!;
-        private TextBox _txtPipeName = null!;
-        private Button _btnConnect = null!;
-        private Button _btnDisconnect = null!;
-
-        // Trade tab
-        private ComboBox _cmbPair = null!, _cmbDir = null!, _cmbOrderType = null!;
-        private TextBox _txtEntry = null!, _txtSL = null!, _txtTP = null!;
-        private TextBox _txtTP2 = null!, _txtLot = null!;
-        private CheckBox _chkAutoLot = null!, _chkMoveSLBE = null!;
-        private Label _lblRR = null!, _lblDollarRisk = null!, _lblDollarProfit = null!;
-        private Button _btnBuy = null!, _btnSell = null!;
-        private RichTextBox _txtJson = null!;
-
-        // Positions tab
-        private DataGridView _gridPos = null!;
-
-        // History tab
-        private DataGridView _gridHistory = null!;
-
-        // Bot tab
-        private TextBox _txtWatchFolder = null!;
-        private NumericUpDown _nudRisk = null!, _nudMaxTrades = null!, _nudPollMs = null!;
-        private TextBox _txtAllowedPairs = null!;
-        private CheckBox _chkAutoLotBot = null!, _chkEnforceRR = null!;
-        private CheckBox _chkDrawdown = null!, _chkAutoStart = null!;
-        private NumericUpDown _nudMinRR = null!, _nudDrawdownPct = null!;
-        private NumericUpDown _nudRetry = null!;
-        private Button _btnStartBot = null!, _btnStopBot = null!;
-        private Label _lblBotBadge = null!;
-
-        // Log
-        private RichTextBox _txtLog = null!;
-
         // ═══════════════════════════════════════════════════════════
         public MainForm()
         {
             _refreshTimer = new System.Windows.Forms.Timer { Interval = 2500 };
             _refreshTimer.Tick += async (_, _) => await OnRefreshTickAsync();
 
-            BuildUI();
-            _ = InitAsync();
+            InitializeComponent();
+
+            if (!DesignMode)
+            {
+                _txtJson.Text = DefaultJsonSample();
+                _clockTimer.Start();
+                _ = InitAsync();
+            }
         }
 
         private async Task InitAsync()
@@ -98,439 +59,6 @@ namespace MT5TradingBot.UI
                 await StartBotAsync();
 
             Log("MT5 Trading Bot ready. Connect to MT5 to begin.", C_ACCENT);
-        }
-
-        // ══════════════════════════════════════════════════════════
-        //  BUILD UI
-        // ══════════════════════════════════════════════════════════
-
-        private void BuildUI()
-        {
-            Text = "MT5 Trading Bot — Professional";
-            Size = new Size(1280, 860);
-            MinimumSize = new Size(1100, 720);
-            StartPosition = FormStartPosition.CenterScreen;
-            BackColor = C_BG;
-            ForeColor = C_TEXT;
-            Font = new Font("Segoe UI", 9f);
-            DoubleBuffered = true;
-
-            var layout = new TableLayoutPanel
-            {
-                Dock = DockStyle.Fill,
-                RowCount = 4, ColumnCount = 1
-            };
-            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 52));  // header
-            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 40));  // conn bar
-            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 38));  // account bar
-            layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));  // tabs
-
-            layout.Controls.Add(BuildHeader(),     0, 0);
-            layout.Controls.Add(BuildConnBar(),    0, 1);
-            layout.Controls.Add(BuildAccountBar(), 0, 2);
-            layout.Controls.Add(BuildTabs(),       0, 3);
-
-            Controls.Add(layout);
-            FormClosing += OnFormClosingAsync;
-        }
-
-        // ── Header ────────────────────────────────────────────────
-        private Control BuildHeader()
-        {
-            var p = new Panel { Dock = DockStyle.Fill, BackColor = C_SURFACE };
-
-            var title = Lbl("⚡  MT5 Trading Bot", 16, 14,
-                new Font("Segoe UI Semibold", 14f, FontStyle.Bold), C_ACCENT);
-
-            _pnlDot = new Panel
-            {
-                Size = new Size(10, 10), BackColor = C_RED,
-                Location = new Point(230, 21)
-            };
-            RoundPanel(_pnlDot);
-
-            _lblConnStatus = Lbl("Disconnected", 246, 18, null, C_RED);
-
-            _lblTime = Lbl("", 900, 18, new Font("Consolas", 8.5f), C_MUTED);
-
-            var clockTimer = new System.Windows.Forms.Timer { Interval = 1000 };
-            clockTimer.Tick += (_, _) =>
-                _lblTime.Text = $"UTC {DateTime.UtcNow:HH:mm:ss}  |  Local {DateTime.Now:HH:mm:ss}";
-            clockTimer.Start();
-
-            p.Controls.AddRange([title, _pnlDot, _lblConnStatus, _lblTime]);
-            return p;
-        }
-
-        // ── Connection bar ────────────────────────────────────────
-        private Control BuildConnBar()
-        {
-            var p = new Panel { Dock = DockStyle.Fill, BackColor = C_CARD };
-
-            _cmbMode = Cmb(["Named Pipe (Local MT5)", "TCP Socket (Remote)"], 10, 8, 180);
-            var lblPipe = Lbl("Pipe/Host:", 200, 12, null, C_MUTED);
-            _txtPipeName = Txt("MT5TradingBotPipe", 270, 7, 220);
-
-            _btnConnect = Btn("⚡ Connect", 502, 7, 110, C_GREEN);
-            _btnDisconnect = Btn("Disconnect", 622, 7, 100, C_RED);
-            _btnDisconnect.Enabled = false;
-
-            var chkAutoConn = new CheckBox
-            {
-                Text = "Auto-connect on launch", ForeColor = C_MUTED,
-                Location = new Point(734, 10), AutoSize = true
-            };
-            chkAutoConn.CheckedChanged += (_, _) =>
-                _cfg.AutoConnectOnLaunch = chkAutoConn.Checked;
-
-            _btnConnect.Click    += async (_, _) => await ConnectAsync();
-            _btnDisconnect.Click += async (_, _) => await DisconnectAsync();
-
-            p.Controls.AddRange([_cmbMode, lblPipe, _txtPipeName,
-                _btnConnect, _btnDisconnect, chkAutoConn]);
-            return p;
-        }
-
-        // ── Account bar ───────────────────────────────────────────
-        private Control BuildAccountBar()
-        {
-            var p = new Panel { Dock = DockStyle.Fill, BackColor = C_SURFACE };
-
-            _lblAccNum     = Lbl("Account: —",          8,  12, null, C_MUTED);
-            _lblBalance    = Lbl("Balance: —",          170, 12, null, C_TEXT);
-            _lblEquity     = Lbl("Equity: —",           300, 12, null, C_TEXT);
-            _lblFreeMargin = Lbl("Free Margin: —",      430, 12, null, C_TEXT);
-            _lblPnl        = Lbl("P&L: —",              580, 12, null, C_TEXT);
-            _lblMarginLvl  = Lbl("Margin Lvl: —",       680, 12, null, C_MUTED);
-
-            p.Controls.AddRange([_lblAccNum, _lblBalance, _lblEquity,
-                _lblFreeMargin, _lblPnl, _lblMarginLvl]);
-            return p;
-        }
-
-        // ── Tabs ──────────────────────────────────────────────────
-        private Control BuildTabs()
-        {
-            var tc = new TabControl
-            {
-                Dock = DockStyle.Fill, DrawMode = TabDrawMode.OwnerDrawFixed,
-                Padding = new Point(14, 6)
-            };
-            tc.DrawItem += DrawTabItem;
-            tc.BackColor = C_BG;
-
-            tc.TabPages.Add(BuildTradeTab());
-            tc.TabPages.Add(BuildPositionsTab());
-            tc.TabPages.Add(BuildHistoryTab());
-            tc.TabPages.Add(BuildBotTab());
-            tc.TabPages.Add(BuildLogTab());
-
-            return tc;
-        }
-
-        // ── TRADE TAB ─────────────────────────────────────────────
-        private TabPage BuildTradeTab()
-        {
-            var tab = Tab("  📈 Trade  ");
-
-            // Left card: form inputs
-            var left = Card(12, 8, 370, 680);
-
-            int y = 14;
-            left.Controls.Add(CardH("Manual Trade Entry", 14, y)); y += 36;
-
-            left.Controls.Add(Lbl("Pair", 14, y, null, C_MUTED));
-            _cmbPair = Cmb(["GBPUSD","EURUSD","USDJPY","XAUUSD","USDCAD","AUDUSD","EURGBP"],
-                130, y - 2, 210);
-            _cmbPair.SelectedIndexChanged += (_, _) => RecalcRR();
-            left.Controls.Add(_cmbPair); y += 32;
-
-            left.Controls.Add(Lbl("Direction", 14, y, null, C_MUTED));
-            _cmbDir = Cmb(["BUY", "SELL"], 130, y - 2, 210);
-            _cmbDir.SelectedIndexChanged += (_, _) => { UpdateBuySellColors(); RecalcRR(); };
-            left.Controls.Add(_cmbDir); y += 32;
-
-            left.Controls.Add(Lbl("Order Type", 14, y, null, C_MUTED));
-            _cmbOrderType = Cmb(["MARKET", "LIMIT", "STOP"], 130, y - 2, 210);
-            _cmbOrderType.SelectedIndexChanged += (_, _) =>
-                _txtEntry.Enabled = _cmbOrderType.SelectedIndex != 0;
-            left.Controls.Add(_cmbOrderType); y += 32;
-
-            left.Controls.Add(Lbl("Entry Price", 14, y, null, C_MUTED));
-            _txtEntry = Txt("0 (market)", 130, y - 2, 210);
-            _txtEntry.Enabled = false;
-            _txtEntry.TextChanged += (_, _) => RecalcRR();
-            left.Controls.Add(_txtEntry); y += 32;
-
-            left.Controls.Add(MkRedLbl("Stop Loss ✱", 14, y));
-            _txtSL = Txt("e.g. 1.34750", 130, y - 2, 210);
-            _txtSL.TextChanged += (_, _) => RecalcRR();
-            left.Controls.Add(_txtSL); y += 32;
-
-            left.Controls.Add(MkGreenLbl("Take Profit ✱", 14, y));
-            _txtTP = Txt("e.g. 1.35200", 130, y - 2, 210);
-            _txtTP.TextChanged += (_, _) => RecalcRR();
-            left.Controls.Add(_txtTP); y += 32;
-
-            left.Controls.Add(Lbl("Take Profit 2", 14, y, null, C_ACCENT));
-            _txtTP2 = Txt("0 (optional)", 130, y - 2, 210);
-            left.Controls.Add(_txtTP2); y += 32;
-
-            _chkAutoLot = new CheckBox
-            {
-                Text = "Auto lot size (1% risk)", ForeColor = C_YELLOW, Checked = true,
-                Location = new Point(14, y), AutoSize = true
-            };
-            _chkAutoLot.CheckedChanged += (_, _) =>
-            { _txtLot.Enabled = !_chkAutoLot.Checked; RecalcRR(); };
-            left.Controls.Add(_chkAutoLot); y += 28;
-
-            left.Controls.Add(Lbl("Lot Size", 14, y, null, C_MUTED));
-            _txtLot = Txt("0.01", 130, y - 2, 100);
-            _txtLot.Enabled = false;
-            _txtLot.TextChanged += (_, _) => RecalcRR();
-            left.Controls.Add(_txtLot); y += 32;
-
-            _chkMoveSLBE = new CheckBox
-            {
-                Text = "Move SL → Breakeven after TP1", ForeColor = C_ACCENT,
-                Location = new Point(14, y), AutoSize = true, Checked = true
-            };
-            left.Controls.Add(_chkMoveSLBE); y += 30;
-
-            // R:R display
-            var rrPanel = new Panel
-            {
-                Location = new Point(14, y), Size = new Size(326, 52),
-                BackColor = Color.FromArgb(20, 99, 179, 237), BorderStyle = BorderStyle.None
-            };
-            _lblRR         = Lbl("R:R  —", 10, 8, new Font("Consolas", 9f), C_ACCENT);
-            _lblDollarRisk = Lbl("Risk  $—", 10, 26, new Font("Consolas", 8.5f), C_RED);
-            _lblDollarProfit = Lbl("Profit  $—", 170, 26, new Font("Consolas", 8.5f), C_GREEN);
-            rrPanel.Controls.AddRange([_lblRR, _lblDollarRisk, _lblDollarProfit]);
-            left.Controls.Add(rrPanel);
-            y += 60;
-
-            // BUY / SELL buttons
-            _btnBuy = Btn("▲  BUY", 14, y, 152, C_GREEN);
-            _btnSell = Btn("▼  SELL", 174, y, 152, C_RED);
-            _btnBuy.Font = _btnSell.Font = new Font("Segoe UI Semibold", 11f);
-            _btnBuy.Height = _btnSell.Height = 44;
-            _btnBuy.Click  += async (_, _) => await SubmitTradeAsync(TradeType.BUY);
-            _btnSell.Click += async (_, _) => await SubmitTradeAsync(TradeType.SELL);
-            left.Controls.AddRange([_btnBuy, _btnSell]);
-
-            // Right card: JSON
-            var right = Card(392, 8, 838, 680);
-            right.Controls.Add(CardH("JSON Signal Input  (paste, load file, or drop)", 14, 14));
-
-            _txtJson = new RichTextBox
-            {
-                Location = new Point(14, 50), Size = new Size(808, 540),
-                BackColor = Color.FromArgb(14, 14, 22),
-                ForeColor = Color.FromArgb(200, 220, 180),
-                Font = new Font("Consolas", 9.5f),
-                BorderStyle = BorderStyle.None,
-                ScrollBars = RichTextBoxScrollBars.Vertical
-            };
-            _txtJson.Text = DefaultJsonSample();
-            _txtJson.AllowDrop = true;
-            _txtJson.DragEnter += (_, e) =>
-                e.Effect = e.Data?.GetDataPresent(DataFormats.FileDrop) == true
-                    ? DragDropEffects.Copy : DragDropEffects.None;
-            _txtJson.DragDrop += (_, e) =>
-            {
-                string[]? files = e.Data?.GetData(DataFormats.FileDrop) as string[];
-                if (files?.Length > 0) _txtJson.Text = File.ReadAllText(files[0]);
-            };
-            right.Controls.Add(_txtJson);
-
-            var btnLoad   = Btn("📂 Load File",     14,  600, 130, C_ACCENT);
-            var btnExec   = Btn("⚡ Execute JSON",  154,  600, 140, C_GREEN);
-            var btnFmt    = Btn("🔧 Format",        304,  600, 100, C_YELLOW);
-            var btnSample = Btn("📋 Sample",        414,  600, 100, C_MUTED);
-            btnLoad.Click   += (_, _) => LoadJsonFile();
-            btnExec.Click   += async (_, _) => await ExecuteJsonAsync();
-            btnFmt.Click    += (_, _) => FormatJson();
-            btnSample.Click += (_, _) => _txtJson.Text = DefaultJsonSample();
-            right.Controls.AddRange([btnLoad, btnExec, btnFmt, btnSample]);
-
-            tab.Controls.AddRange([left, right]);
-            return tab;
-        }
-
-        // ── POSITIONS TAB ─────────────────────────────────────────
-        private TabPage BuildPositionsTab()
-        {
-            var tab = Tab("  📊 Positions  ");
-
-            _gridPos = MkGrid();
-            _gridPos.Location = new Point(12, 8);
-            _gridPos.Size = new Size(1220, 580);
-
-            foreach (var c in new[]
-            {
-                "Ticket","Symbol","Type","Lots","Open","Current","SL","TP","P&L ($)","Pips","Time","Comment"
-            })
-            _gridPos.Columns.Add(c.Replace(" ","_"), c);
-
-            var btnClose    = Btn("Close Selected",    12, 600, 150, C_RED);
-            var btnCloseAll = Btn("Close ALL",        172, 600, 130, Color.FromArgb(160,50,50));
-            var btnRef      = Btn("🔄 Refresh",       312, 600, 110, C_ACCENT);
-            btnClose.Click    += async (_, _) => await CloseSelectedAsync();
-            btnCloseAll.Click += async (_, _) => await CloseAllAsync();
-            btnRef.Click      += async (_, _) => await RefreshPositionsAsync();
-
-            tab.Controls.AddRange([_gridPos, btnClose, btnCloseAll, btnRef]);
-            return tab;
-        }
-
-        // ── HISTORY TAB ───────────────────────────────────────────
-        private TabPage BuildHistoryTab()
-        {
-            var tab = Tab("  🗂 History  ");
-
-            _gridHistory = MkGrid();
-            _gridHistory.Location = new Point(12, 8);
-            _gridHistory.Size = new Size(1220, 580);
-
-            foreach (var c in new[]
-            {
-                "Time","Id","Pair","Dir","Lots","Entry","SL","TP","Ticket","Status","Exec Price","Error"
-            })
-            _gridHistory.Columns.Add(c.Replace(" ","_"), c);
-
-            var btnImport = Btn("📂 Load CSV Log", 12, 600, 150, C_ACCENT);
-            var btnClear  = Btn("Clear",           172, 600, 80, C_MUTED);
-            btnImport.Click += (_, _) => LoadHistoryFromCsv();
-            btnClear.Click  += (_, _) => _gridHistory.Rows.Clear();
-
-            tab.Controls.AddRange([_gridHistory, btnImport, btnClear]);
-            return tab;
-        }
-
-        // ── BOT TAB ───────────────────────────────────────────────
-        private TabPage BuildBotTab()
-        {
-            var tab = Tab("  🤖 Auto Bot  ");
-
-            // Status badge
-            _lblBotBadge = new Label
-            {
-                Text = "● BOT STOPPED", ForeColor = C_RED,
-                Font = new Font("Segoe UI Semibold", 12f),
-                Location = new Point(14, 14), AutoSize = true
-            };
-            tab.Controls.Add(_lblBotBadge);
-
-            // Settings card
-            var card = Card(14, 50, 560, 620);
-
-            int y = 14;
-            card.Controls.Add(CardH("Bot Configuration", 14, y)); y += 36;
-
-            void Row(string label, Control ctrl)
-            {
-                card.Controls.Add(Lbl(label, 14, y, null, C_MUTED));
-                ctrl.Location = new Point(200, y - 2);
-                card.Controls.Add(ctrl);
-                y += 32;
-            }
-
-            _txtWatchFolder = Txt(@"C:\MT5Bot\signals", 0, 0, 330);
-            Row("Watch Folder", _txtWatchFolder);
-
-            _nudRisk = Nud(0.1m, 10m, 1m, 1, 0.1m, 100);
-            Row("Max Risk %", _nudRisk);
-
-            _nudMinRR = Nud(0.5m, 10m, 1.5m, 1, 0.1m, 100);
-            Row("Min R:R Ratio", _nudMinRR);
-
-            _nudMaxTrades = Nud(1, 100, 5, 0, 1, 100);
-            Row("Max Trades/Day", _nudMaxTrades);
-
-            _nudPollMs = Nud(500, 30000, 2000, 0, 500, 120);
-            Row("Poll Interval ms", _nudPollMs);
-
-            _nudRetry = Nud(0, 10, 3, 0, 1, 100);
-            Row("Retry Count", _nudRetry);
-
-            _txtAllowedPairs = Txt("GBPUSD,EURUSD,USDJPY", 0, 0, 330);
-            Row("Allowed Pairs", _txtAllowedPairs);
-
-            _nudDrawdownPct = Nud(1, 50, 10, 1, 1, 100);
-            Row("Drawdown Stop %", _nudDrawdownPct);
-
-            y += 8;
-            void Ck(ref CheckBox cb, string text, bool def)
-            {
-                cb = new CheckBox { Text = text, ForeColor = C_MUTED, Checked = def,
-                    Location = new Point(14, y), AutoSize = true };
-                card.Controls.Add(cb);
-                y += 26;
-            }
-            Ck(ref _chkAutoLotBot, "Auto lot calculation from equity", true);
-            Ck(ref _chkEnforceRR, "Enforce minimum R:R (reject if below)", true);
-            Ck(ref _chkDrawdown, "Drawdown protection (emergency close)", true);
-            Ck(ref _chkAutoStart, "Auto-start bot on app launch", false);
-            y += 12;
-
-            _btnStartBot = Btn("▶  Start Bot",  14, y, 160, C_GREEN);
-            _btnStopBot  = Btn("■  Stop Bot",  184, y, 160, C_RED);
-            _btnStartBot.Font = _btnStopBot.Font = new Font("Segoe UI Semibold", 10f);
-            _btnStartBot.Height = _btnStopBot.Height = 42;
-            _btnStartBot.Click += async (_, _) => await StartBotAsync();
-            _btnStopBot.Click  += async (_, _) => await StopBotAsync();
-            _btnStopBot.Enabled = false;
-            card.Controls.AddRange([_btnStartBot, _btnStopBot]);
-
-            // Info card
-            var info = Card(590, 50, 640, 620);
-            info.Controls.Add(CardH("How It Works", 14, 14));
-            var rtb = new RichTextBox
-            {
-                Location = new Point(14, 50), Size = new Size(608, 550),
-                BackColor = C_CARD, ForeColor = C_MUTED, BorderStyle = BorderStyle.None,
-                ReadOnly = true, Font = new Font("Consolas", 9f),
-                Text = BotHelpText()
-            };
-            info.Controls.Add(rtb);
-
-            var btnFolder = Btn("📁 Open Folder", 14, 680, 140, C_ACCENT);
-            btnFolder.Click += (_, _) =>
-            {
-                Directory.CreateDirectory(_txtWatchFolder.Text);
-                System.Diagnostics.Process.Start("explorer.exe", _txtWatchFolder.Text);
-            };
-
-            tab.Controls.AddRange([card, info, btnFolder]);
-            return tab;
-        }
-
-        // ── LOG TAB ───────────────────────────────────────────────
-        private TabPage BuildLogTab()
-        {
-            var tab = Tab("  📋 Log  ");
-
-            _txtLog = new RichTextBox
-            {
-                Location = new Point(12, 8), Size = new Size(1222, 640),
-                BackColor = Color.FromArgb(12, 12, 18), ForeColor = C_TEXT,
-                Font = new Font("Consolas", 9f), ReadOnly = true, BorderStyle = BorderStyle.None,
-                ScrollBars = RichTextBoxScrollBars.Vertical
-            };
-
-            var btnClear = Btn("Clear",     12, 658, 100, C_MUTED);
-            var btnSave  = Btn("Save Log", 122, 658, 100, C_ACCENT);
-            btnClear.Click += (_, _) => _txtLog.Clear();
-            btnSave.Click  += (_, _) =>
-            {
-                using var d = new SaveFileDialog { Filter = "Text|*.txt", FileName = "MT5Log" };
-                if (d.ShowDialog() == DialogResult.OK) File.WriteAllText(d.FileName, _txtLog.Text);
-            };
-
-            tab.Controls.AddRange([_txtLog, btnClear, btnSave]);
-            return tab;
         }
 
         // ══════════════════════════════════════════════════════════
@@ -622,7 +150,6 @@ namespace MT5TradingBot.UI
                 Comment = "Manual"
             };
 
-            // Use bot validation pipeline if bot is available, else direct bridge
             TradeResult result;
             if (_bot != null)
                 result = await _bot.ExecuteTradeWithValidationAsync(req);
@@ -707,6 +234,60 @@ namespace MT5TradingBot.UI
             await _bot.DisposeAsync();
             _bot = null;
             UpdateBotBadge(false);
+        }
+
+        // ══════════════════════════════════════════════════════════
+        //  CLAUDE AI
+        // ══════════════════════════════════════════════════════════
+
+        private async Task StartClaudeAsync()
+        {
+            if (_bridge?.IsConnected != true)
+            { Log("❌ Connect to MT5 first.", C_RED); return; }
+
+            _cfg.Claude = ReadClaudeConfigFromUI();
+            await _settings.SaveAsync(_cfg);
+
+            if (_claude != null) { await _claude.DisposeAsync(); _claude = null; }
+
+            var bridge = _bridge;
+            _claude = new Services.ClaudeSignalService(
+                bridge,
+                _cfg.Claude,
+                req => _bot != null
+                    ? _bot.ExecuteTradeWithValidationAsync(req)
+                    : bridge.OpenTradeAsync(req));
+
+            _claude.OnLog += msg => Log($"[Claude] {msg}");
+            _claude.OnSignalGenerated += req => Log($"🧠 Signal: {req}", C_ACCENT);
+            _claude.OnStatusChanged += on => UpdateClaudeBadge(on);
+
+            try { await _claude.StartAsync(); }
+            catch (Exception ex)
+            {
+                Log($"❌ Claude start failed: {ex.Message}", C_RED);
+                await _claude.DisposeAsync();
+                _claude = null;
+            }
+        }
+
+        private async Task StopClaudeAsync()
+        {
+            if (_claude == null) return;
+            await _claude.DisposeAsync();
+            _claude = null;
+            UpdateClaudeBadge(false);
+        }
+
+        private void UpdateClaudeBadge(bool running)
+        {
+            UIThread(() =>
+            {
+                _lblClaudeBadge.Text      = running ? "● CLAUDE RUNNING" : "● CLAUDE STOPPED";
+                _lblClaudeBadge.ForeColor = running ? C_GREEN : C_RED;
+                _btnStartClaude.Enabled   = !running;
+                _btnStopClaude.Enabled    = running;
+            });
         }
 
         // ══════════════════════════════════════════════════════════
@@ -796,18 +377,13 @@ namespace MT5TradingBot.UI
 
                 double entry = 0;
                 double.TryParse(_txtEntry.Text, out entry);
-
-                // Use a rough estimate for market orders
-                if (entry == 0)
-                    entry = (sl + tp) / 2.0;
+                if (entry == 0) entry = (sl + tp) / 2.0;
 
                 double rr = LotCalculator.RiskRewardRatio(entry, sl, tp);
 
                 double lots = 0.01;
                 if (!_chkAutoLot.Checked)
                     double.TryParse(_txtLot.Text, out lots);
-                else
-                    lots = 0.01; // placeholder
 
                 string sym = _cmbPair.SelectedItem?.ToString() ?? "GBPUSD";
                 double risk   = LotCalculator.DollarRisk(lots, entry, sl, sym);
@@ -903,6 +479,7 @@ namespace MT5TradingBot.UI
         {
             _cmbMode.SelectedIndex = _cfg.Mt5.Mode == ConnectionMode.NamedPipe ? 0 : 1;
             _txtPipeName.Text = _cfg.Mt5.PipeName;
+            _chkAutoConn.Checked = _cfg.AutoConnectOnLaunch;
             _txtWatchFolder.Text = _cfg.Bot.WatchFolder;
             _nudRisk.Value = (decimal)_cfg.Bot.MaxRiskPercent;
             _nudMaxTrades.Value = _cfg.Bot.MaxTradesPerDay;
@@ -911,7 +488,23 @@ namespace MT5TradingBot.UI
             _nudMinRR.Value = (decimal)_cfg.Bot.MinRRRatio;
             _nudDrawdownPct.Value = (decimal)_cfg.Bot.EmergencyCloseDrawdownPct;
             _nudRetry.Value = _cfg.Bot.RetryCount;
+
+            _txtClaudeApiKey.Text = _cfg.Claude.ApiKey;
+            _txtClaudeSymbols.Text = string.Join(",", _cfg.Claude.WatchSymbols);
+            _nudClaudePollSec.Value = _cfg.Claude.PollIntervalSeconds;
+            _txtClaudePrompt.Text = string.IsNullOrEmpty(_cfg.Claude.SystemPrompt)
+                ? Models.ClaudeConfig.DefaultPrompt
+                : _cfg.Claude.SystemPrompt;
         }
+
+        private Models.ClaudeConfig ReadClaudeConfigFromUI() => new()
+        {
+            ApiKey = _txtClaudeApiKey.Text.Trim(),
+            WatchSymbols = [.. _txtClaudeSymbols.Text.Split(',').Select(s => s.Trim().ToUpper()).Where(s => s.Length > 0)],
+            PollIntervalSeconds = (int)_nudClaudePollSec.Value,
+            SystemPrompt = _txtClaudePrompt.Text,
+            Model = "claude-opus-4-7",
+        };
 
         private BotConfig ReadBotConfigFromUI() => new()
         {
@@ -978,122 +571,11 @@ namespace MT5TradingBot.UI
         private async void OnFormClosingAsync(object? sender, FormClosingEventArgs e)
         {
             _refreshTimer.Stop();
+            await StopClaudeAsync();
             await StopBotAsync();
             await _settings.SaveAsync(_cfg);
             _bridge?.Dispose();
-            //Log.CloseAndFlush();
         }
-
-        // ══════════════════════════════════════════════════════════
-        //  FACTORY CONTROLS  (keeps BuildXxx clean)
-        // ══════════════════════════════════════════════════════════
-
-        private static TabPage Tab(string title)
-            => new(title) { BackColor = Color.FromArgb(18, 18, 26) };
-
-        private static Panel Card(int x, int y, int w, int h)
-        {
-            var p = new Panel
-            {
-                Location = new Point(x, y), Size = new Size(w, h),
-                BackColor = Color.FromArgb(24, 25, 38),
-                BorderStyle = BorderStyle.FixedSingle, Padding = new Padding(8)
-            };
-            return p;
-        }
-
-        private static Label CardH(string text, int x, int y) =>
-            new() { Text = text, Location = new Point(x, y), AutoSize = true,
-                Font = new Font("Segoe UI Semibold", 10f, FontStyle.Bold),
-                ForeColor = Color.FromArgb(200, 210, 240) };
-
-        private static Label Lbl(string text, int x, int y,
-            Font? font = null, Color? fg = null)
-            => new() { Text = text, Location = new Point(x, y), AutoSize = true,
-                Font = font ?? new Font("Segoe UI", 9f),
-                ForeColor = fg ?? Color.FromArgb(218, 218, 230) };
-
-        private Label MkRedLbl(string t, int x, int y) =>
-            new() { Text = t, Location = new Point(x, y), AutoSize = true,
-                ForeColor = C_RED, Font = new Font("Segoe UI", 9f) };
-
-        private Label MkGreenLbl(string t, int x, int y) =>
-            new() { Text = t, Location = new Point(x, y), AutoSize = true,
-                ForeColor = C_GREEN, Font = new Font("Segoe UI", 9f) };
-
-        private TextBox Txt(string text, int x, int y, int w) =>
-            new() { Text = text, Location = new Point(x, y), Width = w,
-                BackColor = C_SURFACE, ForeColor = C_TEXT,
-                BorderStyle = BorderStyle.FixedSingle,
-                Font = new Font("Consolas", 9f) };
-
-        private ComboBox Cmb(string[] items, int x, int y, int w)
-        {
-            var c = new ComboBox
-            {
-                Location = new Point(x, y), Width = w,
-                DropDownStyle = ComboBoxStyle.DropDownList,
-                FlatStyle = FlatStyle.Flat,
-                BackColor = C_SURFACE, ForeColor = C_TEXT,
-                Font = new Font("Segoe UI", 9f)
-            };
-            c.Items.AddRange(items);
-            if (items.Length > 0) c.SelectedIndex = 0;
-            return c;
-        }
-
-        private static Button Btn(string text, int x, int y, int w, Color bg)
-        {
-            var b = new Button
-            {
-                Text = text, Location = new Point(x, y), Width = w, Height = 30,
-                BackColor = bg, ForeColor = Color.FromArgb(10, 10, 20),
-                FlatStyle = FlatStyle.Flat, Cursor = Cursors.Hand,
-                Font = new Font("Segoe UI Semibold", 9f)
-            };
-            b.FlatAppearance.BorderSize = 0;
-            return b;
-        }
-
-        private NumericUpDown Nud(decimal min, decimal max, decimal val,
-            int decimals, decimal inc, int w)
-            => new()
-            {
-                Minimum = min, Maximum = max, Value = val,
-                DecimalPlaces = decimals, Increment = inc, Width = w,
-                BackColor = C_SURFACE, ForeColor = C_TEXT,
-                BorderStyle = BorderStyle.None
-            };
-
-        private static DataGridView MkGrid()
-        {
-            var g = new DataGridView
-            {
-                BackgroundColor = Color.FromArgb(24, 25, 38),
-                GridColor = Color.FromArgb(45, 45, 65),
-                ForeColor = Color.FromArgb(218, 218, 230),
-                Font = new Font("Consolas", 8.5f),
-                BorderStyle = BorderStyle.None,
-                CellBorderStyle = DataGridViewCellBorderStyle.SingleHorizontal,
-                SelectionMode = DataGridViewSelectionMode.FullRowSelect,
-                MultiSelect = false, ReadOnly = true,
-                AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill,
-                RowHeadersVisible = false, AllowUserToAddRows = false,
-                ColumnHeadersBorderStyle = DataGridViewHeaderBorderStyle.None
-            };
-            g.ColumnHeadersDefaultCellStyle.BackColor = Color.FromArgb(18, 18, 28);
-            g.ColumnHeadersDefaultCellStyle.ForeColor = Color.FromArgb(110, 110, 140);
-            g.ColumnHeadersDefaultCellStyle.Font = new Font("Segoe UI", 8.5f, FontStyle.Bold);
-            g.DefaultCellStyle.BackColor = Color.FromArgb(24, 25, 38);
-            g.DefaultCellStyle.SelectionBackColor = Color.FromArgb(40, 99, 179, 237);
-            g.DefaultCellStyle.SelectionForeColor = Color.FromArgb(218, 218, 230);
-            g.AlternatingRowsDefaultCellStyle.BackColor = Color.FromArgb(20, 20, 30);
-            return g;
-        }
-
-        private static void RoundPanel(Panel p) =>
-            p.Region = System.Drawing.Region.FromHrgn(
-                CreateRoundRectRgn(0, 0, p.Width, p.Height, p.Width, p.Height));
 
         private void DrawTabItem(object? sender, DrawItemEventArgs e)
         {
@@ -1108,7 +590,7 @@ namespace MT5TradingBot.UI
         }
 
         [System.Runtime.InteropServices.DllImport("Gdi32.dll")]
-        private static extern IntPtr CreateRoundRectRgn(int x1,int y1,int x2,int y2,int cx,int cy);
+        private static extern IntPtr CreateRoundRectRgn(int x1, int y1, int x2, int y2, int cx, int cy);
 
         // ══════════════════════════════════════════════════════════
         //  SAMPLE DATA

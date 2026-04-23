@@ -102,6 +102,13 @@ namespace MT5TradingBot.Services
             return r?.Success == true;
         }
 
+        public async Task<SymbolInfo?> GetSymbolInfoAsync(string symbol)
+        {
+            var r = await SendAsync("GET_SYMBOL_INFO", new { symbol }).ConfigureAwait(false);
+            if (r?.Success != true) return null;
+            return Deserialize<SymbolInfo>(r.Data);
+        }
+
         /// <summary>Start background reconnect loop. Fires OnConnectionChanged on state change.</summary>
         public void StartReconnectLoop()
         {
