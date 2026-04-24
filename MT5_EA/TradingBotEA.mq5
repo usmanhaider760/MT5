@@ -440,7 +440,9 @@ string JsonStr(string json, string key)
       result += ShortToString(c);
       p++;
    }
-   return StringTrimRight(StringTrimLeft(result));
+   StringTrimLeft(result);
+StringTrimRight(result);
+return result;
 }
 
 double JsonDbl(string json, string key)

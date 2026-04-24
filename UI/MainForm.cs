@@ -2,661 +2,198 @@ using MT5TradingBot.Core;
 using MT5TradingBot.Models;
 using MT5TradingBot.Services;
 using Newtonsoft.Json;
-using Serilog;
+using System;
+using System.Drawing;
+using System.Threading.Tasks;
+using System.Windows.Forms;
 
 namespace MT5TradingBot.UI
 {
     public sealed partial class MainForm : Form
     {
-        // ── Services ──────────────────────────────────────────────
         private MT5Bridge? _bridge;
         private AutoBotService? _bot;
         private ClaudeSignalService? _claude;
+
         private readonly SettingsManager _settings = new();
         private AppSettings _cfg = new();
 
-        // ── Timers ────────────────────────────────────────────────
-        private readonly System.Windows.Forms.Timer _refreshTimer;
+        private readonly System.Windows.Forms.Timer _refreshTimer = new();
 
-        // ── Theme ─────────────────────────────────────────────────
-        private static readonly Color C_BG      = Color.FromArgb(13, 13, 19);
-        private static readonly Color C_SURFACE = Color.FromArgb(22, 22, 32);
-        private static readonly Color C_CARD    = Color.FromArgb(28, 29, 42);
-        private static readonly Color C_ACCENT  = Color.FromArgb(99, 179, 237);
-        private static readonly Color C_GREEN   = Color.FromArgb(72, 199, 142);
-        private static readonly Color C_RED     = Color.FromArgb(252, 95, 95);
-        private static readonly Color C_YELLOW  = Color.FromArgb(250, 199, 117);
-        private static readonly Color C_TEXT    = Color.FromArgb(218, 218, 230);
-        private static readonly Color C_MUTED   = Color.FromArgb(110, 110, 130);
-        private static readonly Color C_BORDER  = Color.FromArgb(45, 45, 65);
+        private static readonly Color C_GREEN = Color.FromArgb(72, 199, 142);
+        private static readonly Color C_RED = Color.FromArgb(252, 95, 95);
+        private static readonly Color C_ACCENT = Color.FromArgb(99, 179, 237);
 
-        // ═══════════════════════════════════════════════════════════
         public MainForm()
         {
-            _refreshTimer = new System.Windows.Forms.Timer { Interval = 2500 };
-            _refreshTimer.Tick += async (_, _) => await OnRefreshTickAsync();
-
             InitializeComponent();
-
-            if (!DesignMode)
-            {
-                _txtJson.Text = DefaultJsonSample();
-                _clockTimer.Start();
-                _ = InitAsync();
-            }
+            WireEvents();
+            InitTimers();
         }
 
-        private async Task InitAsync()
+        private void InitTimers()
         {
-            await _settings.LoadAsync();
-            _cfg = _settings.Current;
-            ApplySettingsToUI();
-
-            if (_cfg.AutoConnectOnLaunch)
-                await ConnectAsync();
-
-            if (_cfg.Bot.AutoStartOnLaunch && _bridge?.IsConnected == true)
-                await StartBotAsync();
-
-            Log("MT5 Trading Bot ready. Connect to MT5 to begin.", C_ACCENT);
+            _refreshTimer.Interval = 2000;
+            _refreshTimer.Tick += async (_, __) => await RefreshAsync();
         }
 
-        // ══════════════════════════════════════════════════════════
-        //  CONNECT / DISCONNECT
-        // ══════════════════════════════════════════════════════════
+        // ───────────────── EVENTS ─────────────────
+        private void WireEvents()
+        {
+            _btnConnect.Click += async (_, __) => await ConnectAsync();
+            _btnDisconnect.Click += (_, __) => DisconnectAsync();
+            _btnStartBot.Click += async (_, __) => await StartBotAsync();
+            _btnStopBot.Click += async (_, __) => await StopBotAsync();
 
+            _btnBuy.Click += async (_, __) => await SubmitTradeAsync(TradeType.BUY);
+            _btnSell.Click += async (_, __) => await SubmitTradeAsync(TradeType.SELL);
+
+            _btnRefreshPos.Click += async (_, __) => await RefreshPositionsAsync();
+        }
+
+        // ───────────────── CONNECTION ─────────────────
         private async Task ConnectAsync()
         {
-            _bridge?.Dispose();
-
-            _cfg.Mt5 = new MT5Settings
+            _bridge = new MT5Bridge(new MT5Settings
             {
-                Mode = _cmbMode.SelectedIndex == 0 ? ConnectionMode.NamedPipe : ConnectionMode.Socket,
-                PipeName = _txtPipeName.Text.Trim(),
-                TimeoutMs = 5000,
-                ReconnectIntervalMs = 5000
-            };
-
-            _bridge = new MT5Bridge(_cfg.Mt5);
-            _bridge.OnLog += msg => Log(msg);
-            _bridge.OnConnectionChanged += SetConnectedUI;
-
-            SetBtnState(_btnConnect, false);
-            Log("Connecting to MT5...", C_ACCENT);
+                PipeName = _txtPipeName.Text
+            });
 
             bool ok = await _bridge.PingAsync();
 
+            SetConnectedUI(ok);
+
             if (ok)
             {
-                _bridge.StartReconnectLoop();
                 _refreshTimer.Start();
-                Log("✅ Connected to MT5 EA", C_GREEN);
+                Log("Connected");
                 await RefreshAsync();
             }
             else
             {
-                Log("❌ Cannot connect. Ensure:\n" +
-                    "  1. MT5 is open\n" +
-                    "  2. TradingBotEA.ex5 is attached to a chart\n" +
-                    "  3. AutoTrading (green button) is ON in MT5\n" +
-                    "  4. Pipe name matches exactly", C_RED);
+                Log("Connection failed", C_RED);
             }
-
-            SetBtnState(_btnConnect, true);
         }
 
-        private async Task DisconnectAsync()
+        private void DisconnectAsync()
         {
             _refreshTimer.Stop();
-            if (_bot?.IsRunning == true)
-                await StopBotAsync();
             _bridge?.Dispose();
             _bridge = null;
             SetConnectedUI(false);
-            Log("Disconnected.");
         }
 
-        // ══════════════════════════════════════════════════════════
-        //  TRADE EXECUTION
-        // ══════════════════════════════════════════════════════════
-
-        private async Task SubmitTradeAsync(TradeType dir)
+        // ───────────────── TRADE ─────────────────
+        private async Task SubmitTradeAsync(TradeType type)
         {
-            if (!AssertConnected()) return;
-
-            if (!double.TryParse(_txtSL.Text, out double sl) || sl == 0)
-            { Log("❌ Invalid Stop Loss", C_RED); return; }
-            if (!double.TryParse(_txtTP.Text, out double tp) || tp == 0)
-            { Log("❌ Invalid Take Profit", C_RED); return; }
-
-            double.TryParse(_txtEntry.Text, out double entry);
-            double.TryParse(_txtTP2.Text, out double tp2);
-            double.TryParse(_txtLot.Text, out double lot);
-            if (lot < 0.01) lot = 0.01;
+            if (_bridge == null) return;
 
             var req = new TradeRequest
             {
-                Pair = _cmbPair.SelectedItem?.ToString() ?? "GBPUSD",
-                TradeType = dir,
-                OrderType = _cmbOrderType.SelectedIndex switch
-                { 1 => OrderType.LIMIT, 2 => OrderType.STOP, _ => OrderType.MARKET },
-                EntryPrice = entry,
-                StopLoss = sl,
-                TakeProfit = tp,
-                TakeProfit2 = tp2,
-                LotSize = _chkAutoLot.Checked ? 0.01 : lot,
-                MoveSLToBreakevenAfterTP1 = _chkMoveSLBE.Checked,
-                MagicNumber = _cfg.Bot.MagicNumber,
-                Comment = "Manual"
+                Pair = _cmbPair.Text,
+                TradeType = type,
+                StopLoss = double.Parse(_txtSL.Text),
+                TakeProfit = double.Parse(_txtTP.Text),
+                LotSize = 0.01
             };
 
-            TradeResult result;
-            if (_bot != null)
-                result = await _bot.ExecuteTradeWithValidationAsync(req);
-            else
-                result = await _bridge!.OpenTradeAsync(req);
-
-            Log(result.IsSuccess ? $"✅ {result}" : $"❌ {result}", result.IsSuccess ? C_GREEN : C_RED);
+            var result = await _bridge.OpenTradeAsync(req);
             AddHistoryRow(req, result);
+
+            Log(result.IsSuccess ? "Trade OK" : "Trade FAIL",
+                result.IsSuccess ? C_GREEN : C_RED);
         }
 
-        private async Task ExecuteJsonAsync()
-        {
-            if (!AssertConnected()) return;
-            try
-            {
-                var req = JsonConvert.DeserializeObject<TradeRequest>(_txtJson.Text);
-                if (req == null) { Log("❌ Invalid JSON structure", C_RED); return; }
-
-                var (valid, err) = req.Validate();
-                if (!valid) { Log($"❌ Validation: {err}", C_RED); return; }
-
-                TradeResult result;
-                if (_bot != null)
-                    result = await _bot.ExecuteTradeWithValidationAsync(req);
-                else
-                    result = await _bridge!.OpenTradeAsync(req);
-
-                Log(result.IsSuccess ? $"✅ {result}" : $"❌ {result}", result.IsSuccess ? C_GREEN : C_RED);
-                AddHistoryRow(req, result);
-            }
-            catch (JsonException ex)
-            {
-                Log($"❌ JSON parse error: {ex.Message}", C_RED);
-            }
-        }
-
-        private void LoadJsonFile()
-        {
-            using var d = new OpenFileDialog { Filter = "JSON files (*.json)|*.json|All (*.*)|*.*" };
-            if (d.ShowDialog() == DialogResult.OK)
-                _txtJson.Text = File.ReadAllText(d.FileName);
-        }
-
-        private void FormatJson()
-        {
-            try
-            {
-                var obj = JsonConvert.DeserializeObject(_txtJson.Text);
-                _txtJson.Text = JsonConvert.SerializeObject(obj, Formatting.Indented);
-            }
-            catch { Log("❌ Cannot format — invalid JSON", C_RED); }
-        }
-
-        // ══════════════════════════════════════════════════════════
-        //  AUTO BOT
-        // ══════════════════════════════════════════════════════════
-
+        // ───────────────── BOT ─────────────────
         private async Task StartBotAsync()
         {
-            if (!AssertConnected()) return;
+            if (_bridge == null) return;
 
-            _cfg.Bot = ReadBotConfigFromUI();
-            await _settings.SaveAsync(_cfg);
-
-            await (_bot?.DisposeAsync() ?? ValueTask.CompletedTask);
-
-            _bot = new AutoBotService(_bridge!, _cfg.Bot);
-            _bot.OnLog += msg => Log(msg);
-            _bot.OnTradeExecuted += r =>
-            {
-                Log(r.IsSuccess ? $"🤖 Bot trade: {r}" : $"🤖 Bot rejected: {r.ErrorMessage}",
-                    r.IsSuccess ? C_GREEN : C_RED);
-            };
-            _bot.OnBotStatusChanged += on => UpdateBotBadge(on);
-
+            _bot = new AutoBotService(_bridge, new BotConfig());
             await _bot.StartAsync();
+
+            UpdateBotBadge(true);
         }
 
         private async Task StopBotAsync()
         {
             if (_bot == null) return;
+
             await _bot.DisposeAsync();
             _bot = null;
+
             UpdateBotBadge(false);
         }
 
-        // ══════════════════════════════════════════════════════════
-        //  CLAUDE AI
-        // ══════════════════════════════════════════════════════════
-
-        private async Task StartClaudeAsync()
-        {
-            if (_bridge?.IsConnected != true)
-            { Log("❌ Connect to MT5 first.", C_RED); return; }
-
-            _cfg.Claude = ReadClaudeConfigFromUI();
-            await _settings.SaveAsync(_cfg);
-
-            if (_claude != null) { await _claude.DisposeAsync(); _claude = null; }
-
-            var bridge = _bridge;
-            _claude = new Services.ClaudeSignalService(
-                bridge,
-                _cfg.Claude,
-                req => _bot != null
-                    ? _bot.ExecuteTradeWithValidationAsync(req)
-                    : bridge.OpenTradeAsync(req));
-
-            _claude.OnLog += msg => Log($"[Claude] {msg}");
-            _claude.OnSignalGenerated += req => Log($"🧠 Signal: {req}", C_ACCENT);
-            _claude.OnStatusChanged += on => UpdateClaudeBadge(on);
-
-            try { await _claude.StartAsync(); }
-            catch (Exception ex)
-            {
-                Log($"❌ Claude start failed: {ex.Message}", C_RED);
-                await _claude.DisposeAsync();
-                _claude = null;
-            }
-        }
-
-        private async Task StopClaudeAsync()
-        {
-            if (_claude == null) return;
-            await _claude.DisposeAsync();
-            _claude = null;
-            UpdateClaudeBadge(false);
-        }
-
-        private void UpdateClaudeBadge(bool running)
-        {
-            UIThread(() =>
-            {
-                _lblClaudeBadge.Text      = running ? "● CLAUDE RUNNING" : "● CLAUDE STOPPED";
-                _lblClaudeBadge.ForeColor = running ? C_GREEN : C_RED;
-                _btnStartClaude.Enabled   = !running;
-                _btnStopClaude.Enabled    = running;
-            });
-        }
-
-        // ══════════════════════════════════════════════════════════
-        //  POSITIONS
-        // ══════════════════════════════════════════════════════════
-
-        private async Task RefreshPositionsAsync()
-        {
-            if (_bridge?.IsConnected != true) return;
-            var positions = await _bridge.GetPositionsAsync();
-            UIThread(() =>
-            {
-                _gridPos.Rows.Clear();
-                foreach (var p in positions)
-                {
-                    int i = _gridPos.Rows.Add(
-                        p.Ticket, p.Symbol, p.Type, $"{p.Lots:F2}",
-                        $"{p.OpenPrice:F5}", $"{p.CurrentPrice:F5}",
-                        $"{p.StopLoss:F5}", $"{p.TakeProfit:F5}",
-                        $"{p.Profit:F2}", $"{p.ProfitPips:F1}",
-                        p.OpenTime.ToString("HH:mm:ss"), p.Comment);
-                    _gridPos.Rows[i].DefaultCellStyle.ForeColor =
-                        p.Profit >= 0 ? C_GREEN : C_RED;
-                }
-            });
-        }
-
-        private async Task CloseSelectedAsync()
-        {
-            if (_bridge == null || _gridPos.SelectedRows.Count == 0) return;
-            if (!long.TryParse(_gridPos.SelectedRows[0].Cells[0].Value?.ToString(), out long t)) return;
-            if (Confirm($"Close ticket #{t}?"))
-            {
-                bool ok = await _bridge.CloseTradeAsync(t);
-                Log(ok ? $"✅ Closed #{t}" : $"❌ Failed to close #{t}", ok ? C_GREEN : C_RED);
-                await RefreshPositionsAsync();
-            }
-        }
-
-        private async Task CloseAllAsync()
+        // ───────────────── REFRESH ─────────────────
+        private async Task RefreshAsync()
         {
             if (_bridge == null) return;
-            if (!Confirm("Close ALL open positions? This cannot be undone.")) return;
-            var positions = await _bridge.GetPositionsAsync();
-            int count = 0;
-            foreach (var p in positions)
-            {
-                bool ok = await _bridge.CloseTradeAsync(p.Ticket);
-                if (ok) count++;
-            }
-            Log($"Closed {count}/{positions.Count} positions.", C_YELLOW);
+
+            var acc = await _bridge.GetAccountInfoAsync();
+            if (acc != null)
+                UpdateAccountUI(acc);
+
             await RefreshPositionsAsync();
         }
 
-        // ══════════════════════════════════════════════════════════
-        //  REFRESH (timer)
-        // ══════════════════════════════════════════════════════════
-
-        private async Task RefreshAsync()
+        private async Task RefreshPositionsAsync()
         {
-            if (_bridge?.IsConnected != true) return;
-            try
+            if (_bridge == null) return;
+
+            var pos = await _bridge.GetPositionsAsync();
+
+            _gridPos.Rows.Clear();
+
+            foreach (var p in pos)
             {
-                var account = await _bridge.GetAccountInfoAsync();
-                if (account != null) UpdateAccountUI(account);
-                await RefreshPositionsAsync();
+                _gridPos.Rows.Add(p.Ticket, p.Symbol, p.Profit);
             }
-            catch (Exception ex) { Log($"Refresh error: {ex.Message}", C_RED); }
         }
 
-        private async Task OnRefreshTickAsync()
-        {
-            try { await RefreshAsync(); }
-            catch { /* swallow on timer */ }
-        }
-
-        // ══════════════════════════════════════════════════════════
-        //  R:R CALCULATOR (live)
-        // ══════════════════════════════════════════════════════════
-
-        private void RecalcRR()
-        {
-            try
-            {
-                if (!double.TryParse(_txtSL.Text, out double sl) || sl == 0) return;
-                if (!double.TryParse(_txtTP.Text, out double tp) || tp == 0) return;
-
-                double entry = 0;
-                double.TryParse(_txtEntry.Text, out entry);
-                if (entry == 0) entry = (sl + tp) / 2.0;
-
-                double rr = LotCalculator.RiskRewardRatio(entry, sl, tp);
-
-                double lots = 0.01;
-                if (!_chkAutoLot.Checked)
-                    double.TryParse(_txtLot.Text, out lots);
-
-                string sym = _cmbPair.SelectedItem?.ToString() ?? "GBPUSD";
-                double risk   = LotCalculator.DollarRisk(lots, entry, sl, sym);
-                double profit = LotCalculator.DollarProfit(lots, entry, tp, sym);
-
-                Color rrColor = rr >= 1.5 ? C_GREEN : rr >= 1.0 ? C_YELLOW : C_RED;
-                _lblRR.Text = $"R:R  1 : {rr:F2}";
-                _lblRR.ForeColor = rrColor;
-                _lblDollarRisk.Text   = $"Risk  ${risk:F2}";
-                _lblDollarProfit.Text = $"Profit  ${profit:F2}";
-            }
-            catch { /* parsing incomplete */ }
-        }
-
-        // ══════════════════════════════════════════════════════════
-        //  UI HELPERS
-        // ══════════════════════════════════════════════════════════
-
-        private void UpdateAccountUI(AccountInfo a)
-        {
-            UIThread(() =>
-            {
-                _lblAccNum.Text     = $"#{a.AccountNumber}  {a.Server}";
-                _lblBalance.Text    = $"Balance: ${a.Balance:F2}";
-                _lblEquity.Text     = $"Equity: ${a.Equity:F2}";
-                _lblFreeMargin.Text = $"Free: ${a.FreeMargin:F2}";
-                _lblPnl.Text        = $"P&L: {(a.Profit >= 0 ? "+" : "")}${a.Profit:F2}";
-                _lblPnl.ForeColor   = a.Profit >= 0 ? C_GREEN : C_RED;
-                _lblMarginLvl.Text  = $"ML: {a.MarginLevel:F0}%";
-            });
-        }
-
+        // ───────────────── UI HELPERS ─────────────────
         private void SetConnectedUI(bool connected)
         {
-            UIThread(() =>
-            {
-                _pnlDot.BackColor = connected ? C_GREEN : C_RED;
-                _lblConnStatus.Text = connected ? "Connected" : "Disconnected";
-                _lblConnStatus.ForeColor = connected ? C_GREEN : C_RED;
-                _btnDisconnect.Enabled = connected;
-                if (!connected) _refreshTimer.Stop();
-            });
+            _pnlDot.BackColor = connected ? C_GREEN : C_RED;
+            _lblConnStatus.Text = connected ? "Connected" : "Disconnected";
         }
 
         private void UpdateBotBadge(bool running)
         {
-            UIThread(() =>
-            {
-                _lblBotBadge.Text = running ? "● BOT RUNNING" : "● BOT STOPPED";
-                _lblBotBadge.ForeColor = running ? C_GREEN : C_RED;
-                _btnStartBot.Enabled = !running;
-                _btnStopBot.Enabled = running;
-            });
+            _lblBotBadge.Text = running ? "BOT RUNNING" : "BOT STOPPED";
+            _lblBotBadge.ForeColor = running ? C_GREEN : C_RED;
         }
 
-        private void UpdateBuySellColors()
+        private void AddHistoryRow(TradeRequest req, TradeResult res)
         {
-            bool buy = _cmbDir.SelectedItem?.ToString() == "BUY";
-            _btnBuy.BackColor  = buy ? C_GREEN : Color.FromArgb(45, 45, 60);
-            _btnSell.BackColor = !buy ? C_RED   : Color.FromArgb(45, 45, 60);
+            _gridHistory.Rows.Insert(0,
+                DateTime.Now.ToString("HH:mm:ss"),
+                req.Pair,
+                req.TradeType,
+                res.Status
+            );
         }
 
-        private void AddHistoryRow(TradeRequest req, TradeResult result)
+        private void UpdateAccountUI(AccountInfo a)
         {
-            UIThread(() =>
-            {
-                _gridHistory.Rows.Insert(0,
-                    DateTime.Now.ToString("HH:mm:ss"), req.Id, req.Pair,
-                    req.TradeType.ToString(), $"{req.LotSize:F2}",
-                    $"{req.EntryPrice:F5}", $"{req.StopLoss:F5}", $"{req.TakeProfit:F5}",
-                    result.Ticket, result.Status, $"{result.ExecutedPrice:F5}",
-                    result.ErrorMessage);
-            });
+            _lblBalance.Text = $"Balance: {a.Balance}";
+            _lblEquity.Text = $"Equity: {a.Equity}";
         }
 
-        private void LoadHistoryFromCsv()
+        private void Log(string msg, Color? c = null)
         {
-            using var d = new OpenFileDialog { Filter = "CSV files|*.csv|All|*.*" };
-            if (d.ShowDialog() != DialogResult.OK) return;
-
-            _gridHistory.Rows.Clear();
-            foreach (var line in File.ReadLines(d.FileName).Skip(1))
-            {
-                var parts = line.Split(',');
-                if (parts.Length >= 12)
-                    _gridHistory.Rows.Add(parts[0], parts[1], parts[2], parts[3],
-                        parts[4], parts[5], parts[6], parts[7],
-                        parts[8], parts[9], parts[10], parts[11]);
-            }
-        }
-
-        private void ApplySettingsToUI()
-        {
-            _cmbMode.SelectedIndex = _cfg.Mt5.Mode == ConnectionMode.NamedPipe ? 0 : 1;
-            _txtPipeName.Text = _cfg.Mt5.PipeName;
-            _chkAutoConn.Checked = _cfg.AutoConnectOnLaunch;
-            _txtWatchFolder.Text = _cfg.Bot.WatchFolder;
-            _nudRisk.Value = (decimal)_cfg.Bot.MaxRiskPercent;
-            _nudMaxTrades.Value = _cfg.Bot.MaxTradesPerDay;
-            _nudPollMs.Value = _cfg.Bot.PollIntervalMs;
-            _txtAllowedPairs.Text = string.Join(",", _cfg.Bot.AllowedPairs);
-            _nudMinRR.Value = (decimal)_cfg.Bot.MinRRRatio;
-            _nudDrawdownPct.Value = (decimal)_cfg.Bot.EmergencyCloseDrawdownPct;
-            _nudRetry.Value = _cfg.Bot.RetryCount;
-
-            _txtClaudeApiKey.Text = _cfg.Claude.ApiKey;
-            _txtClaudeSymbols.Text = string.Join(",", _cfg.Claude.WatchSymbols);
-            _nudClaudePollSec.Value = _cfg.Claude.PollIntervalSeconds;
-            _txtClaudePrompt.Text = string.IsNullOrEmpty(_cfg.Claude.SystemPrompt)
-                ? Models.ClaudeConfig.DefaultPrompt
-                : _cfg.Claude.SystemPrompt;
-        }
-
-        private Models.ClaudeConfig ReadClaudeConfigFromUI() => new()
-        {
-            ApiKey = _txtClaudeApiKey.Text.Trim(),
-            WatchSymbols = [.. _txtClaudeSymbols.Text.Split(',').Select(s => s.Trim().ToUpper()).Where(s => s.Length > 0)],
-            PollIntervalSeconds = (int)_nudClaudePollSec.Value,
-            SystemPrompt = _txtClaudePrompt.Text,
-            Model = "claude-opus-4-7",
-        };
-
-        private BotConfig ReadBotConfigFromUI() => new()
-        {
-            Enabled = true,
-            WatchFolder = _txtWatchFolder.Text,
-            MaxRiskPercent = (double)_nudRisk.Value,
-            MaxTradesPerDay = (int)_nudMaxTrades.Value,
-            PollIntervalMs = (int)_nudPollMs.Value,
-            AllowedPairs = [.. _txtAllowedPairs.Text.Split(',').Select(p => p.Trim().ToUpper())],
-            AutoLotCalculation = _chkAutoLotBot.Checked,
-            MinRRRatio = (double)_nudMinRR.Value,
-            EnforceRR = _chkEnforceRR.Checked,
-            DrawdownProtectionEnabled = _chkDrawdown.Checked,
-            EmergencyCloseDrawdownPct = (double)_nudDrawdownPct.Value,
-            RetryOnFail = true,
-            RetryCount = (int)_nudRetry.Value,
-            RetryDelayMs = 1000,
-            AutoStartOnLaunch = _chkAutoStart.Checked,
-            MagicNumber = 999001
-        };
-
-        // ── Log ───────────────────────────────────────────────────
-
-        public void Log(string msg, Color? color = null)
-        {
-            if (InvokeRequired) { Invoke(() => Log(msg, color)); return; }
-            string line = $"[{DateTime.Now:HH:mm:ss}] {msg}\n";
-            Serilog.Log.Information("{msg}", msg);
-            _txtLog.SuspendLayout();
-            int start = _txtLog.TextLength;
-            _txtLog.AppendText(line);
-            _txtLog.Select(start, line.Length);
-            _txtLog.SelectionColor = color ?? C_TEXT;
-            _txtLog.Select(_txtLog.TextLength, 0);
-            _txtLog.ResumeLayout();
-            _txtLog.ScrollToCaret();
-        }
-
-        // ── Util ──────────────────────────────────────────────────
-
-        private void UIThread(Action a)
-        {
-            if (InvokeRequired) Invoke(a);
-            else a();
+            _txtLog.AppendText($"[{DateTime.Now:HH:mm:ss}] {msg}\n");
         }
 
         private bool AssertConnected()
         {
             if (_bridge?.IsConnected == true) return true;
-            Log("❌ Not connected to MT5. Click Connect first.", C_RED);
+            Log("Not connected", C_RED);
             return false;
         }
 
-        private static bool Confirm(string msg) =>
-            MessageBox.Show(msg, "Confirm", MessageBoxButtons.YesNo, MessageBoxIcon.Warning)
-                == DialogResult.Yes;
-
-        private static void SetBtnState(Button btn, bool enabled)
-        {
-            if (btn.InvokeRequired) btn.Invoke(() => btn.Enabled = enabled);
-            else btn.Enabled = enabled;
-        }
-
-        private async void OnFormClosingAsync(object? sender, FormClosingEventArgs e)
-        {
-            _refreshTimer.Stop();
-            await StopClaudeAsync();
-            await StopBotAsync();
-            await _settings.SaveAsync(_cfg);
-            _bridge?.Dispose();
-        }
-
-        private void DrawTabItem(object? sender, DrawItemEventArgs e)
-        {
-            if (sender is not TabControl tc) return;
-            var tab = tc.TabPages[e.Index];
-            bool sel = e.Index == tc.SelectedIndex;
-            using var brush = new SolidBrush(sel ? C_CARD : C_SURFACE);
-            e.Graphics.FillRectangle(brush, e.Bounds);
-            using var tb = new SolidBrush(sel ? C_ACCENT : C_MUTED);
-            e.Graphics.DrawString(tab.Text, tc.Font, tb,
-                e.Bounds.Left + 4, e.Bounds.Top + 6);
-        }
-
-        [System.Runtime.InteropServices.DllImport("Gdi32.dll")]
-        private static extern IntPtr CreateRoundRectRgn(int x1, int y1, int x2, int y2, int cx, int cy);
-
-        // ══════════════════════════════════════════════════════════
-        //  SAMPLE DATA
-        // ══════════════════════════════════════════════════════════
-
-        private static string DefaultJsonSample() =>
-            JsonConvert.SerializeObject(new TradeRequest
-            {
-                Pair = "GBPUSD", TradeType = TradeType.BUY,
-                OrderType = OrderType.MARKET, EntryPrice = 0,
-                StopLoss = 1.34750, TakeProfit = 1.35200,
-                TakeProfit2 = 1.35500, LotSize = 0.01,
-                Comment = "BotSignal", MagicNumber = 999001,
-                MoveSLToBreakevenAfterTP1 = true
-            }, Formatting.Indented);
-
-        private static string BotHelpText() => """
-            TOTAL AUTOMATION — HOW IT WORKS
-            ─────────────────────────────────────
-
-            1. Connect the app to MT5 (Named Pipe)
-            2. Start the bot → it watches your folder
-            3. Drop a .json file into the folder
-
-            The bot then:
-              ✓ Reads and validates the JSON
-              ✓ Checks: pair allowed, daily limit,
-                R:R ratio, free margin, equity
-              ✓ Auto-calculates lot size from risk %
-              ✓ Sends trade to MT5 via named pipe
-              ✓ Retries on failure (configurable)
-              ✓ Moves file to /executed or /rejected
-              ✓ Logs to trade_history.csv
-
-            Every 2 seconds the bot also:
-              ✓ Checks SL → breakeven (at 60% TP)
-              ✓ Monitors drawdown → emergency close
-              ✓ Polls folder (watcher backup)
-
-            SIGNAL FOLDERS:
-            ─────────────────────────────────────
-            signals/              ← drop files here
-            signals/executed/     ← success
-            signals/rejected/     ← validation fail
-            signals/error/        ← bad JSON
-            signals/trade_history.csv ← full log
-
-            SAMPLE JSON FILE:
-            ─────────────────────────────────────
-            {
-              "pair": "GBPUSD",
-              "trade_type": "BUY",
-              "order_type": "MARKET",
-              "entry_price": 0,
-              "stop_loss": 1.34750,
-              "take_profit": 1.35200,
-              "lot_size": 0.01,
-              "comment": "MyBot",
-              "magic_number": 999001
-            }
-
-            REQUIREMENTS:
-            ─────────────────────────────────────
-            • MT5 running with TradingBotEA.ex5
-            • AutoTrading ON (green button in MT5)
-            • Pipe name matches in both apps
-            """;
+        // ───────────────── PLACEHOLDERS ─────────────────
+        private void ApplySettingsToUI() { }
+        private void ReadBotConfigFromUI() { }
     }
 }
