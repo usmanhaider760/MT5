@@ -54,6 +54,8 @@ Project review summary:
 - Logging/audit module added: Modules/LoggingDiagnostics/TradeAuditLogger.cs. It writes structured audit entries through Serilog and is not wired into runtime execution yet.
 - Demo testing checklist added: docs/DEMO_TESTING_CHECKLIST.md.
 - Demo testing is not marked complete because it requires live validation on an MT5 demo account.
+- UI clipping fix added for scaled/shorter Windows desktops: trade, positions, history, bot, Claude, and log tabs now support safer scrolling/anchoring, and account labels avoid overlap.
+- Account refresh diagnostic added: if MT5 returns account/server identity but Balance/Equity/Free Margin are all 0.00, the UI highlights the values and logs a demo-account funding/login hint.
 
 Status file note:
 - AGENTS.md expects this file at docs/DEVELOPMENT_STATUS.md.

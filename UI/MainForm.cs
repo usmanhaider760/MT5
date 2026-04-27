@@ -15,6 +15,7 @@ namespace MT5TradingBot.UI
         private ClaudeSignalService? _claude;
         private readonly SettingsManager _settings = new();
         private AppSettings _cfg = new();
+        private bool _warnedZeroAccountValues;
 
         // ── Timers ────────────────────────────────────────────────
         private readonly System.Windows.Forms.Timer _refreshTimer = new() { Interval = 2500 };
@@ -56,7 +57,9 @@ namespace MT5TradingBot.UI
             if (_cfg.Bot.AutoStartOnLaunch && _bridge?.IsConnected == true)
                 await StartBotAsync();
 
-            Log("MT5 Trading Bot ready. Connect to MT5 to begin.", C_ACCENT);
+            Log(_bridge?.IsConnected == true
+                ? "MT5 Trading Bot ready. MT5 is connected."
+                : "MT5 Trading Bot ready. Connect to MT5 to begin.", C_ACCENT);
         }
 
         // ══════════════════════════════════════════════════════════
@@ -436,6 +439,23 @@ namespace MT5TradingBot.UI
                 _lblPnl.Text        = $"P&L: {(a.Profit >= 0 ? "+" : "")}${a.Profit:F2}";
                 _lblPnl.ForeColor   = a.Profit >= 0 ? C_GREEN : C_RED;
                 _lblMarginLvl.Text  = $"ML: {a.MarginLevel:F0}%";
+
+                bool hasAccountIdentity = a.AccountNumber > 0 || !string.IsNullOrWhiteSpace(a.Server);
+                bool accountValuesAreZero = a.Balance == 0 && a.Equity == 0 && a.FreeMargin == 0;
+
+                _lblBalance.ForeColor = accountValuesAreZero && hasAccountIdentity ? C_YELLOW : C_TEXT;
+                _lblEquity.ForeColor = accountValuesAreZero && hasAccountIdentity ? C_YELLOW : C_TEXT;
+                _lblFreeMargin.ForeColor = accountValuesAreZero && hasAccountIdentity ? C_YELLOW : C_TEXT;
+
+                if (hasAccountIdentity && accountValuesAreZero && !_warnedZeroAccountValues)
+                {
+                    _warnedZeroAccountValues = true;
+                    Log("MT5 is connected, but it returned Balance/Equity/Free Margin as 0.00. If MT5 Toolbox > Trade also shows 0.00, top up or recreate the Exness demo account. If MT5 shows funds, reattach TradingBotEA after login and reconnect the bot.", C_YELLOW);
+                }
+                else if (!accountValuesAreZero)
+                {
+                    _warnedZeroAccountValues = false;
+                }
             });
         }
 

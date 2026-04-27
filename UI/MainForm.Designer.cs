@@ -224,11 +224,17 @@ namespace MT5TradingBot.UI
             // ═════════════════════════════════════════════════════
             _pnlAccountBar = new Panel { Dock = DockStyle.Top, Height = 38, BackColor = C_SURFACE };
             _lblAccNum     = MkLbl("Account: —",     8,   12, C_MUTED);
-            _lblBalance    = MkLbl("Balance: —",     170, 12, C_TEXT);
-            _lblEquity     = MkLbl("Equity: —",      300, 12, C_TEXT);
-            _lblFreeMargin = MkLbl("Free Margin: —", 430, 12, C_TEXT);
-            _lblPnl        = MkLbl("P&L: —",         580, 12, C_TEXT);
-            _lblMarginLvl  = MkLbl("Margin Lvl: —",  680, 12, C_MUTED);
+            _lblBalance    = MkLbl("Balance: —",     330, 12, C_TEXT);
+            _lblEquity     = MkLbl("Equity: —",      470, 12, C_TEXT);
+            _lblFreeMargin = MkLbl("Free Margin: —", 610, 12, C_TEXT);
+            _lblPnl        = MkLbl("P&L: —",         770, 12, C_TEXT);
+            _lblMarginLvl  = MkLbl("Margin Lvl: —",  900, 12, C_MUTED);
+            ConfigureAccountLabel(_lblAccNum, 300);
+            ConfigureAccountLabel(_lblBalance, 130);
+            ConfigureAccountLabel(_lblEquity, 130);
+            ConfigureAccountLabel(_lblFreeMargin, 150);
+            ConfigureAccountLabel(_lblPnl, 120);
+            ConfigureAccountLabel(_lblMarginLvl, 120);
             _pnlAccountBar.Controls.AddRange(new Control[] {
                 _lblAccNum, _lblBalance, _lblEquity, _lblFreeMargin, _lblPnl, _lblMarginLvl });
 
@@ -242,11 +248,12 @@ namespace MT5TradingBot.UI
             };
 
             // ─── TRADE TAB ────────────────────────────────────────
-            _tabTrade     = new TabPage("  📈 Trade  ")    { BackColor = Color.FromArgb(18, 18, 26) };
+            _tabTrade     = new TabPage("  📈 Trade  ")    { BackColor = Color.FromArgb(18, 18, 26), AutoScroll = true };
             _pnlTradeLeft = new Panel
             {
                 Location = new Point(12, 8), Size = new Size(370, 680),
-                BackColor = Color.FromArgb(24, 25, 38), BorderStyle = BorderStyle.FixedSingle
+                BackColor = Color.FromArgb(24, 25, 38), BorderStyle = BorderStyle.FixedSingle,
+                Anchor = AnchorStyles.Left | AnchorStyles.Top | AnchorStyles.Bottom
             };
             _lblTradeHeader    = MkCardH("Manual Trade Entry", 14, 14);
             _lblPairLabel      = MkLbl("Pair",        14, 50,  C_MUTED);
@@ -303,7 +310,8 @@ namespace MT5TradingBot.UI
             _pnlTradeRight = new Panel
             {
                 Location = new Point(392, 8), Size = new Size(838, 680),
-                BackColor = Color.FromArgb(24, 25, 38), BorderStyle = BorderStyle.FixedSingle
+                BackColor = Color.FromArgb(24, 25, 38), BorderStyle = BorderStyle.FixedSingle,
+                Anchor = AnchorStyles.Left | AnchorStyles.Top | AnchorStyles.Right | AnchorStyles.Bottom
             };
             _lblJsonHeader = MkCardH("JSON Signal Input  (paste, load file, or drop)", 14, 14);
             _txtJson = new RichTextBox
@@ -311,21 +319,27 @@ namespace MT5TradingBot.UI
                 Location = new Point(14, 50), Size = new Size(808, 540),
                 BackColor = Color.FromArgb(14, 14, 22), ForeColor = Color.FromArgb(200, 220, 180),
                 Font = new Font("Consolas", 9.5f), BorderStyle = BorderStyle.None,
-                ScrollBars = RichTextBoxScrollBars.Vertical, AllowDrop = true
+                ScrollBars = RichTextBoxScrollBars.Vertical, AllowDrop = true,
+                Anchor = AnchorStyles.Left | AnchorStyles.Top | AnchorStyles.Right | AnchorStyles.Bottom
             };
             _btnJsonLoad   = MkBtn("📂 Load File",    14,  600, 130, C_ACCENT);
             _btnJsonExec   = MkBtn("⚡ Execute JSON", 154, 600, 140, C_GREEN);
             _btnJsonFmt    = MkBtn("🔧 Format",       304, 600, 100, C_YELLOW);
             _btnJsonSample = MkBtn("📋 Sample",       414, 600, 100, C_MUTED);
+            _btnJsonLoad.Anchor = AnchorStyles.Left | AnchorStyles.Bottom;
+            _btnJsonExec.Anchor = AnchorStyles.Left | AnchorStyles.Bottom;
+            _btnJsonFmt.Anchor = AnchorStyles.Left | AnchorStyles.Bottom;
+            _btnJsonSample.Anchor = AnchorStyles.Left | AnchorStyles.Bottom;
             _pnlTradeRight.Controls.AddRange(new Control[] {
                 _lblJsonHeader, _txtJson, _btnJsonLoad, _btnJsonExec, _btnJsonFmt, _btnJsonSample });
             _tabTrade.Controls.AddRange(new Control[] { _pnlTradeLeft, _pnlTradeRight });
 
             // ─── POSITIONS TAB ────────────────────────────────────
-            _tabPositions = new TabPage("  📊 Positions  ") { BackColor = Color.FromArgb(18, 18, 26) };
+            _tabPositions = new TabPage("  📊 Positions  ") { BackColor = Color.FromArgb(18, 18, 26), AutoScroll = true };
             _gridPos = MkGrid();
             _gridPos.Location = new Point(12, 8);
             _gridPos.Size     = new Size(1220, 580);
+            _gridPos.Anchor = AnchorStyles.Left | AnchorStyles.Top | AnchorStyles.Right | AnchorStyles.Bottom;
             _gridPos.Columns.Add("Ticket",   "Ticket");
             _gridPos.Columns.Add("Symbol",   "Symbol");
             _gridPos.Columns.Add("Type",     "Type");
@@ -341,13 +355,17 @@ namespace MT5TradingBot.UI
             _btnClosePos    = MkBtn("Close Selected", 12,  600, 150, C_RED);
             _btnCloseAllPos = MkBtn("Close ALL",      172, 600, 130, Color.FromArgb(160, 50, 50));
             _btnRefreshPos  = MkBtn("🔄 Refresh",     312, 600, 110, C_ACCENT);
+            _btnClosePos.Anchor = AnchorStyles.Left | AnchorStyles.Bottom;
+            _btnCloseAllPos.Anchor = AnchorStyles.Left | AnchorStyles.Bottom;
+            _btnRefreshPos.Anchor = AnchorStyles.Left | AnchorStyles.Bottom;
             _tabPositions.Controls.AddRange(new Control[] { _gridPos, _btnClosePos, _btnCloseAllPos, _btnRefreshPos });
 
             // ─── HISTORY TAB ──────────────────────────────────────
-            _tabHistory = new TabPage("  🗂 History  ") { BackColor = Color.FromArgb(18, 18, 26) };
+            _tabHistory = new TabPage("  🗂 History  ") { BackColor = Color.FromArgb(18, 18, 26), AutoScroll = true };
             _gridHistory = MkGrid();
             _gridHistory.Location = new Point(12, 8);
             _gridHistory.Size     = new Size(1220, 580);
+            _gridHistory.Anchor = AnchorStyles.Left | AnchorStyles.Top | AnchorStyles.Right | AnchorStyles.Bottom;
             _gridHistory.Columns.Add("Time",       "Time");
             _gridHistory.Columns.Add("Id",         "Id");
             _gridHistory.Columns.Add("Pair",       "Pair");
@@ -362,10 +380,12 @@ namespace MT5TradingBot.UI
             _gridHistory.Columns.Add("Error",      "Error");
             _btnImportHistory = MkBtn("📂 Load CSV Log", 12,  600, 150, C_ACCENT);
             _btnClearHistory  = MkBtn("Clear",           172, 600, 80,  C_MUTED);
+            _btnImportHistory.Anchor = AnchorStyles.Left | AnchorStyles.Bottom;
+            _btnClearHistory.Anchor = AnchorStyles.Left | AnchorStyles.Bottom;
             _tabHistory.Controls.AddRange(new Control[] { _gridHistory, _btnImportHistory, _btnClearHistory });
 
             // ─── BOT TAB ──────────────────────────────────────────
-            _tabBot = new TabPage("  🤖 Auto Bot  ") { BackColor = Color.FromArgb(18, 18, 26) };
+            _tabBot = new TabPage("  🤖 Auto Bot  ") { BackColor = Color.FromArgb(18, 18, 26), AutoScroll = true };
             _lblBotBadge = new Label
             {
                 Text = "● BOT STOPPED", ForeColor = C_RED,
@@ -423,7 +443,7 @@ namespace MT5TradingBot.UI
             _tabBot.Controls.AddRange(new Control[] { _lblBotBadge, _pnlBotCard, _pnlBotInfo, _btnOpenFolder });
 
             // ─── CLAUDE AI TAB ────────────────────────────────────
-            _tabClaude = new TabPage("  🧠 Claude AI  ") { BackColor = Color.FromArgb(18, 18, 26) };
+            _tabClaude = new TabPage("  🧠 Claude AI  ") { BackColor = Color.FromArgb(18, 18, 26), AutoScroll = true };
             _lblClaudeBadge = new Label
             {
                 Text = "● CLAUDE STOPPED", ForeColor = C_RED,
@@ -472,16 +492,19 @@ namespace MT5TradingBot.UI
             _tabClaude.Controls.AddRange(new Control[] { _lblClaudeBadge, _pnlClaudeCard, _pnlClaudePromptCard });
 
             // ─── LOG TAB ──────────────────────────────────────────
-            _tabLog = new TabPage("  📋 Log  ") { BackColor = Color.FromArgb(18, 18, 26) };
+            _tabLog = new TabPage("  📋 Log  ") { BackColor = Color.FromArgb(18, 18, 26), AutoScroll = true };
             _txtLog = new RichTextBox
             {
                 Location = new Point(12, 8), Size = new Size(1222, 640),
                 BackColor = Color.FromArgb(12, 12, 18), ForeColor = C_TEXT,
                 Font = new Font("Consolas", 9f), ReadOnly = true, BorderStyle = BorderStyle.None,
-                ScrollBars = RichTextBoxScrollBars.Vertical
+                ScrollBars = RichTextBoxScrollBars.Vertical,
+                Anchor = AnchorStyles.Left | AnchorStyles.Top | AnchorStyles.Right | AnchorStyles.Bottom
             };
             _btnClearLog = MkBtn("Clear",    12,  658, 100, C_MUTED);
             _btnSaveLog  = MkBtn("Save Log", 122, 658, 100, C_ACCENT);
+            _btnClearLog.Anchor = AnchorStyles.Left | AnchorStyles.Bottom;
+            _btnSaveLog.Anchor = AnchorStyles.Left | AnchorStyles.Bottom;
             _tabLog.Controls.AddRange(new Control[] { _txtLog, _btnClearLog, _btnSaveLog });
 
             // ── Assemble tabs ─────────────────────────────────────
@@ -519,6 +542,15 @@ namespace MT5TradingBot.UI
         private static Label MkLbl(string text, int x, int y, Color fg) =>
             new() { Text = text, Location = new Point(x, y), AutoSize = true,
                 ForeColor = fg, Font = new Font("Segoe UI", 9f) };
+
+        private static void ConfigureAccountLabel(Label label, int width)
+        {
+            label.AutoSize = false;
+            label.Width = width;
+            label.Height = 20;
+            label.AutoEllipsis = true;
+            label.Anchor = AnchorStyles.Left | AnchorStyles.Top;
+        }
 
         private static TextBox MkTxt(string text, int x, int y, int w) =>
             new() { Text = text, Location = new Point(x, y), Width = w,
