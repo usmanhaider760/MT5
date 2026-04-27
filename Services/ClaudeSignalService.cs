@@ -1,6 +1,7 @@
 using Anthropic;
 using Anthropic.Models.Messages;
 using MT5TradingBot.Models;
+using MT5TradingBot.Modules.BrokerIntegration;
 using Newtonsoft.Json;
 using System.Text;
 

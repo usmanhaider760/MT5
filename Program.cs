@@ -52,6 +52,11 @@ namespace MT5TradingBot
             services.AddSingleton<SettingsManager>();
             var provider = services.BuildServiceProvider();
 
+            // ── Splash / startup checks ───────────────────────────
+            using var splash = new SplashScreen();
+            splash.ShowDialog();
+            if (!splash.ShouldProceed) return;
+
             // ── Run ───────────────────────────────────────────────
             Application.Run(new MainForm());
 

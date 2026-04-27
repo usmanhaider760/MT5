@@ -1,5 +1,6 @@
 using MT5TradingBot.Core;
 using MT5TradingBot.Models;
+using MT5TradingBot.Modules.BrokerIntegration;
 using Newtonsoft.Json;
 using Serilog;
 
