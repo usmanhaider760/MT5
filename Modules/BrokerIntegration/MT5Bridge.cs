@@ -43,16 +43,17 @@ namespace MT5TradingBot.Modules.BrokerIntegration
 
         public async Task<TradeResult> OpenTradeAsync(TradeRequest req)
         {
-            Log($"→ OPEN {req.TradeType} {req.Pair} Lots:{req.LotSize:F2} SL:{req.StopLoss:F5} TP:{req.TakeProfit:F5}");
+            Log($"OPEN {req.TradeType} {req.Pair} Lots:{req.LotSize:F2} SL:{req.StopLoss:F5} TP:{req.TakeProfit:F5}");
             try
             {
-                var r = await SendAsync("OPEN_TRADE", req).ConfigureAwait(false);
+                var payload = JsonConvert.SerializeObject(ToMt5TradePayload(req), Formatting.None);
+                var r = await SendAsync("OPEN_TRADE", payload).ConfigureAwait(false);
                 if (r == null) return Fail(req.Id, "MT5_NO_RESPONSE", "No response from EA");
                 if (!r.Success) return Fail(req.Id, "MT5_REJECTED", r.Error);
 
                 var result = Deserialize<TradeResult>(r.Data)
                           ?? new TradeResult { RequestId = req.Id, Status = TradeStatus.Submitted };
-                Log($"← {result}");
+                Log($"MT5 response: {result}");
                 return result;
             }
             catch (Exception ex)
@@ -62,12 +63,31 @@ namespace MT5TradingBot.Modules.BrokerIntegration
             }
         }
 
+        private static object ToMt5TradePayload(TradeRequest req) => new
+        {
+            req.Id,
+            req.Pair,
+            req.TradeType,
+            req.OrderType,
+            req.EntryPrice,
+            req.StopLoss,
+            req.TakeProfit,
+            req.TakeProfit2,
+            req.LotSize,
+            req.Comment,
+            req.MagicNumber,
+            req.ExpiryMinutes,
+            req.MoveSLToBreakevenAfterTP1,
+            req.SlToBeTrigerPct,
+            req.CreatedAt
+        };
+
         public async Task<bool> CloseTradeAsync(long ticket)
         {
-            Log($"→ CLOSE #{ticket}");
+            Log($"CLOSE #{ticket}");
             var r = await SendAsync("CLOSE_TRADE", new { ticket }).ConfigureAwait(false);
             bool ok = r?.Success == true;
-            Log(ok ? $"← Closed #{ticket}" : $"← Close failed: {r?.Error}");
+            Log(ok ? $"Closed #{ticket}" : $"Close failed: {r?.Error}");
             return ok;
         }
 
@@ -118,7 +138,7 @@ namespace MT5TradingBot.Modules.BrokerIntegration
                     if (ok)
                     {
                         _reconnectAttempts = 0;
-                        Log("🔗 Connected to MT5 EA");
+                        Log("Connected to MT5 EA");
                     }
                     else
                     {
@@ -126,7 +146,7 @@ namespace MT5TradingBot.Modules.BrokerIntegration
                         if (_cfg.MaxReconnectAttempts > 0 &&
                             _reconnectAttempts >= _cfg.MaxReconnectAttempts)
                         {
-                            Log($"❌ Max reconnect attempts ({_cfg.MaxReconnectAttempts}) reached.");
+                            Log($"[ERROR] Max reconnect attempts ({_cfg.MaxReconnectAttempts}) reached.");
                             return;
                         }
                     }
@@ -134,7 +154,7 @@ namespace MT5TradingBot.Modules.BrokerIntegration
                 else
                 {
                     bool alive = await PingAsync().ConfigureAwait(false);
-                    if (!alive) Log("⚠ MT5 connection lost — will retry");
+                    if (!alive) Log("[WARN] MT5 connection lost - will retry");
                 }
 
                 await Task.Delay(_cfg.ReconnectIntervalMs, _cts.Token).ConfigureAwait(false);

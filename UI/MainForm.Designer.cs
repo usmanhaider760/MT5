@@ -1409,6 +1409,8 @@ namespace MT5TradingBot.UI
             _chkAutoLotBot.Name = "_chkAutoLotBot";
             _chkAutoLotBot.Size = new Size(104, 24);
             _chkAutoLotBot.TabIndex = 17;
+            _chkAutoLotBot.Text = "Auto calculate lot size";
+            _chkAutoLotBot.UseVisualStyleBackColor = false;
             // 
             // _chkEnforceRR
             // 
@@ -1416,6 +1418,8 @@ namespace MT5TradingBot.UI
             _chkEnforceRR.Name = "_chkEnforceRR";
             _chkEnforceRR.Size = new Size(104, 24);
             _chkEnforceRR.TabIndex = 18;
+            _chkEnforceRR.Text = "Enforce minimum R:R";
+            _chkEnforceRR.UseVisualStyleBackColor = false;
             // 
             // _chkDrawdown
             // 
@@ -1423,6 +1427,8 @@ namespace MT5TradingBot.UI
             _chkDrawdown.Name = "_chkDrawdown";
             _chkDrawdown.Size = new Size(104, 24);
             _chkDrawdown.TabIndex = 19;
+            _chkDrawdown.Text = "Enable drawdown protection";
+            _chkDrawdown.UseVisualStyleBackColor = false;
             // 
             // _chkAutoStart
             // 
@@ -1430,6 +1436,8 @@ namespace MT5TradingBot.UI
             _chkAutoStart.Name = "_chkAutoStart";
             _chkAutoStart.Size = new Size(104, 24);
             _chkAutoStart.TabIndex = 20;
+            _chkAutoStart.Text = "Auto start on launch";
+            _chkAutoStart.UseVisualStyleBackColor = false;
             // 
             // _btnStartBot
             // 

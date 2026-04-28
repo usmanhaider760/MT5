@@ -91,7 +91,11 @@ namespace MT5TradingBot.Services
             SetupFileWatcher();
             _heartbeatTask = Task.Run(HeartbeatLoopAsync, _cts.Token);
 
-            Log("🤖 Bot STARTED. Watching: " + _cfg.WatchFolder);
+            var pendingSignals = Directory.GetFiles(_cfg.WatchFolder, "*.json");
+            Log("[BOT] Bot STARTED. Watching: " + _cfg.WatchFolder);
+            Log(pendingSignals.Length == 0
+                ? "[BOT] Watch folder is ready. No pending .json signal files found."
+                : $"[BOT] Watch folder has {pendingSignals.Length} pending .json signal file(s).");
             OnBotStatusChanged?.Invoke(true);
         }
 
@@ -110,7 +114,7 @@ namespace MT5TradingBot.Services
                 catch (OperationCanceledException) { }
             }
 
-            Log("🛑 Bot STOPPED.");
+            Log("[BOT] Bot STOPPED.");
             OnBotStatusChanged?.Invoke(false);
         }
 
@@ -161,7 +165,7 @@ namespace MT5TradingBot.Services
                 catch (OperationCanceledException) { break; }
                 catch (Exception ex)
                 {
-                    Log($"⚠ Heartbeat error: {ex.Message}");
+                    Log($"[WARN] Heartbeat error: {ex.Message}");
                     await Task.Delay(2000, _cts.Token).ConfigureAwait(false);
                 }
             }
@@ -191,7 +195,7 @@ namespace MT5TradingBot.Services
 
         private void OnWatcherError(object _, ErrorEventArgs e)
         {
-            Log($"⚠ FileWatcher error: {e.GetException().Message} — polling will compensate");
+            Log($"[WARN] FileWatcher error: {e.GetException().Message} - polling will compensate");
             // Watcher can fail on network drives; polling backup covers it
         }
 
@@ -236,39 +240,47 @@ namespace MT5TradingBot.Services
             {
                 if (!File.Exists(path)) return;
 
+                Log($"[BOT] Signal file detected: {Path.GetFileName(path)}");
+
                 // Read with retry (file may be locked briefly by writer)
                 string json = await ReadFileWithRetryAsync(path).ConfigureAwait(false);
+                Log($"[BOT] Signal file read: {Path.GetFileName(path)}");
 
                 request = JsonConvert.DeserializeObject<TradeRequest>(json);
                 if (request == null)
                 {
-                    Log($"⚠ Could not deserialize: {Path.GetFileName(path)}");
+                    Log($"[WARN] Could not deserialize: {Path.GetFileName(path)}");
                     Archive(path, ErrorDir);
                     return;
                 }
 
+                Log($"[BOT] Parsed signal: {request}");
+
                 // Duplicate signal ID check (survives restarts)
                 if (_processedIds.ContainsKey(request.Id))
                 {
-                    Log($"⏭ Duplicate signal ID [{request.Id}] already processed — skipping");
+                    Log($"[BOT] Duplicate signal ID [{request.Id}] already processed - skipping");
                     Archive(path, RejectedDir);
                     return;
                 }
 
-                Log($"📄 Signal: {request}");
+                Log($"[BOT] Executing signal {request.Id}...");
                 result = await ExecuteWithRetryAsync(request).ConfigureAwait(false);
 
-                // Record ID after any execution attempt (success or rejection — not error)
+                // Record ID after any execution attempt (success or rejection - not error)
                 RecordProcessedId(request.Id);
 
                 Archive(path, result.IsSuccess ? ExecutedDir : RejectedDir);
+                Log(result.IsSuccess
+                    ? $"[BOT] Signal {request.Id} executed and archived to executed."
+                    : $"[BOT] Signal {request.Id} rejected and archived to rejected: {result.ErrorMessage}");
                 LogTrade(request, result);
                 OnTradeExecuted?.Invoke(result);
             }
             catch (OperationCanceledException) { }
             catch (Exception ex)
             {
-                Log($"❌ Error processing {Path.GetFileName(path)}: {ex.Message}");
+                Log($"[ERROR] Error processing {Path.GetFileName(path)}: {ex.Message}");
                 Archive(path, ErrorDir);
                 if (request != null && result == null)
                     LogTrade(request, Fail(request.Id, "EXCEPTION", ex.Message));
@@ -297,13 +309,13 @@ namespace MT5TradingBot.Services
 
                 if (result.IsSuccess) return result;
 
-                // Don't retry validation failures — they won't change
+                // Do not retry validation failures; they will not change.
                 if (result.ErrorCode is "VALIDATION" or "REJECTED_CONFIG" or "DAILY_LIMIT")
                     return result;
 
                 if (attempt < attempts)
                 {
-                    Log($"⏳ Retry {attempt}/{attempts} in {_cfg.RetryDelayMs}ms...");
+                    Log($"[BOT] Retry {attempt}/{attempts} in {_cfg.RetryDelayMs}ms...");
                     await Task.Delay(_cfg.RetryDelayMs, _cts.Token).ConfigureAwait(false);
                 }
             }
@@ -319,7 +331,7 @@ namespace MT5TradingBot.Services
         {
             if (_emergencyStopFired)
                 return Fail(request.Id, "EMERGENCY_STOP",
-                    "Emergency stop active — max drawdown hit. Restart bot to resume.");
+                    "Emergency stop active - max drawdown hit. Restart bot to resume.");
 
             await _tradeLock.WaitAsync(_cts.Token).ConfigureAwait(false);
             try
@@ -373,7 +385,7 @@ namespace MT5TradingBot.Services
                         account.Equity, _cfg.MaxRiskPercent,
                         refEntry, request.StopLoss, request.Pair);
 
-                    Log($"📊 Auto lot: {request.LotSize:F2} " +
+                    Log($"[BOT] Auto lot: {request.LotSize:F2} " +
                         $"(${LotCalculator.DollarRisk(request.LotSize, refEntry, request.StopLoss, request.Pair):F2} risk)" +
                         (livePrice > 0 ? $" @ live {(request.TradeType == Models.TradeType.BUY ? "Ask" : "Bid")} {livePrice:F5}" : " @ estimated price"));
                 }
@@ -385,7 +397,7 @@ namespace MT5TradingBot.Services
                         $"R:R {rr:F2} is below minimum {_cfg.MinRRRatio:F2}");
 
                 if (rr < _cfg.MinRRRatio)
-                    Log($"⚠ R:R {rr:F2} below minimum {_cfg.MinRRRatio:F2} — proceeding (enforce_rr=false)");
+                    Log($"[WARN] R:R {rr:F2} below minimum {_cfg.MinRRRatio:F2} - proceeding (enforce_rr=false)");
 
                 // ── 8. Margin check ────────────────────────────────
                 if (account.FreeMargin < account.Balance * 0.05)
@@ -407,9 +419,9 @@ namespace MT5TradingBot.Services
 
                     if (totalRiskPct > _cfg.MaxTotalRiskPercent)
                         return Fail(request.Id, "PORTFOLIO_RISK_CAP",
-                            $"Total risk would be {totalRiskPct:F1}% (${totalOpenRisk + newTradeRisk:F0}) — cap is {_cfg.MaxTotalRiskPercent:F1}%");
+                            $"Total risk would be {totalRiskPct:F1}% (${totalOpenRisk + newTradeRisk:F0}) - cap is {_cfg.MaxTotalRiskPercent:F1}%");
 
-                    Log($"📊 Portfolio risk: {totalRiskPct:F1}% / {_cfg.MaxTotalRiskPercent:F1}% cap");
+                    Log($"[BOT] Portfolio risk: {totalRiskPct:F1}% / {_cfg.MaxTotalRiskPercent:F1}% cap");
                 }
 
                 // ── 10. Spread check ───────────────────────────────
@@ -421,11 +433,11 @@ namespace MT5TradingBot.Services
                             return Fail(request.Id, "HIGH_SPREAD",
                                 $"{request.Pair} spread {symbolInfo.SpreadPips:F1} pips exceeds max {_cfg.MaxSpreadPips:F1} pips");
 
-                        Log($"📡 Spread: {symbolInfo.SpreadPips:F1} pips (max {_cfg.MaxSpreadPips:F1})");
+                        Log($"[BOT] Spread: {symbolInfo.SpreadPips:F1} pips (max {_cfg.MaxSpreadPips:F1})");
                     }
                     else
                     {
-                        Log($"⚠ Could not fetch spread for {request.Pair} — proceeding without check");
+                        Log($"[WARN] Could not fetch spread for {request.Pair} - proceeding without check");
                     }
                 }
 
@@ -436,7 +448,7 @@ namespace MT5TradingBot.Services
                 {
                     // Split into two half-lot positions: TP1 + TP2
                     double halfLot = Math.Max(0.01, Math.Round(request.LotSize / 2.0, 2));
-                    Log($"⚡ TP2 split: 2 × {halfLot:F2} lots — TP1:{request.TakeProfit:F5} TP2:{request.TakeProfit2:F5}");
+                    Log($"[BOT] TP2 split: 2 x {halfLot:F2} lots - TP1:{request.TakeProfit:F5} TP2:{request.TakeProfit2:F5}");
 
                     var req1 = ShallowClone(request);
                     req1.LotSize = halfLot;
@@ -452,11 +464,11 @@ namespace MT5TradingBot.Services
                     if (r1.IsSuccess)
                     {
                         _tradesToday++;
-                        Log($"✅ TP1 #{r1.Ticket} filled @ {r1.ExecutedPrice:F5}");
+                        Log($"[OK] TP1 #{r1.Ticket} filled @ {r1.ExecutedPrice:F5}");
                     }
                     else
                     {
-                        Log($"❌ TP1 rejected: {r1.ErrorMessage}");
+                        Log($"[ERROR] TP1 rejected: {r1.ErrorMessage}");
                         return r1; // don't open TP2 if TP1 failed
                     }
 
@@ -464,24 +476,24 @@ namespace MT5TradingBot.Services
                     if (r2.IsSuccess)
                     {
                         _tradesToday++;
-                        Log($"✅ TP2 #{r2.Ticket} filled @ {r2.ExecutedPrice:F5}");
+                        Log($"[OK] TP2 #{r2.Ticket} filled @ {r2.ExecutedPrice:F5}");
                     }
                     else
                     {
-                        Log($"⚠ TP2 rejected (TP1 is open): {r2.ErrorMessage}");
+                        Log($"[WARN] TP2 rejected (TP1 is open): {r2.ErrorMessage}");
                     }
 
-                    Log($"📊 Trades today: {_tradesToday}/{_cfg.MaxTradesPerDay}");
+                    Log($"[BOT] Trades today: {_tradesToday}/{_cfg.MaxTradesPerDay}");
                     return r1; // return TP1 result as the primary
                 }
 
-                Log($"⚡ Executing trade (R:R {rr:F2}, lot {request.LotSize:F2})");
+                Log($"[BOT] Sending trade to MT5 (R:R {rr:F2}, lot {request.LotSize:F2})");
                 var result = await _bridge.OpenTradeAsync(request).ConfigureAwait(false);
 
                 if (result.IsSuccess)
                 {
                     _tradesToday++;
-                    Log($"✅ #{result.Ticket} | Trades today: {_tradesToday}/{_cfg.MaxTradesPerDay}");
+                    Log($"[OK] MT5 accepted ticket #{result.Ticket} | Trades today: {_tradesToday}/{_cfg.MaxTradesPerDay}");
 
                     // Slippage check: only for MARKET orders where we have a live reference price
                     if (request.OrderType == OrderType.MARKET &&
@@ -492,15 +504,15 @@ namespace MT5TradingBot.Services
                         double pipSize = LotCalculator.GetPipSize(request.Pair.ToUpperInvariant());
                         double slippagePips = Math.Abs(result.ExecutedPrice - livePrice) / pipSize;
                         if (slippagePips > _cfg.MaxSlippagePips)
-                            Log($"⚠ HIGH SLIPPAGE on #{result.Ticket}: {slippagePips:F1} pips " +
+                            Log($"[WARN] HIGH SLIPPAGE on #{result.Ticket}: {slippagePips:F1} pips " +
                                 $"(expected {livePrice:F5}, filled {result.ExecutedPrice:F5})");
                         else
-                            Log($"📌 Slippage: {slippagePips:F1} pips (max {_cfg.MaxSlippagePips:F1})");
+                            Log($"[BOT] Slippage: {slippagePips:F1} pips (max {_cfg.MaxSlippagePips:F1})");
                     }
                 }
                 else
                 {
-                    Log($"❌ MT5 rejected: {result.ErrorMessage}");
+                    Log($"[ERROR] MT5 rejected: {result.ErrorMessage}");
                 }
 
                 return result;

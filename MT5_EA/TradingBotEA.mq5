@@ -173,13 +173,60 @@ string CmdGetAccount(string reqId)
    d += "\"Balance\":"        + DoubleToString(AccountInfoDouble(ACCOUNT_BALANCE),    2) + ",";
    d += "\"Equity\":"         + DoubleToString(AccountInfoDouble(ACCOUNT_EQUITY),     2) + ",";
    d += "\"Margin\":"         + DoubleToString(AccountInfoDouble(ACCOUNT_MARGIN),     2) + ",";
-   d += "\"FreeMargin\":"     + DoubleToString(AccountInfoDouble(ACCOUNT_FREEMARGIN), 2) + ",";
+   d += "\"FreeMargin\":"     + DoubleToString(AccountInfoDouble(ACCOUNT_MARGIN_FREE), 2) + ",";
    d += "\"MarginLevel\":"    + DoubleToString(AccountInfoDouble(ACCOUNT_MARGIN_LEVEL),2) + ",";
    d += "\"Profit\":"         + DoubleToString(AccountInfoDouble(ACCOUNT_PROFIT),     2) + ",";
    d += "\"Leverage\":"       + IntegerToString(AccountInfoInteger(ACCOUNT_LEVERAGE)) + ",";
    d += "\"IsConnected\":true";
    d += "}";
    return Ok(reqId, d);
+}
+
+//+------------------------------------------------------------------+
+//| Broker symbol resolver                                            |
+//+------------------------------------------------------------------+
+bool ResolveBrokerSymbol(string requested, string &resolved)
+{
+   resolved = "";
+   StringTrimLeft(requested);
+   StringTrimRight(requested);
+   StringReplace(requested, "/", "");
+
+   if(StringLen(requested) == 0)
+      return false;
+
+   if(SymbolSelect(requested, true))
+   {
+      resolved = requested;
+      return true;
+   }
+
+   int total = SymbolsTotal(false);
+   for(int i = 0; i < total; i++)
+   {
+      string candidate = SymbolName(i, false);
+      if(StringFind(candidate, requested) == 0)
+      {
+         if(SymbolSelect(candidate, true))
+         {
+            resolved = candidate;
+            return true;
+         }
+      }
+   }
+
+   total = SymbolsTotal(true);
+   for(int i = 0; i < total; i++)
+   {
+      string candidate = SymbolName(i, true);
+      if(StringFind(candidate, requested) == 0)
+      {
+         resolved = candidate;
+         return true;
+      }
+   }
+
+   return false;
 }
 
 //+------------------------------------------------------------------+
@@ -247,14 +294,21 @@ string CmdOpenTrade(string reqId, string json)
    bool isLimit  = (orderStr == "LIMIT");
    bool isStop   = (orderStr == "STOP");
 
+   string requestedSymbol = symbol;
+
    // Normalize symbol (remove / if present)
    StringReplace(symbol, "/", "");
    if(StringLen(symbol) == 0)
       return Err(reqId, "INVALID_PAIR", "Pair is empty");
 
-   // Check symbol exists
-   if(!SymbolSelect(symbol, true))
-      return Err(reqId, "INVALID_PAIR", "Symbol not found: " + symbol);
+   // Resolve broker suffixes/prefixes such as GBPUSDm, GBPUSDc, GBPUSD.pro.
+   string brokerSymbol = "";
+   if(!ResolveBrokerSymbol(symbol, brokerSymbol))
+      return Err(reqId, "INVALID_PAIR", "Symbol not found: " + symbol + ". Check broker suffix in MT5 Market Watch.");
+
+   if(brokerSymbol != symbol)
+      EA_Log("Resolved symbol " + requestedSymbol + " -> " + brokerSymbol);
+   symbol = brokerSymbol;
 
    // Validate SL/TP direction
    double ask = SymbolInfoDouble(symbol, SYMBOL_ASK);
@@ -378,8 +432,10 @@ string CmdGetSymbolInfo(string reqId, string json)
    string sym  = JsonStr(data, "symbol");
    StringReplace(sym, "/", "");
 
-   if(!SymbolSelect(sym, true))
-      return Err(reqId, "INVALID_SYMBOL", "Symbol not found: " + sym);
+   string brokerSymbol = "";
+   if(!ResolveBrokerSymbol(sym, brokerSymbol))
+      return Err(reqId, "INVALID_SYMBOL", "Symbol not found: " + sym + ". Check broker suffix in MT5 Market Watch.");
+   sym = brokerSymbol;
 
    double ask   = SymbolInfoDouble(sym, SYMBOL_ASK);
    double bid   = SymbolInfoDouble(sym, SYMBOL_BID);

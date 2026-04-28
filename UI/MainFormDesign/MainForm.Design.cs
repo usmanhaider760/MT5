@@ -261,6 +261,10 @@ namespace MT5TradingBot.UI
             _chkDrawdown.Location = new Point(18, 442);
             _chkAutoStart.Location = new Point(18, 476);
             _chkAutoLotBot.Size = _chkEnforceRR.Size = _chkDrawdown.Size = _chkAutoStart.Size = new Size(360, 24);
+            _chkAutoLotBot.Text = "Auto calculate lot size";
+            _chkEnforceRR.Text = "Enforce minimum R:R";
+            _chkDrawdown.Text = "Enable drawdown protection";
+            _chkAutoStart.Text = "Auto start on launch";
 
             _btnStartBot.Location = new Point(18, 532);
             _btnStartBot.Size = new Size(158, 42);
@@ -490,9 +494,10 @@ namespace MT5TradingBot.UI
                 {
                     checkBox.Font = F_BASE;
                     checkBox.ForeColor = C_TEXT;
-                    checkBox.BackColor = Color.Transparent;
+                    checkBox.BackColor = C_CARD;
                     checkBox.AutoSize = false;
                     checkBox.TextAlign = ContentAlignment.MiddleLeft;
+                    checkBox.UseVisualStyleBackColor = false;
                 }
                 else if (control is Button button)
                 {

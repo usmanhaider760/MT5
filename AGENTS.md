@@ -20,7 +20,7 @@ ForexBot is an MT5-connected forex trading system with:
 
 # Core Principles
 
-- Safety first — never bypass risk controls
+- Safety first - never bypass risk controls
 - AI assists, does NOT control money directly
 - User approval required before live trade execution
 - Keep modules separate and easy to audit
@@ -289,8 +289,8 @@ Codex must:
 
 System must follow:
 
-AI → Analysis  
-Rules → Validation  
-Risk → Control  
-User → Approval  
-Bot → Execution  
+AI -> Analysis  
+Rules -> Validation  
+Risk -> Control  
+User -> Approval  
+Bot -> Execution  

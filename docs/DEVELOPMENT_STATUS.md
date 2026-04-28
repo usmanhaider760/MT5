@@ -70,6 +70,28 @@ Project review summary:
 - Build verification completed after tab header fix: `dotnet build MT5TradingBot.csproj --no-restore -o .\bin\VerifyBuild` succeeds with 0 warnings and 0 errors.
 - UI design separation completed: MainForm layout/theme/drawing helpers moved into UI/MainFormDesign/MainForm.Design.cs as a partial class, leaving MainForm.cs focused on constructor flow, event wiring, and runtime behavior.
 - Build verification completed after design separation: `dotnet build MT5TradingBot.csproj --no-restore -o .\bin\VerifyBuild` succeeds with 0 warnings and 0 errors.
+- Mojibake cleanup completed: corrupted encoding text in MainForm.cs and AGENTS.md was replaced with readable ASCII comments, labels, log prefixes, and help text.
+- Build verification completed after mojibake cleanup: `dotnet build MT5TradingBot.csproj --no-restore -o .\bin\VerifyBuild` succeeds with 0 warnings and 0 errors.
+- Auto Bot signal diagnostics added: Start Bot now logs the watch folder, pending JSON files, MT5 account summary, and current open-position count before starting the watcher.
+- Auto Bot execution progress added: signal detection/read/parse/execution/archive steps are logged, and the UI refreshes MT5 account/position status after each accepted or rejected bot trade.
+- MT5 trade payload compatibility fixed: signal files can keep snake_case JSON fields, while MT5Bridge now sends PascalCase fields required by TradingBotEA.mq5.
+- Demo signal check completed: `C:\MT5Bot\signals\est_signal_001.json` was not pending; it had been moved to `C:\MT5Bot\signals\rejected`, and `trade_history.csv` showed `INVALID_PAIR: Pair is empty`.
+- Build verification completed after Auto Bot diagnostics/payload fix: `dotnet build MT5TradingBot.csproj --no-restore -o .\bin\VerifyBuild` succeeds with 0 warnings and 0 errors.
+- Auto Bot start feedback improved: pressing Start Bot now immediately updates the Bot tab badge, logs the button press, reports missing MT5 connection/watch-folder issues on the badge, and catches start failures with a visible error log.
+- Bot tab checkbox visibility fixed: Auto Lot, Enforce R:R, Drawdown Protection, and Auto Start checkbox captions are now assigned in the designer and styled with explicit readable colors at runtime.
+- Demo signal location rechecked: `C:\MT5Bot\signals\est_signal_001.json` still does not exist in the watch folder, so there is currently no pending signal file for Auto Bot to execute.
+- Build verification completed after Auto Bot UI feedback fixes: `dotnet build MT5TradingBot.csproj --no-restore -o .\bin\VerifyBuild` succeeds with 0 warnings and 0 errors.
+- MT5 OPEN_TRADE IPC payload fix completed: MT5Bridge now sends the PascalCase trade payload as a JSON string for `OPEN_TRADE`, matching TradingBotEA.mq5's existing `JsonStr(json, "data")` parsing behavior and preventing the EA from truncating nested trade data before `Pair`.
+- Build verification completed after OPEN_TRADE IPC payload fix: `dotnet build MT5TradingBot.csproj --no-restore -o .\bin\VerifyBuild` succeeds with 0 warnings and 0 errors.
+- MT5 EA broker-symbol resolver added: TradingBotEA.mq5 now resolves generic pairs such as `GBPUSD` to broker-specific symbols that start with that pair, such as `GBPUSDm`, `GBPUSDc`, or `GBPUSD.pro`, and applies the same resolver to `GET_SYMBOL_INFO`.
+- C# build verification completed after EA symbol-resolver change: `dotnet build MT5TradingBot.csproj --no-restore -o .\bin\VerifyBuild` succeeds with 0 warnings and 0 errors. MQL5 compile was not run from the shell because `metaeditor.exe`/`metaeditor64.exe` was not available on PATH.
+- MT5 EA deployment helper added: `scripts/Deploy-MT5EA.ps1` can list MT5 terminal data folders, copy `MT5_EA/TradingBotEA.mq5` into `MQL5\Experts`, and compile it with MetaEditor.
+- EA automated deploy verified: helper detected `C:\Users\A\AppData\Roaming\MetaQuotes\Terminal\D0E8209F77C8CF37AD8BF550E51FF075`, copied the EA, and compiled `TradingBotEA.ex5` with `0 errors, 0 warnings`.
+- Deprecated MQL5 account constant replaced: `ACCOUNT_FREEMARGIN` was updated to `ACCOUNT_MARGIN_FREE`.
+- C# build verification completed after deployment helper: `dotnet build MT5TradingBot.csproj --no-restore -o .\bin\VerifyBuild` succeeds with 0 warnings and 0 errors.
+- EA deploy status notification added: `scripts/Deploy-MT5EA.ps1` now writes `%APPDATA%\MT5TradingBot\ea_deploy_status.json`, and MainForm reads it on startup/connect to log that TradingBotEA compiled successfully and must be reloaded in MT5.
+- EA deploy status verified: deploy helper wrote the status file after compiling with `0 errors, 0 warnings`.
+- Build verification completed after EA deploy notification: `dotnet build MT5TradingBot.csproj --no-restore -o .\bin\VerifyBuild` succeeds with 0 warnings and 0 errors.
 
 Status file note:
 - AGENTS.md expects this file at docs/DEVELOPMENT_STATUS.md.
