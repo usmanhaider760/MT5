@@ -56,6 +56,20 @@ Project review summary:
 - Demo testing is not marked complete because it requires live validation on an MT5 demo account.
 - UI clipping fix added for scaled/shorter Windows desktops: trade, positions, history, bot, Claude, and log tabs now support safer scrolling/anchoring, and account labels avoid overlap.
 - Account refresh diagnostic added: if MT5 returns account/server identity but Balance/Equity/Free Margin are all 0.00, the UI highlights the values and logs a demo-account funding/login hint.
+- WinForms designer compatibility fix added: MainForm.Designer.cs no longer uses implicit array creation or target-typed new expressions that Visual Studio CodeDOM failed to process at line 260.
+- Build verification completed: `dotnet build MT5TradingBot.csproj --no-restore -o .\bin\VerifyBuild` succeeds with 0 warnings and 0 errors after restoring the full designer layout.
+- Visual Studio designer compatibility pass added: MainForm.Designer.cs now instantiates controls directly instead of assigning controls from custom factory methods, removes runtime-only text generation from InitializeComponent, and builds cleanly.
+- Full factory-helper removal completed: MainForm.Designer.cs no longer contains Mk*, Setup*, or ConfigureAccountLabel helper calls; bot help/prompt runtime text is initialized in MainForm.cs after InitializeComponent.
+- Designer visibility fix added: MainForm constructor now skips runtime wiring/loading while hosted by Visual Studio designer, MainForm.Designer.cs no longer references runtime theme constants, and tab drawing stays normal at design time.
+- Root responsive layout added: MainForm now uses a top-level TableLayoutPanel with fixed header/connection/account rows and a fill row for tabs, replacing direct form-level dock stacking.
+- UI stabilization pass added: MainForm now normalizes Trade, Positions, History, Bot, Claude, and Log tabs into TableLayoutPanel/FlowLayoutPanel containers at startup so Visual Studio placeholder sizes do not mix or overlap the runtime UI.
+- Build verification completed after UI stabilization: `dotnet build MT5TradingBot.csproj --no-restore -o .\bin\VerifyBuild` succeeds with 0 warnings and 0 errors.
+- UI/UX polish pass added: MainForm now applies centralized fonts, colors, label alignment, input/button sizing, account/connection bar positions, trade ticket layout, bot settings layout, Claude settings layout, data-grid styling, margins, and padding across all tabs.
+- Build verification completed after UI/UX polish: `dotnet build MT5TradingBot.csproj --no-restore -o .\bin\VerifyBuild` succeeds with 0 warnings and 0 errors.
+- Tab header clipping fix added: MainForm now uses a taller fixed tab item size and vertically centered TextRenderer drawing so tab captions are not cut at the bottom.
+- Build verification completed after tab header fix: `dotnet build MT5TradingBot.csproj --no-restore -o .\bin\VerifyBuild` succeeds with 0 warnings and 0 errors.
+- UI design separation completed: MainForm layout/theme/drawing helpers moved into UI/MainFormDesign/MainForm.Design.cs as a partial class, leaving MainForm.cs focused on constructor flow, event wiring, and runtime behavior.
+- Build verification completed after design separation: `dotnet build MT5TradingBot.csproj --no-restore -o .\bin\VerifyBuild` succeeds with 0 warnings and 0 errors.
 
 Status file note:
 - AGENTS.md expects this file at docs/DEVELOPMENT_STATUS.md.

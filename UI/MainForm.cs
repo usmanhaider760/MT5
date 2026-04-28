@@ -1,15 +1,16 @@
-using MT5TradingBot.Core;
+﻿using MT5TradingBot.Core;
 using MT5TradingBot.Models;
 using MT5TradingBot.Modules.BrokerIntegration;
 using MT5TradingBot.Services;
 using Newtonsoft.Json;
 using Serilog;
+using System.ComponentModel;
 
 namespace MT5TradingBot.UI
 {
     public sealed partial class MainForm : Form
     {
-        // ── Services ──────────────────────────────────────────────
+        // â”€â”€ Services â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         private MT5Bridge? _bridge;
         private AutoBotService? _bot;
         private ClaudeSignalService? _claude;
@@ -17,33 +18,29 @@ namespace MT5TradingBot.UI
         private AppSettings _cfg = new();
         private bool _warnedZeroAccountValues;
 
-        // ── Timers ────────────────────────────────────────────────
+        // â”€â”€ Timers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         private readonly System.Windows.Forms.Timer _refreshTimer = new() { Interval = 2500 };
 
-        // ── Theme constants (used by both Designer.cs and MainForm.cs) ─
-        private static readonly Color C_BG      = Color.FromArgb(13, 13, 19);
-        private static readonly Color C_SURFACE = Color.FromArgb(22, 22, 32);
-        private static readonly Color C_CARD    = Color.FromArgb(28, 29, 42);
-        private static readonly Color C_ACCENT  = Color.FromArgb(99, 179, 237);
-        private static readonly Color C_GREEN   = Color.FromArgb(72, 199, 142);
-        private static readonly Color C_RED     = Color.FromArgb(252, 95, 95);
-        private static readonly Color C_YELLOW  = Color.FromArgb(250, 199, 117);
-        private static readonly Color C_TEXT    = Color.FromArgb(218, 218, 230);
-        private static readonly Color C_MUTED   = Color.FromArgb(110, 110, 130);
-
-        // ══════════════════════════════════════════════════════════
+        // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
         public MainForm()
         {
             InitializeComponent();
-            WireEvents();
+            ApplyStableLayout();
 
-            if (!DesignMode)
+            if (!IsDesignerHosted())
             {
+                _tabControl.DrawMode = TabDrawMode.OwnerDrawFixed;
+                _rtbBotHelp.Text = BotHelpText();
+                _txtClaudePrompt.Text = ClaudeConfig.DefaultPrompt;
+                WireEvents();
                 _txtJson.Text = DefaultJsonSample();
                 _clockTimer.Start();
                 _ = InitAsync();
             }
         }
+
+        private bool IsDesignerHosted() =>
+            DesignMode || LicenseManager.UsageMode == LicenseUsageMode.Designtime;
 
         private async Task InitAsync()
         {
@@ -62,9 +59,9 @@ namespace MT5TradingBot.UI
                 : "MT5 Trading Bot ready. Connect to MT5 to begin.", C_ACCENT);
         }
 
-        // ══════════════════════════════════════════════════════════
-        //  WIRE EVENTS — named handlers only, no lambdas
-        // ══════════════════════════════════════════════════════════
+        // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+        //  WIRE EVENTS â€” named handlers only, no lambdas
+        // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
         private void WireEvents()
         {
             _clockTimer.Tick    += ClockTimer_Tick;
@@ -113,9 +110,9 @@ namespace MT5TradingBot.UI
             _btnSaveLog.Click  += BtnSaveLog_Click;
         }
 
-        // ══════════════════════════════════════════════════════════
+        // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
         //  CONNECT / DISCONNECT
-        // ══════════════════════════════════════════════════════════
+        // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
         private async Task ConnectAsync()
         {
             _bridge?.Dispose();
@@ -140,12 +137,12 @@ namespace MT5TradingBot.UI
             {
                 _bridge.StartReconnectLoop();
                 _refreshTimer.Start();
-                Log("✅ Connected to MT5 EA", C_GREEN);
+                Log("âœ… Connected to MT5 EA", C_GREEN);
                 await RefreshAsync();
             }
             else
             {
-                Log("❌ Cannot connect. Ensure:\n" +
+                Log("âŒ Cannot connect. Ensure:\n" +
                     "  1. MT5 is open\n" +
                     "  2. TradingBotEA.ex5 is attached to a chart\n" +
                     "  3. AutoTrading (green button) is ON in MT5\n" +
@@ -166,17 +163,17 @@ namespace MT5TradingBot.UI
             Log("Disconnected.");
         }
 
-        // ══════════════════════════════════════════════════════════
+        // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
         //  TRADE EXECUTION
-        // ══════════════════════════════════════════════════════════
+        // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
         private async Task SubmitTradeAsync(TradeType dir)
         {
             if (!AssertConnected()) return;
 
             if (!double.TryParse(_txtSL.Text, out double sl) || sl == 0)
-            { Log("❌ Invalid Stop Loss", C_RED); return; }
+            { Log("âŒ Invalid Stop Loss", C_RED); return; }
             if (!double.TryParse(_txtTP.Text, out double tp) || tp == 0)
-            { Log("❌ Invalid Take Profit", C_RED); return; }
+            { Log("âŒ Invalid Take Profit", C_RED); return; }
 
             double.TryParse(_txtEntry.Text, out double entry);
             double.TryParse(_txtTP2.Text, out double tp2);
@@ -203,7 +200,7 @@ namespace MT5TradingBot.UI
                 ? await _bot.ExecuteTradeWithValidationAsync(req)
                 : await _bridge!.OpenTradeAsync(req);
 
-            Log(result.IsSuccess ? $"✅ {result}" : $"❌ {result}", result.IsSuccess ? C_GREEN : C_RED);
+            Log(result.IsSuccess ? $"âœ… {result}" : $"âŒ {result}", result.IsSuccess ? C_GREEN : C_RED);
             AddHistoryRow(req, result);
         }
 
@@ -213,19 +210,19 @@ namespace MT5TradingBot.UI
             try
             {
                 var req = JsonConvert.DeserializeObject<TradeRequest>(_txtJson.Text);
-                if (req == null) { Log("❌ Invalid JSON structure", C_RED); return; }
+                if (req == null) { Log("âŒ Invalid JSON structure", C_RED); return; }
 
                 var (valid, err) = req.Validate();
-                if (!valid) { Log($"❌ Validation: {err}", C_RED); return; }
+                if (!valid) { Log($"âŒ Validation: {err}", C_RED); return; }
 
                 TradeResult result = _bot != null
                     ? await _bot.ExecuteTradeWithValidationAsync(req)
                     : await _bridge!.OpenTradeAsync(req);
 
-                Log(result.IsSuccess ? $"✅ {result}" : $"❌ {result}", result.IsSuccess ? C_GREEN : C_RED);
+                Log(result.IsSuccess ? $"âœ… {result}" : $"âŒ {result}", result.IsSuccess ? C_GREEN : C_RED);
                 AddHistoryRow(req, result);
             }
-            catch (JsonException ex) { Log($"❌ JSON parse error: {ex.Message}", C_RED); }
+            catch (JsonException ex) { Log($"âŒ JSON parse error: {ex.Message}", C_RED); }
         }
 
         private void LoadJsonFile()
@@ -242,12 +239,12 @@ namespace MT5TradingBot.UI
                 var obj = JsonConvert.DeserializeObject(_txtJson.Text);
                 _txtJson.Text = JsonConvert.SerializeObject(obj, Formatting.Indented);
             }
-            catch { Log("❌ Cannot format — invalid JSON", C_RED); }
+            catch { Log("âŒ Cannot format â€” invalid JSON", C_RED); }
         }
 
-        // ══════════════════════════════════════════════════════════
+        // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
         //  AUTO BOT
-        // ══════════════════════════════════════════════════════════
+        // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
         private async Task StartBotAsync()
         {
             if (!AssertConnected()) return;
@@ -259,7 +256,7 @@ namespace MT5TradingBot.UI
             _bot = new AutoBotService(_bridge!, _cfg.Bot);
             _bot.OnLog += msg => Log(msg);
             _bot.OnTradeExecuted += r =>
-                Log(r.IsSuccess ? $"🤖 Bot trade: {r}" : $"🤖 Bot rejected: {r.ErrorMessage}",
+                Log(r.IsSuccess ? $"ðŸ¤– Bot trade: {r}" : $"ðŸ¤– Bot rejected: {r.ErrorMessage}",
                     r.IsSuccess ? C_GREEN : C_RED);
             _bot.OnBotStatusChanged += on => UpdateBotBadge(on);
 
@@ -274,13 +271,13 @@ namespace MT5TradingBot.UI
             UpdateBotBadge(false);
         }
 
-        // ══════════════════════════════════════════════════════════
+        // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
         //  CLAUDE AI
-        // ══════════════════════════════════════════════════════════
+        // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
         private async Task StartClaudeAsync()
         {
             if (_bridge?.IsConnected != true)
-            { Log("❌ Connect to MT5 first.", C_RED); return; }
+            { Log("âŒ Connect to MT5 first.", C_RED); return; }
 
             _cfg.Claude = ReadClaudeConfigFromUI();
             await _settings.SaveAsync(_cfg);
@@ -296,13 +293,13 @@ namespace MT5TradingBot.UI
                     : bridge.OpenTradeAsync(req));
 
             _claude.OnLog            += msg => Log($"[Claude] {msg}");
-            _claude.OnSignalGenerated += req => Log($"🧠 Signal: {req}", C_ACCENT);
+            _claude.OnSignalGenerated += req => Log($"ðŸ§  Signal: {req}", C_ACCENT);
             _claude.OnStatusChanged  += on => UpdateClaudeBadge(on);
 
             try { await _claude.StartAsync(); }
             catch (Exception ex)
             {
-                Log($"❌ Claude start failed: {ex.Message}", C_RED);
+                Log($"âŒ Claude start failed: {ex.Message}", C_RED);
                 await _claude.DisposeAsync();
                 _claude = null;
             }
@@ -320,16 +317,16 @@ namespace MT5TradingBot.UI
         {
             UIThread(() =>
             {
-                _lblClaudeBadge.Text      = running ? "● CLAUDE RUNNING" : "● CLAUDE STOPPED";
+                _lblClaudeBadge.Text      = running ? "â— CLAUDE RUNNING" : "â— CLAUDE STOPPED";
                 _lblClaudeBadge.ForeColor = running ? C_GREEN : C_RED;
                 _btnStartClaude.Enabled   = !running;
                 _btnStopClaude.Enabled    = running;
             });
         }
 
-        // ══════════════════════════════════════════════════════════
+        // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
         //  POSITIONS
-        // ══════════════════════════════════════════════════════════
+        // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
         private async Task RefreshPositionsAsync()
         {
             if (_bridge?.IsConnected != true) return;
@@ -357,7 +354,7 @@ namespace MT5TradingBot.UI
             if (Confirm($"Close ticket #{t}?"))
             {
                 bool ok = await _bridge.CloseTradeAsync(t);
-                Log(ok ? $"✅ Closed #{t}" : $"❌ Failed to close #{t}", ok ? C_GREEN : C_RED);
+                Log(ok ? $"âœ… Closed #{t}" : $"âŒ Failed to close #{t}", ok ? C_GREEN : C_RED);
                 await RefreshPositionsAsync();
             }
         }
@@ -374,9 +371,9 @@ namespace MT5TradingBot.UI
             await RefreshPositionsAsync();
         }
 
-        // ══════════════════════════════════════════════════════════
+        // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
         //  REFRESH
-        // ══════════════════════════════════════════════════════════
+        // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
         private async Task RefreshAsync()
         {
             if (_bridge?.IsConnected != true) return;
@@ -395,9 +392,9 @@ namespace MT5TradingBot.UI
             catch { /* swallow on timer */ }
         }
 
-        // ══════════════════════════════════════════════════════════
+        // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
         //  R:R CALCULATOR
-        // ══════════════════════════════════════════════════════════
+        // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
         private void RecalcRR()
         {
             try
@@ -425,9 +422,9 @@ namespace MT5TradingBot.UI
             catch { /* parsing incomplete */ }
         }
 
-        // ══════════════════════════════════════════════════════════
+        // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
         //  UI HELPERS
-        // ══════════════════════════════════════════════════════════
+        // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
         private void UpdateAccountUI(AccountInfo a)
         {
             UIThread(() =>
@@ -475,7 +472,7 @@ namespace MT5TradingBot.UI
         {
             UIThread(() =>
             {
-                _lblBotBadge.Text      = running ? "● BOT RUNNING" : "● BOT STOPPED";
+                _lblBotBadge.Text      = running ? "â— BOT RUNNING" : "â— BOT STOPPED";
                 _lblBotBadge.ForeColor = running ? C_GREEN : C_RED;
                 _btnStartBot.Enabled   = !running;
                 _btnStopBot.Enabled    = running;
@@ -562,7 +559,7 @@ namespace MT5TradingBot.UI
             MagicNumber              = 999001
         };
 
-        // ── Log ───────────────────────────────────────────────────
+        // â”€â”€ Log â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         public void Log(string msg, Color? color = null)
         {
             if (InvokeRequired) { Invoke(() => Log(msg, color)); return; }
@@ -578,13 +575,13 @@ namespace MT5TradingBot.UI
             _txtLog.ScrollToCaret();
         }
 
-        // ── Utility ───────────────────────────────────────────────
+        // â”€â”€ Utility â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         private void UIThread(Action a) { if (InvokeRequired) Invoke(a); else a(); }
 
         private bool AssertConnected()
         {
             if (_bridge?.IsConnected == true) return true;
-            Log("❌ Not connected to MT5. Click Connect first.", C_RED);
+            Log("âŒ Not connected to MT5. Click Connect first.", C_RED);
             return false;
         }
 
@@ -606,23 +603,12 @@ namespace MT5TradingBot.UI
             _bridge?.Dispose();
         }
 
-        private void DrawTabItem(object? sender, DrawItemEventArgs e)
-        {
-            if (sender is not TabControl tc) return;
-            var tab = tc.TabPages[e.Index];
-            bool sel = e.Index == tc.SelectedIndex;
-            using var bg = new SolidBrush(sel ? C_CARD : C_SURFACE);
-            e.Graphics.FillRectangle(bg, e.Bounds);
-            using var fg = new SolidBrush(sel ? C_ACCENT : C_MUTED);
-            e.Graphics.DrawString(tab.Text, tc.Font, fg, e.Bounds.Left + 4, e.Bounds.Top + 6);
-        }
-
         [System.Runtime.InteropServices.DllImport("Gdi32.dll")]
         private static extern IntPtr CreateRoundRectRgn(int x1, int y1, int x2, int y2, int cx, int cy);
 
-        // ══════════════════════════════════════════════════════════
+        // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
         //  STATIC DATA
-        // ══════════════════════════════════════════════════════════
+        // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
         private static string DefaultJsonSample() =>
             JsonConvert.SerializeObject(new TradeRequest
             {
@@ -635,38 +621,38 @@ namespace MT5TradingBot.UI
             }, Formatting.Indented);
 
         private static string BotHelpText() => """
-            TOTAL AUTOMATION — HOW IT WORKS
-            ─────────────────────────────────────
+            TOTAL AUTOMATION â€” HOW IT WORKS
+            â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
             1. Connect the app to MT5 (Named Pipe)
-            2. Start the bot → it watches your folder
+            2. Start the bot â†’ it watches your folder
             3. Drop a .json file into the folder
 
             The bot then:
-              ✓ Reads and validates the JSON
-              ✓ Checks: pair allowed, daily limit,
+              âœ“ Reads and validates the JSON
+              âœ“ Checks: pair allowed, daily limit,
                 R:R ratio, free margin, equity
-              ✓ Auto-calculates lot size from risk %
-              ✓ Sends trade to MT5 via named pipe
-              ✓ Retries on failure (configurable)
-              ✓ Moves file to /executed or /rejected
-              ✓ Logs to trade_history.csv
+              âœ“ Auto-calculates lot size from risk %
+              âœ“ Sends trade to MT5 via named pipe
+              âœ“ Retries on failure (configurable)
+              âœ“ Moves file to /executed or /rejected
+              âœ“ Logs to trade_history.csv
 
             Every 2 seconds the bot also:
-              ✓ Checks SL → breakeven (at 60% TP)
-              ✓ Monitors drawdown → emergency close
-              ✓ Polls folder (watcher backup)
+              âœ“ Checks SL â†’ breakeven (at 60% TP)
+              âœ“ Monitors drawdown â†’ emergency close
+              âœ“ Polls folder (watcher backup)
 
             SIGNAL FOLDERS:
-            ─────────────────────────────────────
-            signals/              ← drop files here
-            signals/executed/     ← success
-            signals/rejected/     ← validation fail
-            signals/error/        ← bad JSON
-            signals/trade_history.csv ← full log
+            â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+            signals/              â† drop files here
+            signals/executed/     â† success
+            signals/rejected/     â† validation fail
+            signals/error/        â† bad JSON
+            signals/trade_history.csv â† full log
 
             SAMPLE JSON FILE:
-            ─────────────────────────────────────
+            â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
             {
               "pair": "GBPUSD",
               "trade_type": "BUY",
@@ -680,15 +666,15 @@ namespace MT5TradingBot.UI
             }
 
             REQUIREMENTS:
-            ─────────────────────────────────────
-            • MT5 running with TradingBotEA.ex5
-            • AutoTrading ON (green button in MT5)
-            • Pipe name matches in both apps
+            â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+            â€¢ MT5 running with TradingBotEA.ex5
+            â€¢ AutoTrading ON (green button in MT5)
+            â€¢ Pipe name matches in both apps
             """;
 
-        // ══════════════════════════════════════════════════════════
+        // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
         //  NAMED EVENT HANDLERS
-        // ══════════════════════════════════════════════════════════
+        // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
         private void ClockTimer_Tick(object? sender, EventArgs e)
             => _lblTime.Text = $"UTC {DateTime.UtcNow:HH:mm:ss}  |  Local {DateTime.Now:HH:mm:ss}";
 
@@ -751,3 +737,4 @@ namespace MT5TradingBot.UI
         }
     }
 }
+
