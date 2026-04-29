@@ -23,6 +23,25 @@ namespace MT5TradingBot.Models
     [JsonConverter(typeof(StringEnumConverter))]
     public enum ConnectionMode { NamedPipe, Socket }
 
+    public enum SignalCardStatus { Pending, Executing, Executed, Rejected, Error }
+
+    public sealed record class SignalCardInfo
+    {
+        public string          SignalId    { get; init; } = "";
+        public string          FileName    { get; init; } = "";
+        public string          FilePath    { get; init; } = "";
+        public string          Pair        { get; init; } = "";
+        public string          TradeType   { get; init; } = "";
+        public double          StopLoss    { get; init; }
+        public double          TakeProfit  { get; init; }
+        public double          LotSize     { get; init; }
+        public SignalCardStatus Status      { get; set;  } = SignalCardStatus.Pending;
+        public string          StatusText  { get; set;  } = "";
+        public long            Ticket      { get; set;  } = 0;
+        public DateTime        CreatedAt   { get; init; } = DateTime.MinValue;
+        public DateTime        Time        { get; set;  } = DateTime.Now;
+    }
+
     // ══════════════════════════════════════════════════════════════
     //  TRADE REQUEST  — JSON input from bot/user
     // ══════════════════════════════════════════════════════════════
@@ -182,6 +201,7 @@ namespace MT5TradingBot.Models
         public double FreeMargin { get; set; }
         public double MarginLevel { get; set; }
         public double Profit { get; set; }
+        public int Leverage { get; set; }
         public bool IsConnected { get; set; }
         public DateTime LastUpdated { get; set; } = DateTime.UtcNow;
     }

@@ -3,6 +3,7 @@ using System.Net.Sockets;
 using System.Text;
 using MT5TradingBot.Models;
 using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
 using Serilog;
 
 namespace MT5TradingBot.Modules.BrokerIntegration
@@ -119,6 +120,29 @@ namespace MT5TradingBot.Modules.BrokerIntegration
             var r = await SendAsync("GET_SYMBOL_INFO", new { symbol }).ConfigureAwait(false);
             if (r?.Success != true) return null;
             return Deserialize<SymbolInfo>(r.Data);
+        }
+
+        public async Task<JObject?> GetMarketSnapshotAsync(TradeRequest req, BotConfig bot)
+        {
+            var payload = JsonConvert.SerializeObject(new
+            {
+                symbol = req.Pair,
+                trade_type = req.TradeType.ToString(),
+                order_type = req.OrderType.ToString(),
+                entry_price = req.EntryPrice,
+                stop_loss = req.StopLoss,
+                take_profit = req.TakeProfit,
+                take_profit_2 = req.TakeProfit2,
+                lot_size = req.LotSize,
+                max_risk_pct = bot.MaxRiskPercent,
+                min_rr_ratio = bot.MinRRRatio,
+                daily_loss_limit_pct = bot.EmergencyCloseDrawdownPct,
+                max_spread_pips = bot.MaxSpreadPips
+            }, Formatting.None);
+
+            var r = await SendAsync("GET_MARKET_SNAPSHOT", payload).ConfigureAwait(false);
+            if (r?.Success != true) return null;
+            return Deserialize<JObject>(r.Data);
         }
 
         public void StartReconnectLoop() =>

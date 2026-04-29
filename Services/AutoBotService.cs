@@ -37,6 +37,7 @@ namespace MT5TradingBot.Services
 
         // ── State ─────────────────────────────────────────────────
         private readonly HashSet<string> _processing = [];   // files currently being handled
+        private readonly HashSet<string> _shownPaths = [];  // files queued in manual-execute mode
         private readonly HashSet<long> _slMovedTickets = []; // tickets where SL was already moved to BE
         private readonly Dictionary<long, LivePosition> _knownPositions = []; // for close detection
         private volatile bool _running;
@@ -46,11 +47,18 @@ namespace MT5TradingBot.Services
         private bool _emergencyStopFired;
 
         // ── Events ────────────────────────────────────────────────
-        public event Action<string>? OnLog;
-        public event Action<TradeResult>? OnTradeExecuted;
-        public event Action<bool>? OnBotStatusChanged;
+        public event Action<string>?         OnLog;
+        public event Action<TradeResult>?    OnTradeExecuted;
+        public event Action<bool>?           OnBotStatusChanged;
+        public event Action<SignalCardInfo>? OnSignalUpdate;
 
         public bool IsRunning => _running;
+
+        /// <summary>
+        /// When true the bot detects signal files and fires OnSignalUpdate (Pending card)
+        /// but does NOT auto-execute them. Trades are placed manually via the Play button.
+        /// </summary>
+        public bool ManualExecuteOnly { get; set; } = true;
 
         // ── Paths ─────────────────────────────────────────────────
         private string ExecutedDir    => Path.Combine(_cfg.WatchFolder, "executed");
@@ -221,8 +229,45 @@ namespace MT5TradingBot.Services
         //  PROCESS SIGNAL FILE
         // ══════════════════════════════════════════════════════════
 
+        private SignalCardInfo MakeCard(TradeRequest req, string path,
+            SignalCardStatus status, string statusText, long ticket = 0)
+        {
+            // When file has been archived, compute its new location so delete works correctly
+            string resolvedPath = status switch
+            {
+                SignalCardStatus.Executed => Path.Combine(_cfg.WatchFolder, "executed", Path.GetFileName(path)),
+                SignalCardStatus.Rejected => Path.Combine(_cfg.WatchFolder, "rejected", Path.GetFileName(path)),
+                SignalCardStatus.Error    => Path.Combine(_cfg.WatchFolder, "error",    Path.GetFileName(path)),
+                _                         => path
+            };
+            return new SignalCardInfo
+            {
+                SignalId   = req.Id,
+                FileName   = Path.GetFileName(path),
+                FilePath   = resolvedPath,
+                Pair       = req.Pair,
+                TradeType  = req.TradeType.ToString(),
+                StopLoss   = req.StopLoss,
+                TakeProfit = req.TakeProfit,
+                LotSize    = req.LotSize,
+                CreatedAt  = req.CreatedAt.ToLocalTime(),
+                Status     = status,
+                StatusText = statusText,
+                Ticket     = ticket
+            };
+        }
+
         private async Task ProcessSignalFileAsync(string path)
         {
+            // In manual-execute mode, skip files already shown to the user
+            if (ManualExecuteOnly)
+            {
+                await _fileLock.WaitAsync(_cts.Token).ConfigureAwait(false);
+                bool already = _shownPaths.Contains(path);
+                _fileLock.Release();
+                if (already) return;
+            }
+
             // Atomic lock: ensure each file handled exactly once
             await _fileLock.WaitAsync(_cts.Token).ConfigureAwait(false);
             bool added = _processing.Add(path);
@@ -255,16 +300,29 @@ namespace MT5TradingBot.Services
                 }
 
                 Log($"[BOT] Parsed signal: {request}");
+                OnSignalUpdate?.Invoke(MakeCard(request, path, SignalCardStatus.Pending, "Pending"));
+
+                // Manual-execute mode: show card and stop — user clicks ▶ to trade
+                if (ManualExecuteOnly)
+                {
+                    await _fileLock.WaitAsync(CancellationToken.None).ConfigureAwait(false);
+                    _shownPaths.Add(path);
+                    _fileLock.Release();
+                    Log($"[BOT] Signal {request.Id} queued — click ▶ Execute on the card to place trade.");
+                    return;
+                }
 
                 // Duplicate signal ID check (survives restarts)
                 if (_processedIds.ContainsKey(request.Id))
                 {
                     Log($"[BOT] Duplicate signal ID [{request.Id}] already processed - skipping");
                     Archive(path, RejectedDir);
+                    OnSignalUpdate?.Invoke(MakeCard(request, path, SignalCardStatus.Rejected, "Duplicate ID"));
                     return;
                 }
 
                 Log($"[BOT] Executing signal {request.Id}...");
+                OnSignalUpdate?.Invoke(MakeCard(request, path, SignalCardStatus.Executing, "Executing..."));
                 result = await ExecuteWithRetryAsync(request).ConfigureAwait(false);
 
                 // Record ID after any execution attempt (success or rejection - not error)
@@ -274,6 +332,10 @@ namespace MT5TradingBot.Services
                 Log(result.IsSuccess
                     ? $"[BOT] Signal {request.Id} executed and archived to executed."
                     : $"[BOT] Signal {request.Id} rejected and archived to rejected: {result.ErrorMessage}");
+                OnSignalUpdate?.Invoke(MakeCard(request, path,
+                    result.IsSuccess ? SignalCardStatus.Executed : SignalCardStatus.Rejected,
+                    result.IsSuccess ? $"#{result.Ticket}" : result.ErrorMessage,
+                    result.IsSuccess ? result.Ticket : 0));
                 LogTrade(request, result);
                 OnTradeExecuted?.Invoke(result);
             }
@@ -282,8 +344,12 @@ namespace MT5TradingBot.Services
             {
                 Log($"[ERROR] Error processing {Path.GetFileName(path)}: {ex.Message}");
                 Archive(path, ErrorDir);
-                if (request != null && result == null)
-                    LogTrade(request, Fail(request.Id, "EXCEPTION", ex.Message));
+                if (request != null)
+                {
+                    OnSignalUpdate?.Invoke(MakeCard(request, path, SignalCardStatus.Error, ex.Message));
+                    if (result == null)
+                        LogTrade(request, Fail(request.Id, "EXCEPTION", ex.Message));
+                }
             }
             finally
             {
@@ -450,50 +516,8 @@ namespace MT5TradingBot.Services
                 }
 
                 // ── 11. Execute ────────────────────────────────────
-                bool hasTp2 = request.TakeProfit2 > 0;
-
-                if (hasTp2)
-                {
-                    // Split into two half-lot positions: TP1 + TP2
-                    double halfLot = Math.Max(0.01, Math.Round(request.LotSize / 2.0, 2));
-                    Log($"[BOT] TP2 split: 2 x {halfLot:F2} lots - TP1:{request.TakeProfit:F5} TP2:{request.TakeProfit2:F5}");
-
-                    var req1 = ShallowClone(request);
-                    req1.LotSize = halfLot;
-                    req1.TakeProfit = request.TakeProfit;
-                    req1.Comment = request.Comment + "_TP1";
-
-                    var req2 = ShallowClone(request);
-                    req2.LotSize = halfLot;
-                    req2.TakeProfit = request.TakeProfit2;
-                    req2.Comment = request.Comment + "_TP2";
-
-                    var r1 = await _bridge.OpenTradeAsync(req1).ConfigureAwait(false);
-                    if (r1.IsSuccess)
-                    {
-                        _tradesToday++;
-                        Log($"[OK] TP1 #{r1.Ticket} filled @ {r1.ExecutedPrice:F5}");
-                    }
-                    else
-                    {
-                        Log($"[ERROR] TP1 rejected: {r1.ErrorMessage}");
-                        return r1; // don't open TP2 if TP1 failed
-                    }
-
-                    var r2 = await _bridge.OpenTradeAsync(req2).ConfigureAwait(false);
-                    if (r2.IsSuccess)
-                    {
-                        _tradesToday++;
-                        Log($"[OK] TP2 #{r2.Ticket} filled @ {r2.ExecutedPrice:F5}");
-                    }
-                    else
-                    {
-                        Log($"[WARN] TP2 rejected (TP1 is open): {r2.ErrorMessage}");
-                    }
-
-                    Log($"[BOT] Trades today: {_tradesToday}/{_cfg.MaxTradesPerDay}");
-                    return r1; // return TP1 result as the primary
-                }
+                if (request.TakeProfit2 > 0)
+                    Log($"[BOT] TP2 {request.TakeProfit2:F5} detected but one-click mode opens only one trade using TP {request.TakeProfit:F5}.");
 
                 Log($"[BOT] Sending trade to MT5 (R:R {rr:F2}, lot {request.LotSize:F2})");
                 var result = await _bridge.OpenTradeAsync(request).ConfigureAwait(false);
@@ -806,6 +830,9 @@ namespace MT5TradingBot.Services
         // ══════════════════════════════════════════════════════════
         //  DISPOSE
         // ══════════════════════════════════════════════════════════
+
+        /// <summary>Called by MainForm after manually archiving a signal file, so the watcher stops tracking it.</summary>
+        public void SignalFileArchived(string originalPath) => _shownPaths.Remove(originalPath);
 
         public async ValueTask DisposeAsync()
         {

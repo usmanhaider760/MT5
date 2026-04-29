@@ -122,10 +122,11 @@ namespace MT5TradingBot.UI
         private CheckBox _chkAutoStart;
         private Button _btnStartBot;
         private Button _btnStopBot;
-        private Panel _pnlBotInfo;
-        private Label _lblBotInfoHeader;
-        private RichTextBox _rtbBotHelp;
         private Button _btnOpenFolder;
+        private Button _btnBotInstructions;
+        private Panel _pnlSignalFeed;
+        private Label _lblSignalFeedHeader;
+        private FlowLayoutPanel _flpSignals;
 
         // ── Claude AI tab ─────────────────────────────────────────
         private Label _lblClaudeBadge;
@@ -253,10 +254,11 @@ namespace MT5TradingBot.UI
             _chkAutoStart = new CheckBox();
             _btnStartBot = new Button();
             _btnStopBot = new Button();
-            _pnlBotInfo = new Panel();
-            _lblBotInfoHeader = new Label();
-            _rtbBotHelp = new RichTextBox();
             _btnOpenFolder = new Button();
+            _btnBotInstructions = new Button();
+            _pnlSignalFeed = new Panel();
+            _lblSignalFeedHeader = new Label();
+            _flpSignals = new FlowLayoutPanel();
             _tabClaude = new TabPage();
             _lblClaudeBadge = new Label();
             _pnlClaudeCard = new Panel();
@@ -326,7 +328,6 @@ namespace MT5TradingBot.UI
             ((System.ComponentModel.ISupportInitialize)_nudPollMs).BeginInit();
             ((System.ComponentModel.ISupportInitialize)_nudRetry).BeginInit();
             ((System.ComponentModel.ISupportInitialize)_nudDrawdownPct).BeginInit();
-            _pnlBotInfo.SuspendLayout();
             _tabClaude.SuspendLayout();
             _pnlClaudeCard.SuspendLayout();
             ((System.ComponentModel.ISupportInitialize)_nudClaudePollSec).BeginInit();
@@ -1153,8 +1154,8 @@ namespace MT5TradingBot.UI
             // 
             _tabBot.Controls.Add(_lblBotBadge);
             _tabBot.Controls.Add(_pnlBotCard);
-            _tabBot.Controls.Add(_pnlBotInfo);
             _tabBot.Controls.Add(_btnOpenFolder);
+            _tabBot.Controls.Add(_btnBotInstructions);
             _tabBot.Location = new Point(4, 24);
             _tabBot.Name = "_tabBot";
             _tabBot.Size = new Size(192, 72);
@@ -1451,7 +1452,7 @@ namespace MT5TradingBot.UI
             _btnStartBot.Name = "_btnStartBot";
             _btnStartBot.Size = new Size(160, 42);
             _btnStartBot.TabIndex = 21;
-            _btnStartBot.Text = "▶  Start Bot";
+            _btnStartBot.Text = "Start Monitoring";
             _btnStartBot.UseVisualStyleBackColor = false;
             // 
             // _btnStopBot
@@ -1470,34 +1471,6 @@ namespace MT5TradingBot.UI
             _btnStopBot.Text = "■  Stop Bot";
             _btnStopBot.UseVisualStyleBackColor = false;
             // 
-            // _pnlBotInfo
-            // 
-            _pnlBotInfo.Controls.Add(_lblBotInfoHeader);
-            _pnlBotInfo.Controls.Add(_rtbBotHelp);
-            _pnlBotInfo.Location = new Point(0, 0);
-            _pnlBotInfo.Name = "_pnlBotInfo";
-            _pnlBotInfo.Size = new Size(200, 100);
-            _pnlBotInfo.TabIndex = 2;
-            // 
-            // _lblBotInfoHeader
-            // 
-            _lblBotInfoHeader.AutoSize = true;
-            _lblBotInfoHeader.Font = new Font("Segoe UI Semibold", 10F, FontStyle.Bold);
-            _lblBotInfoHeader.ForeColor = Color.FromArgb(200, 210, 240);
-            _lblBotInfoHeader.Location = new Point(14, 14);
-            _lblBotInfoHeader.Name = "_lblBotInfoHeader";
-            _lblBotInfoHeader.Size = new Size(95, 19);
-            _lblBotInfoHeader.TabIndex = 0;
-            _lblBotInfoHeader.Text = "How It Works";
-            // 
-            // _rtbBotHelp
-            // 
-            _rtbBotHelp.Location = new Point(0, 0);
-            _rtbBotHelp.Name = "_rtbBotHelp";
-            _rtbBotHelp.Size = new Size(100, 96);
-            _rtbBotHelp.TabIndex = 1;
-            _rtbBotHelp.Text = "";
-            // 
             // _btnOpenFolder
             // 
             _btnOpenFolder.BackColor = Color.FromArgb(99, 179, 237);
@@ -1512,7 +1485,22 @@ namespace MT5TradingBot.UI
             _btnOpenFolder.TabIndex = 3;
             _btnOpenFolder.Text = "📁 Open Folder";
             _btnOpenFolder.UseVisualStyleBackColor = false;
-            // 
+            //
+            // _btnBotInstructions
+            //
+            _btnBotInstructions.BackColor = Color.FromArgb(100, 160, 220);
+            _btnBotInstructions.Cursor = Cursors.Hand;
+            _btnBotInstructions.FlatAppearance.BorderSize = 0;
+            _btnBotInstructions.FlatStyle = FlatStyle.Flat;
+            _btnBotInstructions.Font = new Font("Segoe UI Semibold", 9F);
+            _btnBotInstructions.ForeColor = Color.FromArgb(10, 10, 20);
+            _btnBotInstructions.Location = new Point(164, 680);
+            _btnBotInstructions.Name = "_btnBotInstructions";
+            _btnBotInstructions.Size = new Size(160, 30);
+            _btnBotInstructions.TabIndex = 4;
+            _btnBotInstructions.Text = "📋 How It Works";
+            _btnBotInstructions.UseVisualStyleBackColor = false;
+            //
             // _tabClaude
             // 
             _tabClaude.Controls.Add(_lblClaudeBadge);
@@ -1522,7 +1510,7 @@ namespace MT5TradingBot.UI
             _tabClaude.Name = "_tabClaude";
             _tabClaude.Size = new Size(192, 72);
             _tabClaude.TabIndex = 4;
-            _tabClaude.Text = "  \U0001f9e0 Claude AI  ";
+            _tabClaude.Text = "  AI API Config  ";
             // 
             // _lblClaudeBadge
             // 
@@ -1560,7 +1548,7 @@ namespace MT5TradingBot.UI
             _lblClaudeCardHeader.Name = "_lblClaudeCardHeader";
             _lblClaudeCardHeader.Size = new Size(124, 19);
             _lblClaudeCardHeader.TabIndex = 0;
-            _lblClaudeCardHeader.Text = "Claude AI Settings";
+            _lblClaudeCardHeader.Text = "AI API Configuration";
             // 
             // _lblApiKeyLabel
             // 
@@ -1678,7 +1666,7 @@ namespace MT5TradingBot.UI
             _btnStartClaude.Name = "_btnStartClaude";
             _btnStartClaude.Size = new Size(180, 42);
             _btnStartClaude.TabIndex = 11;
-            _btnStartClaude.Text = "▶  Start Claude";
+            _btnStartClaude.Text = "Start AI Monitor";
             _btnStartClaude.UseVisualStyleBackColor = false;
             // 
             // _btnStopClaude
@@ -1694,7 +1682,7 @@ namespace MT5TradingBot.UI
             _btnStopClaude.Name = "_btnStopClaude";
             _btnStopClaude.Size = new Size(180, 42);
             _btnStopClaude.TabIndex = 12;
-            _btnStopClaude.Text = "■  Stop Claude";
+            _btnStopClaude.Text = "Stop AI Monitor";
             _btnStopClaude.UseVisualStyleBackColor = false;
             // 
             // _pnlClaudePromptCard
@@ -1716,7 +1704,7 @@ namespace MT5TradingBot.UI
             _lblPromptHeader.Name = "_lblPromptHeader";
             _lblPromptHeader.Size = new Size(316, 19);
             _lblPromptHeader.TabIndex = 0;
-            _lblPromptHeader.Text = "System Prompt  (stable — cached by Claude API)";
+            _lblPromptHeader.Text = "System Prompt  (used only when AI analysis runs)";
             // 
             // _txtClaudePrompt
             // 
@@ -1975,8 +1963,6 @@ namespace MT5TradingBot.UI
             ((System.ComponentModel.ISupportInitialize)_nudPollMs).EndInit();
             ((System.ComponentModel.ISupportInitialize)_nudRetry).EndInit();
             ((System.ComponentModel.ISupportInitialize)_nudDrawdownPct).EndInit();
-            _pnlBotInfo.ResumeLayout(false);
-            _pnlBotInfo.PerformLayout();
             _tabClaude.ResumeLayout(false);
             _pnlClaudeCard.ResumeLayout(false);
             _pnlClaudeCard.PerformLayout();

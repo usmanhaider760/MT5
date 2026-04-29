@@ -92,6 +92,35 @@ Project review summary:
 - Build verification completed after EA deploy notification: `dotnet build MT5TradingBot.csproj --no-restore -o .\bin\VerifyBuild` succeeds with 0 warnings and 0 errors.
 - App icon added: generated `Assets/AppIcon.ico` and `Assets/AppIcon.png` with a trading chart/candlestick motif, set `Assets/AppIcon.ico` as the executable icon, and applied it to MainForm and SplashScreen through `UI/AppIcon.cs`.
 - Build verification completed after app icon update: `dotnet build MT5TradingBot.csproj --no-restore -o .\bin\VerifyBuild` succeeds with 0 warnings and 0 errors.
+- Auto Bot signal-card Execute button fixed: play button now uses a guarded execution path that logs click/start/result, resolves stale signal file paths across watch/rejected/error/executed folders, updates card status safely from background continuations, archives the signal after execution, and shows visible card errors instead of failing silently.
+- Build verification completed after signal-card Execute fix: `dotnet build MT5TradingBot.csproj --no-restore -o .\bin\VerifyBuild` succeeds with 0 warnings and 0 errors.
+- Auto Bot manual execution requirement enforced: Start Monitoring now only validates settings, watches the signal folder, and creates/updates signal rows; trade placement is explicitly started from the signal-row Play button.
+- AutoBotService now defaults to manual-execute-only mode so monitoring cannot auto-place trades if a caller forgets to set the flag.
+- Build verification completed after manual Play-button enforcement: `dotnet build MT5TradingBot.csproj --no-restore -o .\bin\VerifyBuild` succeeds with 0 warnings and 0 errors.
+- Auto Bot duplicate execution fix added: signal-row Play clicks are now guarded per signal ID, and TP2 no longer splits one approval into two MT5 orders; one Play click opens one trade using the main take-profit.
+- Build verification completed after duplicate execution fix: `dotnet build MT5TradingBot.csproj --no-restore -o .\bin\VerifyBuild` succeeds with 0 warnings and 0 errors.
+- Auto Bot trade row controls added: Play is shown only for executable pending signal rows, status colors are neutral, running trade P/L is displayed prominently in green/red, and each executed row now has Auto close, pip target, and calculated money target controls.
+- Auto close behavior added for running signal-card trades: when enabled, target pips of 0 closes as soon as the trade is profitable; positive target pips closes after that pip profit is reached.
+- Build verification completed after trade row P/L and auto-close controls: `dotnet build MT5TradingBot.csproj --no-restore -o .\bin\VerifyBuild` succeeds with 0 warnings and 0 errors.
+- Auto Bot trade row completion pass added: auto-close controls are disabled until a row has an MT5 ticket, checking Auto close or editing pips triggers an immediate position refresh/check, and routine card refreshes no longer cause repeated auto-close refresh loops.
+- Build verification completed after trade row completion pass: `dotnet build MT5TradingBot.csproj --no-restore -o .\bin\VerifyBuild` succeeds with 0 warnings and 0 errors.
+- Auto Bot row visibility/control fix added: Auto close checkbox styling is now high contrast, pips and money targets use NumericUpDown controls, money and pips stay synchronized, money target drives auto-close, and executed rows can recover a missing ticket by matching the current MT5 position by pair/direction.
+- Build verification completed after auto-close visibility and target controls: `dotnet build MT5TradingBot.csproj --no-restore -o .\bin\VerifyBuild` succeeds with 0 warnings and 0 errors.
+- Auto Bot row P/L clipping fix added: P/L now has a full-width row with a wider performance indicator and the auto-close controls were moved lower to prevent overlap.
+- Build verification completed after Auto Bot row P/L layout fix: `dotnet build MT5TradingBot.csproj --no-restore -o .\bin\VerifyBuild` succeeds with 0 warnings and 0 errors.
+- AI API configuration tab update added: the Claude AI tab is now labeled AI API Config, copy/buttons describe AI API monitoring/configuration, bot startup performs a no-token AI API configuration check, and the splash checklist includes AI API Configuration.
+- Build verification completed after AI API config/status update: `dotnet build MT5TradingBot.csproj --no-restore -o .\bin\VerifyBuild` succeeds with 0 warnings and 0 errors.
+- Auto Bot Play review window added: signal-row Play now opens a live MT5 trade review dialog with account, session, symbol, price, positions, and risk JSON before execution; the dialog includes Auto close, pips target, money target, and a final Play / Start Trade button.
+- Review dialog auto-close targets are applied back to the signal row after a successful MT5 ticket, so the existing row auto-close monitor can close by money or pips.
+- Current review dialog marks candles, indicators, structure, levels, history, and news as unavailable because the current EA exposes account/symbol/positions only; a future EA snapshot command is needed for those live fields.
+- Build verification completed after Auto Bot Play review dialog: `dotnet build MT5TradingBot.csproj --no-restore -o .\bin\VerifyBuild` succeeds with 0 warnings and 0 errors.
+- MT5 EA market snapshot command added: `GET_MARKET_SNAPSHOT` now returns MT5-sourced account, session, symbol, price, candle, indicator, structure, level, position, history, and risk fields for the Auto Bot Play review window.
+- Desktop bridge integration added: `MT5Bridge.GetMarketSnapshotAsync` sends the trade/risk context to the EA as a JSON string, and MainForm uses the EA snapshot before falling back to the older local review snapshot.
+- EA automated deploy verified after snapshot update: `scripts/Deploy-MT5EA.ps1` copied and compiled `TradingBotEA.ex5` with 0 errors and 0 warnings. MT5 still needs the EA reloaded/reattached on the chart to use the new command.
+- Build verification completed after EA snapshot integration: `dotnet build MT5TradingBot.csproj --no-restore -o .\bin\VerifyBuild` succeeds with 0 warnings and 0 errors.
+- Auto Bot Play review UI updated: the raw JSON view was replaced with grouped live labels for account, price, trade risk, symbol, session, indicators, candles, structure, levels, positions, and news while keeping the latest JSON snapshot in the dialog backend.
+- Review dialog live refresh added: while the review window is open it refreshes `GET_MARKET_SNAPSHOT` every 2.5 seconds and updates the visible labels with the latest MT5 values.
+- Build verification completed after grouped review UI: `dotnet build MT5TradingBot.csproj --no-restore -o .\bin\VerifyBuild` succeeds with 0 warnings and 0 errors.
 
 Status file note:
 - AGENTS.md expects docs/DEVELOPMENT_STATUS.md, but the existing file was at repository root.

@@ -53,7 +53,7 @@ namespace MT5TradingBot.Services
             if (_running) return Task.CompletedTask;
             if (string.IsNullOrWhiteSpace(_cfg.ApiKey))
                 throw new InvalidOperationException(
-                    "Claude API key is required. Enter it in the Claude AI tab.");
+                    "AI API key is required. Enter it in the AI API Config tab.");
 
             _client  = new AnthropicClient { ApiKey = _cfg.ApiKey };
             _running = true;

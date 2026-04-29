@@ -217,29 +217,54 @@ namespace MT5TradingBot.UI
             _pnlBotCard.Margin = new Padding(0, 8, 10, 0);
             _pnlBotCard.AutoScroll = true;
 
-            _pnlBotInfo.Dock = DockStyle.Fill;
-            _pnlBotInfo.Margin = new Padding(0, 8, 0, 0);
+            _pnlSignalFeed.Dock = DockStyle.Fill;
+            _pnlSignalFeed.Margin = new Padding(0, 8, 0, 0);
 
             layout.Controls.Add(_lblBotBadge, 0, 0);
             layout.SetColumnSpan(_lblBotBadge, 2);
             layout.Controls.Add(_pnlBotCard, 0, 1);
-            layout.Controls.Add(_pnlBotInfo, 1, 1);
+            layout.Controls.Add(_pnlSignalFeed, 1, 1);
+
+            // Move utility buttons into the card panel so they render below Start/Stop
+            if (!_pnlBotCard.Controls.Contains(_btnOpenFolder))
+                _pnlBotCard.Controls.Add(_btnOpenFolder);
+            if (!_pnlBotCard.Controls.Contains(_btnBotInstructions))
+                _pnlBotCard.Controls.Add(_btnBotInstructions);
 
             ConfigureBotSettingsLayout();
+            ConfigureSignalFeedLayout();
+        }
 
-            var infoLayout = ResetPanelLayout(_pnlBotInfo, "_botInfoLayout", 1, 3);
-            infoLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 38F));
-            infoLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
-            infoLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 46F));
+        private void ConfigureSignalFeedLayout()
+        {
+            _pnlSignalFeed.Controls.Clear();
 
-            _lblBotInfoHeader.Dock = DockStyle.Fill;
-            _lblBotInfoHeader.TextAlign = ContentAlignment.MiddleLeft;
-            _rtbBotHelp.Dock = DockStyle.Fill;
-            _rtbBotHelp.Margin = new Padding(0, 8, 0, 8);
+            _lblSignalFeedHeader.Text      = "Signal Feed";
+            _lblSignalFeedHeader.Dock      = DockStyle.Top;
+            _lblSignalFeedHeader.Height    = 32;
+            _lblSignalFeedHeader.TextAlign = ContentAlignment.MiddleLeft;
+            _lblSignalFeedHeader.Padding   = new Padding(2, 0, 0, 0);
+            _lblSignalFeedHeader.Font      = new Font("Segoe UI Semibold", 10F, FontStyle.Bold);
+            _lblSignalFeedHeader.ForeColor = Color.FromArgb(200, 210, 240);
 
-            infoLayout.Controls.Add(_lblBotInfoHeader, 0, 0);
-            infoLayout.Controls.Add(_rtbBotHelp, 0, 1);
-            infoLayout.Controls.Add(CreateButtonRow("_botInfoButtons", _btnOpenFolder), 0, 2);
+            _flpSignals.Dock          = DockStyle.Fill;
+            _flpSignals.FlowDirection = FlowDirection.TopDown;
+            _flpSignals.WrapContents  = false;
+            _flpSignals.AutoScroll    = true;
+            _flpSignals.Padding       = new Padding(4);
+            _flpSignals.BackColor     = Color.FromArgb(13, 13, 19);
+
+            // Keep card widths in sync when the panel is resized
+            _flpSignals.Resize += (_, _) =>
+            {
+                int w = Math.Max(180, _flpSignals.ClientSize.Width - _flpSignals.Padding.Horizontal - 4);
+                foreach (var c in _flpSignals.Controls.OfType<Panel>())
+                    c.Width = w;
+            };
+
+            // Fill is processed after Top, so add Fill first then Top
+            _pnlSignalFeed.Controls.Add(_flpSignals);
+            _pnlSignalFeed.Controls.Add(_lblSignalFeedHeader);
         }
 
         private void ConfigureBotSettingsLayout()
@@ -270,6 +295,11 @@ namespace MT5TradingBot.UI
             _btnStartBot.Size = new Size(158, 42);
             _btnStopBot.Location = new Point(188, 532);
             _btnStopBot.Size = new Size(158, 42);
+
+            _btnOpenFolder.Location = new Point(18, 586);
+            _btnOpenFolder.Size = new Size(158, 34);
+            _btnBotInstructions.Location = new Point(188, 586);
+            _btnBotInstructions.Size = new Size(160, 34);
         }
 
         private void ConfigureClaudeTabLayout()
@@ -280,7 +310,7 @@ namespace MT5TradingBot.UI
             layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 36F));
             layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
 
-            _lblClaudeBadge.Text = "CLAUDE STOPPED";
+            _lblClaudeBadge.Text = "AI API NOT CHECKED";
             _lblClaudeBadge.Dock = DockStyle.Fill;
             _lblClaudeBadge.Margin = Padding.Empty;
             _lblClaudeBadge.TextAlign = ContentAlignment.MiddleLeft;
@@ -433,7 +463,6 @@ namespace MT5TradingBot.UI
             StyleDataGrid(_gridPos);
             StyleDataGrid(_gridHistory);
             StyleTextSurface(_txtJson);
-            StyleTextSurface(_rtbBotHelp);
             StyleTextSurface(_txtClaudePrompt);
             StyleTextSurface(_txtLog);
             StylePrimaryButton(_btnBuy, C_GREEN);
@@ -442,6 +471,8 @@ namespace MT5TradingBot.UI
             StylePrimaryButton(_btnStopBot, C_RED);
             StylePrimaryButton(_btnStartClaude, C_GREEN);
             StylePrimaryButton(_btnStopClaude, C_RED);
+            StylePrimaryButton(_btnBotInstructions, C_ACCENT);
+            StylePrimaryButton(_btnOpenFolder, C_ACCENT);
             _pnlRR.BackColor = Color.FromArgb(24, 25, 38);
         }
 
@@ -522,7 +553,6 @@ namespace MT5TradingBot.UI
                 _lblTradeHeader,
                 _lblJsonHeader,
                 _lblBotCardHeader,
-                _lblBotInfoHeader,
                 _lblClaudeCardHeader,
                 _lblPromptHeader
             })
