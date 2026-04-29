@@ -338,9 +338,64 @@ namespace MT5TradingBot.Models
         public MT5Settings Mt5 { get; set; } = new();
         public BotConfig Bot { get; set; } = new();
         public ClaudeConfig Claude { get; set; } = new();
+        public ApiIntegrationConfig ApiIntegrations { get; set; } = new();
         public string Theme { get; set; } = "Dark";
         public bool AutoConnectOnLaunch { get; set; } = false;
         public DateTime LastSaved { get; set; } = DateTime.UtcNow;
+    }
+
+    public sealed class ApiIntegrationConfig
+    {
+        [JsonProperty("ai_provider")]
+        public string AiProvider { get; set; } = "Claude";
+
+        [JsonProperty("openai_api_key")]
+        public string OpenAiApiKey { get; set; } = "";
+
+        [JsonProperty("openai_model")]
+        public string OpenAiModel { get; set; } = "gpt-5.1";
+
+        [JsonProperty("minimum_confidence_pct")]
+        public int MinimumConfidencePercent { get; set; } = 70;
+
+        [JsonProperty("news_provider")]
+        public string NewsProvider { get; set; } = "Trading Economics";
+
+        [JsonProperty("news_api_key")]
+        public string NewsApiKey { get; set; } = "";
+
+        [JsonProperty("news_currencies")]
+        public List<string> NewsCurrencies { get; set; } = ["USD", "GBP", "EUR", "JPY"];
+
+        [JsonProperty("news_impact_filter")]
+        public string NewsImpactFilter { get; set; } = "High only";
+
+        [JsonProperty("news_blackout_before_minutes")]
+        public int NewsBlackoutBeforeMinutes { get; set; } = 30;
+
+        [JsonProperty("news_blackout_after_minutes")]
+        public int NewsBlackoutAfterMinutes { get; set; } = 15;
+
+        [JsonProperty("telegram_bot_token")]
+        public string TelegramBotToken { get; set; } = "";
+
+        [JsonProperty("telegram_chat_id")]
+        public string TelegramChatId { get; set; } = "";
+
+        [JsonProperty("notify_signals")]
+        public bool NotifySignals { get; set; } = true;
+
+        [JsonProperty("notify_approval_needed")]
+        public bool NotifyApprovalNeeded { get; set; } = true;
+
+        [JsonProperty("notify_trade_opened")]
+        public bool NotifyTradeOpened { get; set; } = true;
+
+        [JsonProperty("notify_trade_closed")]
+        public bool NotifyTradeClosed { get; set; } = true;
+
+        [JsonProperty("notify_risk_blocked")]
+        public bool NotifyRiskBlocked { get; set; } = true;
     }
 
     // ══════════════════════════════════════════════════════════════

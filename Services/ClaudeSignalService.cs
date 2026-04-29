@@ -88,7 +88,20 @@ namespace MT5TradingBot.Services
             {
                 try { await AnalyzeAndSignalAsync().ConfigureAwait(false); }
                 catch (OperationCanceledException) { break; }
-                catch (Exception ex) { Log($"⚠ Analysis error: {ex.Message}"); }
+                catch (Exception ex)
+                {
+                    string friendly = CategorizeError(ex);
+                    Log($"[ERROR] {friendly}");
+                    // Stop the loop on auth errors — key is wrong, retrying won't help
+                    if (ex.Message.Contains("401") || ex.Message.Contains("authentication_error") ||
+                        ex.Message.Contains("invalid_api_key"))
+                    {
+                        Log("[ERROR] Stopping AI monitor — fix the API key in the AI API Config tab.");
+                        _running = false;
+                        OnStatusChanged?.Invoke(false);
+                        break;
+                    }
+                }
 
                 try
                 {
@@ -98,6 +111,24 @@ namespace MT5TradingBot.Services
                 }
                 catch (OperationCanceledException) { break; }
             }
+        }
+
+        private static string CategorizeError(Exception ex)
+        {
+            string msg = ex.Message;
+            if (msg.Contains("401") || msg.Contains("authentication_error") || msg.Contains("invalid_api_key"))
+                return "API authentication failed (401) — invalid API key";
+            if (msg.Contains("403"))
+                return "API forbidden (403) — key lacks permissions for this model";
+            if (msg.Contains("429") || msg.Contains("rate_limit"))
+                return "Rate limited (429) — will retry after interval";
+            if (msg.Contains("529") || msg.Contains("overloaded"))
+                return "API overloaded (529) — will retry after interval";
+            if (msg.Contains("model_not_found"))
+                return $"Model not found — check model name in settings";
+            if (msg.Contains("SocketException") || msg.Contains("HttpRequestException"))
+                return "Network error — check internet connection";
+            return $"Analysis error: {(msg.Length > 120 ? msg[..120] + "…" : msg)}";
         }
 
         // ══════════════════════════════════════════════════════════
@@ -123,7 +154,7 @@ namespace MT5TradingBot.Services
             var positions = await _bridge.GetPositionsAsync().ConfigureAwait(false);
 
             string marketData = BuildMarketDataPrompt(account, symbolPrices, positions);
-            Log($"🔍 Analyzing {_cfg.WatchSymbols.Count} symbol(s) via Claude...");
+            Log($"🔍 Analyzing {_cfg.WatchSymbols.Count} symbol(s) via Claude ({_cfg.Model})...");
 
             // ── Call Claude API ─────────────────────────────────────
             // System prompt is cached (stable); market data is volatile (not cached).

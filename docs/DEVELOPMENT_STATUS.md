@@ -123,6 +123,12 @@ Project review summary:
 - Auto Bot Play review UI updated: the raw JSON view was replaced with grouped live labels for account, price, trade risk, symbol, session, indicators, candles, structure, levels, positions, and news while keeping the latest JSON snapshot in the dialog backend.
 - Review dialog live refresh added: while the review window is open it refreshes `GET_MARKET_SNAPSHOT` every 2.5 seconds and updates the visible labels with the latest MT5 values.
 - Build verification completed after grouped review UI: `dotnet build MT5TradingBot.csproj --no-restore -o .\bin\VerifyBuild` succeeds with 0 warnings and 0 errors.
+- Auto Bot tab action row updated: Stop Bot was removed from the visible Auto Bot controls, Start Monitoring, Analysys pairs, Open Folder, and How It Works now sit in a top button row, and the settings/signal areas remain scrollable below.
+- Analysys pairs action added: the button uses the existing read-only market data and pair scanner modules to rank configured pairs and log spread/score/availability without placing trades.
+- Build verification completed after Auto Bot button/layout update: `dotnet build MT5TradingBot.csproj -p:UseAppHost=false -o obj\verify-build` succeeds with 0 warnings and 0 errors.
+- AI API Config tab expanded into a multi-service configuration panel: Claude/OpenAI provider settings, news/calendar API settings, Telegram notification settings, behavior controls, and per-service configuration checks are now visible and persisted.
+- External API settings model added through `ApiIntegrationConfig`; these settings are configuration-only for now except the existing Claude monitor/test path, so no new AI provider, news, or notification service can execute trades.
+- Build verification completed after AI API Config expansion: `dotnet build MT5TradingBot.csproj -p:UseAppHost=false -o obj\verify-build` succeeds with 0 warnings and 0 errors.
 
 Status file note:
 - AGENTS.md expects this file at docs/DEVELOPMENT_STATUS.md.

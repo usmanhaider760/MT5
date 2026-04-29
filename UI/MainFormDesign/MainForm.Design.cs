@@ -202,10 +202,11 @@ namespace MT5TradingBot.UI
 
         private void ConfigureBotTabLayout()
         {
-            var layout = ResetTabLayout(_tabBot, "_botTabLayout", 2, 2);
+            var layout = ResetTabLayout(_tabBot, "_botTabLayout", 2, 3);
             layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 570F));
             layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
             layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 36F));
+            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 52F));
             layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
 
             _lblBotBadge.Text = "BOT STOPPED";
@@ -222,14 +223,11 @@ namespace MT5TradingBot.UI
 
             layout.Controls.Add(_lblBotBadge, 0, 0);
             layout.SetColumnSpan(_lblBotBadge, 2);
-            layout.Controls.Add(_pnlBotCard, 0, 1);
-            layout.Controls.Add(_pnlSignalFeed, 1, 1);
-
-            // Move utility buttons into the card panel so they render below Start/Stop
-            if (!_pnlBotCard.Controls.Contains(_btnOpenFolder))
-                _pnlBotCard.Controls.Add(_btnOpenFolder);
-            if (!_pnlBotCard.Controls.Contains(_btnBotInstructions))
-                _pnlBotCard.Controls.Add(_btnBotInstructions);
+            var botButtons = CreateButtonRow("_botButtons", _btnStartBot, _btnAnalyzePairs, _btnOpenFolder, _btnBotInstructions);
+            layout.Controls.Add(botButtons, 0, 1);
+            layout.SetColumnSpan(botButtons, 2);
+            layout.Controls.Add(_pnlBotCard, 0, 2);
+            layout.Controls.Add(_pnlSignalFeed, 1, 2);
 
             ConfigureBotSettingsLayout();
             ConfigureSignalFeedLayout();
@@ -278,28 +276,32 @@ namespace MT5TradingBot.UI
             PlaceField(_lblMaxTradesLabel, _nudMaxTrades, 172, 110, 176);
             PlaceField(_lblPollMsLabel, _nudPollMs, 210, 130, 176);
             PlaceField(_lblRetryLabel, _nudRetry, 248, 110, 176);
-            PlaceField(_lblAllowedPairsLabel, _txtAllowedPairs, 286, 330, 176);
-            PlaceField(_lblDrawdownLabel, _nudDrawdownPct, 324, 110, 176);
 
-            _chkAutoLotBot.Location = new Point(18, 374);
-            _chkEnforceRR.Location = new Point(18, 408);
-            _chkDrawdown.Location = new Point(18, 442);
-            _chkAutoStart.Location = new Point(18, 476);
+            // Allowed pairs — CheckedListBox (label above, list below)
+            _lblAllowedPairsLabel.AutoSize = false;
+            _lblAllowedPairsLabel.Location = new Point(18, 289);
+            _lblAllowedPairsLabel.Size = new Size(150, 20);
+            _lblAllowedPairsLabel.TextAlign = ContentAlignment.MiddleLeft;
+            _clbAllowedPairs.Location = new Point(176, 286);
+            _clbAllowedPairs.Size = new Size(340, 148);
+
+            // Drawdown and checkboxes shifted down by 122 (148 - 26 = 122)
+            PlaceField(_lblDrawdownLabel, _nudDrawdownPct, 446, 110, 176);
+
+            _chkAutoLotBot.Location = new Point(18, 496);
+            _chkEnforceRR.Location = new Point(18, 530);
+            _chkDrawdown.Location = new Point(18, 564);
+            _chkAutoStart.Location = new Point(18, 598);
             _chkAutoLotBot.Size = _chkEnforceRR.Size = _chkDrawdown.Size = _chkAutoStart.Size = new Size(360, 24);
             _chkAutoLotBot.Text = "Auto calculate lot size";
             _chkEnforceRR.Text = "Enforce minimum R:R";
             _chkDrawdown.Text = "Enable drawdown protection";
             _chkAutoStart.Text = "Auto start on launch";
 
-            _btnStartBot.Location = new Point(18, 532);
-            _btnStartBot.Size = new Size(158, 42);
-            _btnStopBot.Location = new Point(188, 532);
-            _btnStopBot.Size = new Size(158, 42);
-
-            _btnOpenFolder.Location = new Point(18, 586);
-            _btnOpenFolder.Size = new Size(158, 34);
-            _btnBotInstructions.Location = new Point(188, 586);
-            _btnBotInstructions.Size = new Size(160, 34);
+            _btnStartBot.Size = new Size(158, 38);
+            _btnAnalyzePairs.Size = new Size(158, 38);
+            _btnOpenFolder.Size = new Size(140, 38);
+            _btnBotInstructions.Size = new Size(150, 38);
         }
 
         private void ConfigureClaudeTabLayout()
@@ -349,19 +351,66 @@ namespace MT5TradingBot.UI
             _lblClaudeCardHeader.Location = new Point(18, 16);
             _lblClaudeCardHeader.Size = new Size(330, 24);
 
-            PlaceField(_lblApiKeyLabel, _txtClaudeApiKey, 58, 320, 186);
-            PlaceField(_lblModelLabel, _lblModelValue, 96, 320, 186);
-            PlaceField(_lblSymbolsLabel, _txtClaudeSymbols, 134, 320, 186);
-            PlaceField(_lblPollSecLabel, _nudClaudePollSec, 172, 130, 186);
+            PlaceField(_lblAiProviderLabel, _cmbAiProvider, 58, 170, 186);
+            PlaceField(_lblApiKeyLabel, _txtClaudeApiKey, 96, 320, 186);
+            _lblApiKeyLabel.Text = "Claude API Key";
+            PlaceField(_lblModelLabel, _txtClaudeModel, 134, 320, 186);
+            _lblModelLabel.Text = "Claude Model";
+            PlaceField(_lblOpenAiKeyLabel, _txtOpenAiApiKey, 172, 320, 186);
+            PlaceField(_lblOpenAiModelLabel, _txtOpenAiModel, 210, 220, 186);
+            PlaceField(_lblSymbolsLabel, _txtClaudeSymbols, 248, 320, 186);
+            PlaceField(_lblPollSecLabel, _nudClaudePollSec, 286, 130, 186);
+            PlaceField(_lblConfidenceLabel, _nudAiConfidence, 324, 90, 186);
 
-            _lblClaudeNote1.Location = new Point(18, 224);
+            _btnTestClaudeApi.Location = new Point(18, 366);
+            _btnTestClaudeApi.Size = new Size(178, 36);
+            _lblApiTestStatus.Location = new Point(208, 374);
+            _lblApiTestStatus.Size = new Size(320, 18);
+
+            _lblNewsHeader.Location = new Point(18, 426);
+            _lblNewsHeader.Size = new Size(330, 24);
+            PlaceField(_lblNewsProviderLabel, _cmbNewsProvider, 466, 190, 186);
+            PlaceField(_lblNewsApiKeyLabel, _txtNewsApiKey, 504, 320, 186);
+            PlaceField(_lblNewsCurrenciesLabel, _txtNewsCurrencies, 542, 320, 186);
+            PlaceField(_lblNewsImpactLabel, _cmbNewsImpact, 580, 170, 186);
+            PlaceField(_lblNewsBlackoutLabel, _nudNewsBefore, 618, 70, 186);
+            _nudNewsAfter.Location = new Point(268, 618);
+            _nudNewsAfter.Size = new Size(70, 26);
+
+            _btnTestNewsApi.Location = new Point(18, 660);
+            _btnTestNewsApi.Size = new Size(178, 34);
+            _lblNewsTestStatus.Location = new Point(208, 668);
+            _lblNewsTestStatus.Size = new Size(320, 18);
+
+            _lblNotifyHeader.Location = new Point(18, 720);
+            _lblNotifyHeader.Size = new Size(330, 24);
+            PlaceField(_lblTelegramTokenLabel, _txtTelegramBotToken, 760, 320, 186);
+            PlaceField(_lblTelegramChatLabel, _txtTelegramChatId, 798, 190, 186);
+
+            _chkNotifySignals.Location = new Point(186, 838);
+            _chkNotifyApproval.Location = new Point(320, 838);
+            _chkNotifyOpened.Location = new Point(186, 868);
+            _chkNotifyClosed.Location = new Point(320, 868);
+            _chkNotifyRisk.Location = new Point(186, 898);
+            _chkNotifySignals.Size = new Size(124, 24);
+            _chkNotifyApproval.Size = new Size(160, 24);
+            _chkNotifyOpened.Size = new Size(124, 24);
+            _chkNotifyClosed.Size = new Size(124, 24);
+            _chkNotifyRisk.Size = new Size(124, 24);
+
+            _btnTestTelegram.Location = new Point(18, 936);
+            _btnTestTelegram.Size = new Size(178, 34);
+            _lblTelegramTestStatus.Location = new Point(208, 944);
+            _lblTelegramTestStatus.Size = new Size(320, 18);
+
+            _lblClaudeNote1.Location = new Point(18, 992);
             _lblClaudeNote1.Size = new Size(500, 22);
-            _lblClaudeNote2.Location = new Point(18, 252);
+            _lblClaudeNote2.Location = new Point(18, 1020);
             _lblClaudeNote2.Size = new Size(500, 22);
 
-            _btnStartClaude.Location = new Point(18, 314);
+            _btnStartClaude.Location = new Point(18, 1066);
             _btnStartClaude.Size = new Size(178, 42);
-            _btnStopClaude.Location = new Point(208, 314);
+            _btnStopClaude.Location = new Point(208, 1066);
             _btnStopClaude.Size = new Size(178, 42);
         }
 
@@ -468,9 +517,12 @@ namespace MT5TradingBot.UI
             StylePrimaryButton(_btnBuy, C_GREEN);
             StylePrimaryButton(_btnSell, C_RED);
             StylePrimaryButton(_btnStartBot, C_GREEN);
-            StylePrimaryButton(_btnStopBot, C_RED);
+            StylePrimaryButton(_btnAnalyzePairs, C_ACCENT);
             StylePrimaryButton(_btnStartClaude, C_GREEN);
             StylePrimaryButton(_btnStopClaude, C_RED);
+            StylePrimaryButton(_btnTestClaudeApi, C_ACCENT);
+            StylePrimaryButton(_btnTestNewsApi, C_ACCENT);
+            StylePrimaryButton(_btnTestTelegram, C_ACCENT);
             StylePrimaryButton(_btnBotInstructions, C_ACCENT);
             StylePrimaryButton(_btnOpenFolder, C_ACCENT);
             _pnlRR.BackColor = Color.FromArgb(24, 25, 38);
@@ -554,6 +606,8 @@ namespace MT5TradingBot.UI
                 _lblJsonHeader,
                 _lblBotCardHeader,
                 _lblClaudeCardHeader,
+                _lblNewsHeader,
+                _lblNotifyHeader,
                 _lblPromptHeader
             })
             {

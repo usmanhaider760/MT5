@@ -113,7 +113,7 @@ namespace MT5TradingBot.UI
         private Label _lblRetryLabel;
         private NumericUpDown _nudRetry;
         private Label _lblAllowedPairsLabel;
-        private TextBox _txtAllowedPairs;
+        private CheckedListBox _clbAllowedPairs;
         private Label _lblDrawdownLabel;
         private NumericUpDown _nudDrawdownPct;
         private CheckBox _chkAutoLotBot;
@@ -121,7 +121,7 @@ namespace MT5TradingBot.UI
         private CheckBox _chkDrawdown;
         private CheckBox _chkAutoStart;
         private Button _btnStartBot;
-        private Button _btnStopBot;
+        private Button _btnAnalyzePairs;
         private Button _btnOpenFolder;
         private Button _btnBotInstructions;
         private Panel _pnlSignalFeed;
@@ -132,18 +132,55 @@ namespace MT5TradingBot.UI
         private Label _lblClaudeBadge;
         private Panel _pnlClaudeCard;
         private Label _lblClaudeCardHeader;
+        private Label _lblAiProviderLabel;
+        private ComboBox _cmbAiProvider;
         private Label _lblApiKeyLabel;
         private TextBox _txtClaudeApiKey;
         private Label _lblModelLabel;
         private Label _lblModelValue;
+        private TextBox _txtClaudeModel;
+        private Label _lblOpenAiKeyLabel;
+        private TextBox _txtOpenAiApiKey;
+        private Label _lblOpenAiModelLabel;
+        private TextBox _txtOpenAiModel;
         private Label _lblSymbolsLabel;
         private TextBox _txtClaudeSymbols;
         private Label _lblPollSecLabel;
         private NumericUpDown _nudClaudePollSec;
+        private Label _lblConfidenceLabel;
+        private NumericUpDown _nudAiConfidence;
+        private Label _lblNewsHeader;
+        private Label _lblNewsProviderLabel;
+        private ComboBox _cmbNewsProvider;
+        private Label _lblNewsApiKeyLabel;
+        private TextBox _txtNewsApiKey;
+        private Label _lblNewsCurrenciesLabel;
+        private TextBox _txtNewsCurrencies;
+        private Label _lblNewsImpactLabel;
+        private ComboBox _cmbNewsImpact;
+        private Label _lblNewsBlackoutLabel;
+        private NumericUpDown _nudNewsBefore;
+        private NumericUpDown _nudNewsAfter;
+        private Button _btnTestNewsApi;
+        private Label _lblNewsTestStatus;
+        private Label _lblNotifyHeader;
+        private Label _lblTelegramTokenLabel;
+        private TextBox _txtTelegramBotToken;
+        private Label _lblTelegramChatLabel;
+        private TextBox _txtTelegramChatId;
+        private CheckBox _chkNotifySignals;
+        private CheckBox _chkNotifyApproval;
+        private CheckBox _chkNotifyOpened;
+        private CheckBox _chkNotifyClosed;
+        private CheckBox _chkNotifyRisk;
+        private Button _btnTestTelegram;
+        private Label _lblTelegramTestStatus;
         private Label _lblClaudeNote1;
         private Label _lblClaudeNote2;
         private Button _btnStartClaude;
         private Button _btnStopClaude;
+        private Button _btnTestClaudeApi;
+        private Label  _lblApiTestStatus;
         private Panel _pnlClaudePromptCard;
         private Label _lblPromptHeader;
         private RichTextBox _txtClaudePrompt;
@@ -245,7 +282,7 @@ namespace MT5TradingBot.UI
             _lblRetryLabel = new Label();
             _nudRetry = new NumericUpDown();
             _lblAllowedPairsLabel = new Label();
-            _txtAllowedPairs = new TextBox();
+            _clbAllowedPairs = new CheckedListBox();
             _lblDrawdownLabel = new Label();
             _nudDrawdownPct = new NumericUpDown();
             _chkAutoLotBot = new CheckBox();
@@ -253,7 +290,7 @@ namespace MT5TradingBot.UI
             _chkDrawdown = new CheckBox();
             _chkAutoStart = new CheckBox();
             _btnStartBot = new Button();
-            _btnStopBot = new Button();
+            _btnAnalyzePairs = new Button();
             _btnOpenFolder = new Button();
             _btnBotInstructions = new Button();
             _pnlSignalFeed = new Panel();
@@ -263,18 +300,55 @@ namespace MT5TradingBot.UI
             _lblClaudeBadge = new Label();
             _pnlClaudeCard = new Panel();
             _lblClaudeCardHeader = new Label();
+            _lblAiProviderLabel = new Label();
+            _cmbAiProvider = new ComboBox();
             _lblApiKeyLabel = new Label();
             _txtClaudeApiKey = new TextBox();
             _lblModelLabel = new Label();
             _lblModelValue = new Label();
+            _txtClaudeModel = new TextBox();
+            _lblOpenAiKeyLabel = new Label();
+            _txtOpenAiApiKey = new TextBox();
+            _lblOpenAiModelLabel = new Label();
+            _txtOpenAiModel = new TextBox();
             _lblSymbolsLabel = new Label();
             _txtClaudeSymbols = new TextBox();
             _lblPollSecLabel = new Label();
             _nudClaudePollSec = new NumericUpDown();
+            _lblConfidenceLabel = new Label();
+            _nudAiConfidence = new NumericUpDown();
+            _lblNewsHeader = new Label();
+            _lblNewsProviderLabel = new Label();
+            _cmbNewsProvider = new ComboBox();
+            _lblNewsApiKeyLabel = new Label();
+            _txtNewsApiKey = new TextBox();
+            _lblNewsCurrenciesLabel = new Label();
+            _txtNewsCurrencies = new TextBox();
+            _lblNewsImpactLabel = new Label();
+            _cmbNewsImpact = new ComboBox();
+            _lblNewsBlackoutLabel = new Label();
+            _nudNewsBefore = new NumericUpDown();
+            _nudNewsAfter = new NumericUpDown();
+            _btnTestNewsApi = new Button();
+            _lblNewsTestStatus = new Label();
+            _lblNotifyHeader = new Label();
+            _lblTelegramTokenLabel = new Label();
+            _txtTelegramBotToken = new TextBox();
+            _lblTelegramChatLabel = new Label();
+            _txtTelegramChatId = new TextBox();
+            _chkNotifySignals = new CheckBox();
+            _chkNotifyApproval = new CheckBox();
+            _chkNotifyOpened = new CheckBox();
+            _chkNotifyClosed = new CheckBox();
+            _chkNotifyRisk = new CheckBox();
+            _btnTestTelegram = new Button();
+            _lblTelegramTestStatus = new Label();
             _lblClaudeNote1 = new Label();
             _lblClaudeNote2 = new Label();
             _btnStartClaude = new Button();
             _btnStopClaude = new Button();
+            _btnTestClaudeApi = new Button();
+            _lblApiTestStatus = new Label();
             _pnlClaudePromptCard = new Panel();
             _lblPromptHeader = new Label();
             _txtClaudePrompt = new RichTextBox();
@@ -1185,7 +1259,7 @@ namespace MT5TradingBot.UI
             _pnlBotCard.Controls.Add(_lblRetryLabel);
             _pnlBotCard.Controls.Add(_nudRetry);
             _pnlBotCard.Controls.Add(_lblAllowedPairsLabel);
-            _pnlBotCard.Controls.Add(_txtAllowedPairs);
+            _pnlBotCard.Controls.Add(_clbAllowedPairs);
             _pnlBotCard.Controls.Add(_lblDrawdownLabel);
             _pnlBotCard.Controls.Add(_nudDrawdownPct);
             _pnlBotCard.Controls.Add(_chkAutoLotBot);
@@ -1193,7 +1267,6 @@ namespace MT5TradingBot.UI
             _pnlBotCard.Controls.Add(_chkDrawdown);
             _pnlBotCard.Controls.Add(_chkAutoStart);
             _pnlBotCard.Controls.Add(_btnStartBot);
-            _pnlBotCard.Controls.Add(_btnStopBot);
             _pnlBotCard.Location = new Point(0, 0);
             _pnlBotCard.Name = "_pnlBotCard";
             _pnlBotCard.Size = new Size(200, 100);
@@ -1367,17 +1440,23 @@ namespace MT5TradingBot.UI
             _lblAllowedPairsLabel.TabIndex = 13;
             _lblAllowedPairsLabel.Text = "Allowed Pairs";
             // 
-            // _txtAllowedPairs
-            // 
-            _txtAllowedPairs.BackColor = Color.FromArgb(22, 22, 32);
-            _txtAllowedPairs.BorderStyle = BorderStyle.FixedSingle;
-            _txtAllowedPairs.Font = new Font("Consolas", 9F);
-            _txtAllowedPairs.ForeColor = Color.FromArgb(218, 218, 230);
-            _txtAllowedPairs.Location = new Point(200, 240);
-            _txtAllowedPairs.Name = "_txtAllowedPairs";
-            _txtAllowedPairs.Size = new Size(330, 22);
-            _txtAllowedPairs.TabIndex = 14;
-            _txtAllowedPairs.Text = "GBPUSD,EURUSD,USDJPY";
+            // _clbAllowedPairs
+            //
+            _clbAllowedPairs.BackColor = Color.FromArgb(22, 22, 32);
+            _clbAllowedPairs.BorderStyle = BorderStyle.FixedSingle;
+            _clbAllowedPairs.Font = new Font("Consolas", 9F);
+            _clbAllowedPairs.ForeColor = Color.FromArgb(218, 218, 230);
+            _clbAllowedPairs.Location = new Point(176, 240);
+            _clbAllowedPairs.Name = "_clbAllowedPairs";
+            _clbAllowedPairs.Size = new Size(340, 148);
+            _clbAllowedPairs.TabIndex = 14;
+            _clbAllowedPairs.CheckOnClick = true;
+            _clbAllowedPairs.Items.AddRange(new object[]
+            {
+                "GBPUSD", "EURUSD", "USDJPY", "USDCHF", "AUDUSD", "USDCAD", "NZDUSD",
+                "EURJPY", "GBPJPY", "EURGBP", "AUDJPY", "EURCAD", "GBPCAD",
+                "XAUUSD", "XAGUSD", "US30", "NAS100", "SPX500", "BTCUSD"
+            });
             // 
             // _lblDrawdownLabel
             // 
@@ -1455,21 +1534,20 @@ namespace MT5TradingBot.UI
             _btnStartBot.Text = "Start Monitoring";
             _btnStartBot.UseVisualStyleBackColor = false;
             // 
-            // _btnStopBot
+            // _btnAnalyzePairs
             // 
-            _btnStopBot.BackColor = Color.FromArgb(252, 95, 95);
-            _btnStopBot.Cursor = Cursors.Hand;
-            _btnStopBot.Enabled = false;
-            _btnStopBot.FlatAppearance.BorderSize = 0;
-            _btnStopBot.FlatStyle = FlatStyle.Flat;
-            _btnStopBot.Font = new Font("Segoe UI Semibold", 10F);
-            _btnStopBot.ForeColor = Color.FromArgb(10, 10, 20);
-            _btnStopBot.Location = new Point(184, 430);
-            _btnStopBot.Name = "_btnStopBot";
-            _btnStopBot.Size = new Size(160, 42);
-            _btnStopBot.TabIndex = 22;
-            _btnStopBot.Text = "■  Stop Bot";
-            _btnStopBot.UseVisualStyleBackColor = false;
+            _btnAnalyzePairs.BackColor = Color.FromArgb(99, 179, 237);
+            _btnAnalyzePairs.Cursor = Cursors.Hand;
+            _btnAnalyzePairs.FlatAppearance.BorderSize = 0;
+            _btnAnalyzePairs.FlatStyle = FlatStyle.Flat;
+            _btnAnalyzePairs.Font = new Font("Segoe UI Semibold", 10F);
+            _btnAnalyzePairs.ForeColor = Color.FromArgb(10, 10, 20);
+            _btnAnalyzePairs.Location = new Point(184, 430);
+            _btnAnalyzePairs.Name = "_btnAnalyzePairs";
+            _btnAnalyzePairs.Size = new Size(160, 42);
+            _btnAnalyzePairs.TabIndex = 22;
+            _btnAnalyzePairs.Text = "Analysys pairs";
+            _btnAnalyzePairs.UseVisualStyleBackColor = false;
             // 
             // _btnOpenFolder
             // 
@@ -1522,18 +1600,54 @@ namespace MT5TradingBot.UI
             // _pnlClaudeCard
             // 
             _pnlClaudeCard.Controls.Add(_lblClaudeCardHeader);
+            _pnlClaudeCard.Controls.Add(_lblAiProviderLabel);
+            _pnlClaudeCard.Controls.Add(_cmbAiProvider);
             _pnlClaudeCard.Controls.Add(_lblApiKeyLabel);
             _pnlClaudeCard.Controls.Add(_txtClaudeApiKey);
             _pnlClaudeCard.Controls.Add(_lblModelLabel);
-            _pnlClaudeCard.Controls.Add(_lblModelValue);
+            _pnlClaudeCard.Controls.Add(_txtClaudeModel);
+            _pnlClaudeCard.Controls.Add(_lblOpenAiKeyLabel);
+            _pnlClaudeCard.Controls.Add(_txtOpenAiApiKey);
+            _pnlClaudeCard.Controls.Add(_lblOpenAiModelLabel);
+            _pnlClaudeCard.Controls.Add(_txtOpenAiModel);
             _pnlClaudeCard.Controls.Add(_lblSymbolsLabel);
             _pnlClaudeCard.Controls.Add(_txtClaudeSymbols);
             _pnlClaudeCard.Controls.Add(_lblPollSecLabel);
             _pnlClaudeCard.Controls.Add(_nudClaudePollSec);
+            _pnlClaudeCard.Controls.Add(_lblConfidenceLabel);
+            _pnlClaudeCard.Controls.Add(_nudAiConfidence);
+            _pnlClaudeCard.Controls.Add(_lblNewsHeader);
+            _pnlClaudeCard.Controls.Add(_lblNewsProviderLabel);
+            _pnlClaudeCard.Controls.Add(_cmbNewsProvider);
+            _pnlClaudeCard.Controls.Add(_lblNewsApiKeyLabel);
+            _pnlClaudeCard.Controls.Add(_txtNewsApiKey);
+            _pnlClaudeCard.Controls.Add(_lblNewsCurrenciesLabel);
+            _pnlClaudeCard.Controls.Add(_txtNewsCurrencies);
+            _pnlClaudeCard.Controls.Add(_lblNewsImpactLabel);
+            _pnlClaudeCard.Controls.Add(_cmbNewsImpact);
+            _pnlClaudeCard.Controls.Add(_lblNewsBlackoutLabel);
+            _pnlClaudeCard.Controls.Add(_nudNewsBefore);
+            _pnlClaudeCard.Controls.Add(_nudNewsAfter);
+            _pnlClaudeCard.Controls.Add(_btnTestNewsApi);
+            _pnlClaudeCard.Controls.Add(_lblNewsTestStatus);
+            _pnlClaudeCard.Controls.Add(_lblNotifyHeader);
+            _pnlClaudeCard.Controls.Add(_lblTelegramTokenLabel);
+            _pnlClaudeCard.Controls.Add(_txtTelegramBotToken);
+            _pnlClaudeCard.Controls.Add(_lblTelegramChatLabel);
+            _pnlClaudeCard.Controls.Add(_txtTelegramChatId);
+            _pnlClaudeCard.Controls.Add(_chkNotifySignals);
+            _pnlClaudeCard.Controls.Add(_chkNotifyApproval);
+            _pnlClaudeCard.Controls.Add(_chkNotifyOpened);
+            _pnlClaudeCard.Controls.Add(_chkNotifyClosed);
+            _pnlClaudeCard.Controls.Add(_chkNotifyRisk);
+            _pnlClaudeCard.Controls.Add(_btnTestTelegram);
+            _pnlClaudeCard.Controls.Add(_lblTelegramTestStatus);
             _pnlClaudeCard.Controls.Add(_lblClaudeNote1);
             _pnlClaudeCard.Controls.Add(_lblClaudeNote2);
             _pnlClaudeCard.Controls.Add(_btnStartClaude);
             _pnlClaudeCard.Controls.Add(_btnStopClaude);
+            _pnlClaudeCard.Controls.Add(_btnTestClaudeApi);
+            _pnlClaudeCard.Controls.Add(_lblApiTestStatus);
             _pnlClaudeCard.Location = new Point(0, 0);
             _pnlClaudeCard.Name = "_pnlClaudeCard";
             _pnlClaudeCard.Size = new Size(200, 100);
@@ -1549,6 +1663,24 @@ namespace MT5TradingBot.UI
             _lblClaudeCardHeader.Size = new Size(124, 19);
             _lblClaudeCardHeader.TabIndex = 0;
             _lblClaudeCardHeader.Text = "AI API Configuration";
+            // 
+            // _lblAiProviderLabel
+            // 
+            _lblAiProviderLabel.AutoSize = true;
+            _lblAiProviderLabel.Location = new Point(14, 50);
+            _lblAiProviderLabel.Name = "_lblAiProviderLabel";
+            _lblAiProviderLabel.Size = new Size(61, 15);
+            _lblAiProviderLabel.TabIndex = 1;
+            _lblAiProviderLabel.Text = "AI Provider";
+            // 
+            // _cmbAiProvider
+            // 
+            _cmbAiProvider.DropDownStyle = ComboBoxStyle.DropDownList;
+            _cmbAiProvider.Items.AddRange(new object[] { "Claude", "OpenAI", "Both" });
+            _cmbAiProvider.Location = new Point(210, 48);
+            _cmbAiProvider.Name = "_cmbAiProvider";
+            _cmbAiProvider.Size = new Size(160, 23);
+            _cmbAiProvider.TabIndex = 2;
             // 
             // _lblApiKeyLabel
             // 
@@ -1591,6 +1723,60 @@ namespace MT5TradingBot.UI
             _lblModelValue.Name = "_lblModelValue";
             _lblModelValue.Size = new Size(100, 23);
             _lblModelValue.TabIndex = 4;
+            // 
+            // _txtClaudeModel
+            // 
+            _txtClaudeModel.BackColor = Color.FromArgb(22, 22, 32);
+            _txtClaudeModel.BorderStyle = BorderStyle.FixedSingle;
+            _txtClaudeModel.Font = new Font("Consolas", 9F);
+            _txtClaudeModel.ForeColor = Color.FromArgb(218, 218, 230);
+            _txtClaudeModel.Location = new Point(210, 80);
+            _txtClaudeModel.Name = "_txtClaudeModel";
+            _txtClaudeModel.Size = new Size(320, 22);
+            _txtClaudeModel.TabIndex = 4;
+            _txtClaudeModel.Text = "claude-opus-4-7";
+            // 
+            // _lblOpenAiKeyLabel
+            // 
+            _lblOpenAiKeyLabel.AutoSize = true;
+            _lblOpenAiKeyLabel.Location = new Point(14, 114);
+            _lblOpenAiKeyLabel.Name = "_lblOpenAiKeyLabel";
+            _lblOpenAiKeyLabel.Size = new Size(85, 15);
+            _lblOpenAiKeyLabel.TabIndex = 5;
+            _lblOpenAiKeyLabel.Text = "OpenAI API Key";
+            // 
+            // _txtOpenAiApiKey
+            // 
+            _txtOpenAiApiKey.BackColor = Color.FromArgb(22, 22, 32);
+            _txtOpenAiApiKey.BorderStyle = BorderStyle.FixedSingle;
+            _txtOpenAiApiKey.Font = new Font("Consolas", 9F);
+            _txtOpenAiApiKey.ForeColor = Color.FromArgb(218, 218, 230);
+            _txtOpenAiApiKey.Location = new Point(210, 112);
+            _txtOpenAiApiKey.Name = "_txtOpenAiApiKey";
+            _txtOpenAiApiKey.Size = new Size(320, 22);
+            _txtOpenAiApiKey.TabIndex = 6;
+            _txtOpenAiApiKey.UseSystemPasswordChar = true;
+            // 
+            // _lblOpenAiModelLabel
+            // 
+            _lblOpenAiModelLabel.AutoSize = true;
+            _lblOpenAiModelLabel.Location = new Point(14, 146);
+            _lblOpenAiModelLabel.Name = "_lblOpenAiModelLabel";
+            _lblOpenAiModelLabel.Size = new Size(82, 15);
+            _lblOpenAiModelLabel.TabIndex = 7;
+            _lblOpenAiModelLabel.Text = "OpenAI Model";
+            // 
+            // _txtOpenAiModel
+            // 
+            _txtOpenAiModel.BackColor = Color.FromArgb(22, 22, 32);
+            _txtOpenAiModel.BorderStyle = BorderStyle.FixedSingle;
+            _txtOpenAiModel.Font = new Font("Consolas", 9F);
+            _txtOpenAiModel.ForeColor = Color.FromArgb(218, 218, 230);
+            _txtOpenAiModel.Location = new Point(210, 144);
+            _txtOpenAiModel.Name = "_txtOpenAiModel";
+            _txtOpenAiModel.Size = new Size(180, 22);
+            _txtOpenAiModel.TabIndex = 8;
+            _txtOpenAiModel.Text = "gpt-5.1";
             // 
             // _lblSymbolsLabel
             // 
@@ -1640,6 +1826,283 @@ namespace MT5TradingBot.UI
             _nudClaudePollSec.TabIndex = 8;
             _nudClaudePollSec.Value = new decimal(new int[] { 60, 0, 0, 0 });
             // 
+            // _lblConfidenceLabel
+            // 
+            _lblConfidenceLabel.AutoSize = true;
+            _lblConfidenceLabel.Location = new Point(14, 210);
+            _lblConfidenceLabel.Name = "_lblConfidenceLabel";
+            _lblConfidenceLabel.Size = new Size(124, 15);
+            _lblConfidenceLabel.TabIndex = 15;
+            _lblConfidenceLabel.Text = "Minimum Confidence";
+            // 
+            // _nudAiConfidence
+            // 
+            _nudAiConfidence.BackColor = Color.FromArgb(22, 22, 32);
+            _nudAiConfidence.BorderStyle = BorderStyle.None;
+            _nudAiConfidence.ForeColor = Color.FromArgb(218, 218, 230);
+            _nudAiConfidence.Location = new Point(210, 208);
+            _nudAiConfidence.Maximum = new decimal(new int[] { 100, 0, 0, 0 });
+            _nudAiConfidence.Minimum = new decimal(new int[] { 1, 0, 0, 0 });
+            _nudAiConfidence.Name = "_nudAiConfidence";
+            _nudAiConfidence.Size = new Size(80, 19);
+            _nudAiConfidence.TabIndex = 16;
+            _nudAiConfidence.Value = new decimal(new int[] { 70, 0, 0, 0 });
+            // 
+            // _lblNewsHeader
+            // 
+            _lblNewsHeader.AutoSize = true;
+            _lblNewsHeader.Font = new Font("Segoe UI Semibold", 10F, FontStyle.Bold);
+            _lblNewsHeader.ForeColor = Color.FromArgb(200, 210, 240);
+            _lblNewsHeader.Location = new Point(14, 296);
+            _lblNewsHeader.Name = "_lblNewsHeader";
+            _lblNewsHeader.Size = new Size(137, 19);
+            _lblNewsHeader.TabIndex = 17;
+            _lblNewsHeader.Text = "Market / News Data";
+            // 
+            // _lblNewsProviderLabel
+            // 
+            _lblNewsProviderLabel.AutoSize = true;
+            _lblNewsProviderLabel.Location = new Point(14, 330);
+            _lblNewsProviderLabel.Name = "_lblNewsProviderLabel";
+            _lblNewsProviderLabel.Size = new Size(80, 15);
+            _lblNewsProviderLabel.TabIndex = 18;
+            _lblNewsProviderLabel.Text = "News Provider";
+            // 
+            // _cmbNewsProvider
+            // 
+            _cmbNewsProvider.DropDownStyle = ComboBoxStyle.DropDownList;
+            _cmbNewsProvider.Items.AddRange(new object[] { "Trading Economics", "None" });
+            _cmbNewsProvider.Location = new Point(210, 328);
+            _cmbNewsProvider.Name = "_cmbNewsProvider";
+            _cmbNewsProvider.Size = new Size(180, 23);
+            _cmbNewsProvider.TabIndex = 19;
+            // 
+            // _lblNewsApiKeyLabel
+            // 
+            _lblNewsApiKeyLabel.AutoSize = true;
+            _lblNewsApiKeyLabel.Location = new Point(14, 362);
+            _lblNewsApiKeyLabel.Name = "_lblNewsApiKeyLabel";
+            _lblNewsApiKeyLabel.Size = new Size(74, 15);
+            _lblNewsApiKeyLabel.TabIndex = 20;
+            _lblNewsApiKeyLabel.Text = "News API Key";
+            // 
+            // _txtNewsApiKey
+            // 
+            _txtNewsApiKey.BackColor = Color.FromArgb(22, 22, 32);
+            _txtNewsApiKey.BorderStyle = BorderStyle.FixedSingle;
+            _txtNewsApiKey.Font = new Font("Consolas", 9F);
+            _txtNewsApiKey.ForeColor = Color.FromArgb(218, 218, 230);
+            _txtNewsApiKey.Location = new Point(210, 360);
+            _txtNewsApiKey.Name = "_txtNewsApiKey";
+            _txtNewsApiKey.Size = new Size(320, 22);
+            _txtNewsApiKey.TabIndex = 21;
+            _txtNewsApiKey.UseSystemPasswordChar = true;
+            // 
+            // _lblNewsCurrenciesLabel
+            // 
+            _lblNewsCurrenciesLabel.AutoSize = true;
+            _lblNewsCurrenciesLabel.Location = new Point(14, 394);
+            _lblNewsCurrenciesLabel.Name = "_lblNewsCurrenciesLabel";
+            _lblNewsCurrenciesLabel.Size = new Size(111, 15);
+            _lblNewsCurrenciesLabel.TabIndex = 22;
+            _lblNewsCurrenciesLabel.Text = "Currencies/Countries";
+            // 
+            // _txtNewsCurrencies
+            // 
+            _txtNewsCurrencies.BackColor = Color.FromArgb(22, 22, 32);
+            _txtNewsCurrencies.BorderStyle = BorderStyle.FixedSingle;
+            _txtNewsCurrencies.Font = new Font("Consolas", 9F);
+            _txtNewsCurrencies.ForeColor = Color.FromArgb(218, 218, 230);
+            _txtNewsCurrencies.Location = new Point(210, 392);
+            _txtNewsCurrencies.Name = "_txtNewsCurrencies";
+            _txtNewsCurrencies.Size = new Size(320, 22);
+            _txtNewsCurrencies.TabIndex = 23;
+            _txtNewsCurrencies.Text = "USD,GBP,EUR,JPY";
+            // 
+            // _lblNewsImpactLabel
+            // 
+            _lblNewsImpactLabel.AutoSize = true;
+            _lblNewsImpactLabel.Location = new Point(14, 426);
+            _lblNewsImpactLabel.Name = "_lblNewsImpactLabel";
+            _lblNewsImpactLabel.Size = new Size(73, 15);
+            _lblNewsImpactLabel.TabIndex = 24;
+            _lblNewsImpactLabel.Text = "Impact Filter";
+            // 
+            // _cmbNewsImpact
+            // 
+            _cmbNewsImpact.DropDownStyle = ComboBoxStyle.DropDownList;
+            _cmbNewsImpact.Items.AddRange(new object[] { "High only", "Medium + High", "All" });
+            _cmbNewsImpact.Location = new Point(210, 424);
+            _cmbNewsImpact.Name = "_cmbNewsImpact";
+            _cmbNewsImpact.Size = new Size(160, 23);
+            _cmbNewsImpact.TabIndex = 25;
+            // 
+            // _lblNewsBlackoutLabel
+            // 
+            _lblNewsBlackoutLabel.AutoSize = true;
+            _lblNewsBlackoutLabel.Location = new Point(14, 458);
+            _lblNewsBlackoutLabel.Name = "_lblNewsBlackoutLabel";
+            _lblNewsBlackoutLabel.Size = new Size(143, 15);
+            _lblNewsBlackoutLabel.TabIndex = 26;
+            _lblNewsBlackoutLabel.Text = "Blackout Before / After min";
+            // 
+            // _nudNewsBefore
+            // 
+            _nudNewsBefore.BackColor = Color.FromArgb(22, 22, 32);
+            _nudNewsBefore.BorderStyle = BorderStyle.None;
+            _nudNewsBefore.ForeColor = Color.FromArgb(218, 218, 230);
+            _nudNewsBefore.Location = new Point(210, 456);
+            _nudNewsBefore.Maximum = new decimal(new int[] { 240, 0, 0, 0 });
+            _nudNewsBefore.Name = "_nudNewsBefore";
+            _nudNewsBefore.Size = new Size(70, 19);
+            _nudNewsBefore.TabIndex = 27;
+            _nudNewsBefore.Value = new decimal(new int[] { 30, 0, 0, 0 });
+            // 
+            // _nudNewsAfter
+            // 
+            _nudNewsAfter.BackColor = Color.FromArgb(22, 22, 32);
+            _nudNewsAfter.BorderStyle = BorderStyle.None;
+            _nudNewsAfter.ForeColor = Color.FromArgb(218, 218, 230);
+            _nudNewsAfter.Location = new Point(292, 456);
+            _nudNewsAfter.Maximum = new decimal(new int[] { 240, 0, 0, 0 });
+            _nudNewsAfter.Name = "_nudNewsAfter";
+            _nudNewsAfter.Size = new Size(70, 19);
+            _nudNewsAfter.TabIndex = 28;
+            _nudNewsAfter.Value = new decimal(new int[] { 15, 0, 0, 0 });
+            // 
+            // _btnTestNewsApi
+            // 
+            _btnTestNewsApi.Location = new Point(14, 492);
+            _btnTestNewsApi.Name = "_btnTestNewsApi";
+            _btnTestNewsApi.Size = new Size(178, 34);
+            _btnTestNewsApi.TabIndex = 29;
+            _btnTestNewsApi.Text = "Test News API";
+            _btnTestNewsApi.UseVisualStyleBackColor = false;
+            // 
+            // _lblNewsTestStatus
+            // 
+            _lblNewsTestStatus.AutoEllipsis = true;
+            _lblNewsTestStatus.Location = new Point(210, 500);
+            _lblNewsTestStatus.Name = "_lblNewsTestStatus";
+            _lblNewsTestStatus.Size = new Size(320, 18);
+            _lblNewsTestStatus.TabIndex = 30;
+            _lblNewsTestStatus.Text = "Not tested";
+            // 
+            // _lblNotifyHeader
+            // 
+            _lblNotifyHeader.AutoSize = true;
+            _lblNotifyHeader.Font = new Font("Segoe UI Semibold", 10F, FontStyle.Bold);
+            _lblNotifyHeader.ForeColor = Color.FromArgb(200, 210, 240);
+            _lblNotifyHeader.Location = new Point(14, 552);
+            _lblNotifyHeader.Name = "_lblNotifyHeader";
+            _lblNotifyHeader.Size = new Size(91, 19);
+            _lblNotifyHeader.TabIndex = 31;
+            _lblNotifyHeader.Text = "Notifications";
+            // 
+            // _lblTelegramTokenLabel
+            // 
+            _lblTelegramTokenLabel.AutoSize = true;
+            _lblTelegramTokenLabel.Location = new Point(14, 586);
+            _lblTelegramTokenLabel.Name = "_lblTelegramTokenLabel";
+            _lblTelegramTokenLabel.Size = new Size(57, 15);
+            _lblTelegramTokenLabel.TabIndex = 32;
+            _lblTelegramTokenLabel.Text = "Bot Token";
+            // 
+            // _txtTelegramBotToken
+            // 
+            _txtTelegramBotToken.BackColor = Color.FromArgb(22, 22, 32);
+            _txtTelegramBotToken.BorderStyle = BorderStyle.FixedSingle;
+            _txtTelegramBotToken.Font = new Font("Consolas", 9F);
+            _txtTelegramBotToken.ForeColor = Color.FromArgb(218, 218, 230);
+            _txtTelegramBotToken.Location = new Point(210, 584);
+            _txtTelegramBotToken.Name = "_txtTelegramBotToken";
+            _txtTelegramBotToken.Size = new Size(320, 22);
+            _txtTelegramBotToken.TabIndex = 33;
+            _txtTelegramBotToken.UseSystemPasswordChar = true;
+            // 
+            // _lblTelegramChatLabel
+            // 
+            _lblTelegramChatLabel.AutoSize = true;
+            _lblTelegramChatLabel.Location = new Point(14, 618);
+            _lblTelegramChatLabel.Name = "_lblTelegramChatLabel";
+            _lblTelegramChatLabel.Size = new Size(43, 15);
+            _lblTelegramChatLabel.TabIndex = 34;
+            _lblTelegramChatLabel.Text = "Chat ID";
+            // 
+            // _txtTelegramChatId
+            // 
+            _txtTelegramChatId.BackColor = Color.FromArgb(22, 22, 32);
+            _txtTelegramChatId.BorderStyle = BorderStyle.FixedSingle;
+            _txtTelegramChatId.Font = new Font("Consolas", 9F);
+            _txtTelegramChatId.ForeColor = Color.FromArgb(218, 218, 230);
+            _txtTelegramChatId.Location = new Point(210, 616);
+            _txtTelegramChatId.Name = "_txtTelegramChatId";
+            _txtTelegramChatId.Size = new Size(180, 22);
+            _txtTelegramChatId.TabIndex = 35;
+            // 
+            // _chkNotifySignals
+            // 
+            _chkNotifySignals.Location = new Point(210, 650);
+            _chkNotifySignals.Name = "_chkNotifySignals";
+            _chkNotifySignals.Size = new Size(120, 24);
+            _chkNotifySignals.TabIndex = 36;
+            _chkNotifySignals.Text = "Signals";
+            _chkNotifySignals.UseVisualStyleBackColor = false;
+            // 
+            // _chkNotifyApproval
+            // 
+            _chkNotifyApproval.Location = new Point(340, 650);
+            _chkNotifyApproval.Name = "_chkNotifyApproval";
+            _chkNotifyApproval.Size = new Size(140, 24);
+            _chkNotifyApproval.TabIndex = 37;
+            _chkNotifyApproval.Text = "Approval Needed";
+            _chkNotifyApproval.UseVisualStyleBackColor = false;
+            // 
+            // _chkNotifyOpened
+            // 
+            _chkNotifyOpened.Location = new Point(210, 678);
+            _chkNotifyOpened.Name = "_chkNotifyOpened";
+            _chkNotifyOpened.Size = new Size(120, 24);
+            _chkNotifyOpened.TabIndex = 38;
+            _chkNotifyOpened.Text = "Trade Opened";
+            _chkNotifyOpened.UseVisualStyleBackColor = false;
+            // 
+            // _chkNotifyClosed
+            // 
+            _chkNotifyClosed.Location = new Point(340, 678);
+            _chkNotifyClosed.Name = "_chkNotifyClosed";
+            _chkNotifyClosed.Size = new Size(120, 24);
+            _chkNotifyClosed.TabIndex = 39;
+            _chkNotifyClosed.Text = "Trade Closed";
+            _chkNotifyClosed.UseVisualStyleBackColor = false;
+            // 
+            // _chkNotifyRisk
+            // 
+            _chkNotifyRisk.Location = new Point(210, 706);
+            _chkNotifyRisk.Name = "_chkNotifyRisk";
+            _chkNotifyRisk.Size = new Size(120, 24);
+            _chkNotifyRisk.TabIndex = 40;
+            _chkNotifyRisk.Text = "Risk Blocked";
+            _chkNotifyRisk.UseVisualStyleBackColor = false;
+            // 
+            // _btnTestTelegram
+            // 
+            _btnTestTelegram.Location = new Point(14, 746);
+            _btnTestTelegram.Name = "_btnTestTelegram";
+            _btnTestTelegram.Size = new Size(178, 34);
+            _btnTestTelegram.TabIndex = 41;
+            _btnTestTelegram.Text = "Test Notification";
+            _btnTestTelegram.UseVisualStyleBackColor = false;
+            // 
+            // _lblTelegramTestStatus
+            // 
+            _lblTelegramTestStatus.AutoEllipsis = true;
+            _lblTelegramTestStatus.Location = new Point(210, 754);
+            _lblTelegramTestStatus.Name = "_lblTelegramTestStatus";
+            _lblTelegramTestStatus.Size = new Size(320, 18);
+            _lblTelegramTestStatus.TabIndex = 42;
+            _lblTelegramTestStatus.Text = "Not tested";
+            // 
             // _lblClaudeNote1
             // 
             _lblClaudeNote1.Location = new Point(0, 0);
@@ -1684,9 +2147,36 @@ namespace MT5TradingBot.UI
             _btnStopClaude.TabIndex = 12;
             _btnStopClaude.Text = "Stop AI Monitor";
             _btnStopClaude.UseVisualStyleBackColor = false;
-            // 
+            //
+            // _btnTestClaudeApi
+            //
+            _btnTestClaudeApi.BackColor = Color.FromArgb(28, 45, 80);
+            _btnTestClaudeApi.Cursor = Cursors.Hand;
+            _btnTestClaudeApi.FlatAppearance.BorderColor = Color.FromArgb(50, 80, 140);
+            _btnTestClaudeApi.FlatAppearance.BorderSize = 1;
+            _btnTestClaudeApi.FlatStyle = FlatStyle.Flat;
+            _btnTestClaudeApi.Font = new Font("Segoe UI Semibold", 10F);
+            _btnTestClaudeApi.ForeColor = Color.FromArgb(130, 180, 255);
+            _btnTestClaudeApi.Location = new Point(14, 296);
+            _btnTestClaudeApi.Name = "_btnTestClaudeApi";
+            _btnTestClaudeApi.Size = new Size(180, 36);
+            _btnTestClaudeApi.TabIndex = 13;
+            _btnTestClaudeApi.Text = "Test API Connection";
+            _btnTestClaudeApi.UseVisualStyleBackColor = false;
+            //
+            // _lblApiTestStatus
+            //
+            _lblApiTestStatus.AutoEllipsis = true;
+            _lblApiTestStatus.Font = new Font("Consolas", 8.5F);
+            _lblApiTestStatus.ForeColor = Color.FromArgb(110, 110, 130);
+            _lblApiTestStatus.Location = new Point(14, 340);
+            _lblApiTestStatus.Name = "_lblApiTestStatus";
+            _lblApiTestStatus.Size = new Size(520, 18);
+            _lblApiTestStatus.TabIndex = 14;
+            _lblApiTestStatus.Text = "Not tested";
+            //
             // _pnlClaudePromptCard
-            // 
+            //
             _pnlClaudePromptCard.Controls.Add(_lblPromptHeader);
             _pnlClaudePromptCard.Controls.Add(_txtClaudePrompt);
             _pnlClaudePromptCard.Controls.Add(_btnResetPrompt);
