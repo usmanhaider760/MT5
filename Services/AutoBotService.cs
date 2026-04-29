@@ -355,6 +355,14 @@ namespace MT5TradingBot.Services
                     return Fail(request.Id, "REJECTED_CONFIG",
                         $"Pair {request.Pair} not in allowed list: [{string.Join(", ", _cfg.AllowedPairs)}]");
 
+                // ── 2b. Apply broker symbol suffix (e.g. "m" → GBPUSDm for Exness) ──
+                if (!string.IsNullOrEmpty(_cfg.SymbolSuffix) &&
+                    !request.Pair.EndsWith(_cfg.SymbolSuffix, StringComparison.OrdinalIgnoreCase))
+                {
+                    request.Pair = request.Pair.ToUpperInvariant() + _cfg.SymbolSuffix;
+                    Log($"[BOT] Symbol suffix applied: {request.Pair}");
+                }
+
                 // ── 3. Daily limit ─────────────────────────────────
                 if (_tradesToday >= _cfg.MaxTradesPerDay)
                     return Fail(request.Id, "DAILY_LIMIT",

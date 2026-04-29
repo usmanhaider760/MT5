@@ -250,6 +250,14 @@ namespace MT5TradingBot.Models
         /// <summary>Warn if market order fills more than this many pips from expected price. 0 = disabled.</summary>
         [JsonProperty("max_slippage_pips")]
         public double MaxSlippagePips { get; set; } = 3.0;
+
+        /// <summary>
+        /// Broker symbol suffix appended to pair names before sending to MT5 (e.g. "m" → GBPUSDm).
+        /// Leave empty for brokers that use plain names (GBPUSD). The EA also resolves suffixes
+        /// automatically, but setting this avoids a round-trip failure on GetSymbolInfo.
+        /// </summary>
+        [JsonProperty("symbol_suffix")]
+        public string SymbolSuffix { get; set; } = "";
     }
 
     // ══════════════════════════════════════════════════════════════
