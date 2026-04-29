@@ -15,6 +15,7 @@ namespace MT5TradingBot.UI
         public SplashScreen()
         {
             InitializeComponent();
+            AppIcon.ApplyTo(this);
             this.Load  += SplashScreen_Load;
             _btnProceed.Click += BtnProceed_Click;
         }

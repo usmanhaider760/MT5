@@ -90,6 +90,8 @@ Project review summary:
 - EA deploy status notification added: `scripts/Deploy-MT5EA.ps1` now writes `%APPDATA%\MT5TradingBot\ea_deploy_status.json`, and MainForm reads it on startup/connect to log that TradingBotEA compiled successfully and must be reloaded in MT5.
 - EA deploy status verified: deploy helper wrote the status file after compiling with `0 errors, 0 warnings`.
 - Build verification completed after EA deploy notification: `dotnet build MT5TradingBot.csproj --no-restore -o .\bin\VerifyBuild` succeeds with 0 warnings and 0 errors.
+- App icon added: generated `Assets/AppIcon.ico` and `Assets/AppIcon.png` with a trading chart/candlestick motif, set `Assets/AppIcon.ico` as the executable icon, and applied it to MainForm and SplashScreen through `UI/AppIcon.cs`.
+- Build verification completed after app icon update: `dotnet build MT5TradingBot.csproj --no-restore -o .\bin\VerifyBuild` succeeds with 0 warnings and 0 errors.
 
 Status file note:
 - AGENTS.md expects docs/DEVELOPMENT_STATUS.md, but the existing file was at repository root.

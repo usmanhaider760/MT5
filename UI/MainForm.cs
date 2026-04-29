@@ -27,6 +27,7 @@ namespace MT5TradingBot.UI
         public MainForm()
         {
             InitializeComponent();
+            AppIcon.ApplyTo(this);
             ApplyStableLayout();
 
             if (!IsDesignerHosted())
