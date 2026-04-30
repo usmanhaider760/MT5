@@ -21,6 +21,7 @@ namespace MT5TradingBot.UI
         private Panel  _pnlProgressTrack;
         private Panel  _pnlProgressFill;
         private Label  _lblStatus;
+        private Button _btnCancel;
         private Button _btnProceed;
 
         protected override void Dispose(bool disposing)
@@ -109,6 +110,16 @@ namespace MT5TradingBot.UI
                 Text = "Initializing...", Location = new Point(30, 30), AutoSize = true,
                 Font = new Font("Segoe UI", 8.5f), ForeColor = Color.FromArgb(110, 110, 130)
             };
+            _btnCancel = new Button
+            {
+                Text = "Cancel", Location = new Point(310, 44), Size = new Size(146, 28),
+                BackColor = Color.FromArgb(28, 29, 42), ForeColor = Color.FromArgb(180, 80, 80),
+                FlatStyle = FlatStyle.Flat, Enabled = true,
+                Font = new Font("Segoe UI Semibold", 9f), Cursor = Cursors.Hand
+            };
+            _btnCancel.FlatAppearance.BorderColor = Color.FromArgb(100, 50, 50);
+            _btnCancel.FlatAppearance.BorderSize  = 1;
+
             _btnProceed = new Button
             {
                 Text = "Please wait...", Location = new Point(464, 44), Size = new Size(146, 28),
@@ -119,7 +130,7 @@ namespace MT5TradingBot.UI
             _btnProceed.FlatAppearance.BorderColor = Color.FromArgb(45, 45, 65);
             _btnProceed.FlatAppearance.BorderSize  = 1;
 
-            _pnlFooter.Controls.AddRange(new Control[] { _pnlProgressTrack, _lblStatus, _btnProceed });
+            _pnlFooter.Controls.AddRange(new Control[] { _pnlProgressTrack, _lblStatus, _btnCancel, _btnProceed });
 
             // Add to form (Fill first, then Top panels, Bottom last)
             this.Controls.Add(_pnlCheckArea);

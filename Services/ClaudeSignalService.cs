@@ -228,6 +228,18 @@ namespace MT5TradingBot.Services
                 return;
             }
 
+            if (sig.StopLoss == 0)
+            {
+                Log("⚠ Signal rejected: stop_loss is 0 or missing — update the system prompt to always include a valid SL price level");
+                return;
+            }
+
+            if (sig.TakeProfit == 0)
+            {
+                Log("⚠ Signal rejected: take_profit is 0 or missing — update the system prompt to always include a valid TP price level");
+                return;
+            }
+
             var req = new TradeRequest
             {
                 Pair        = sig.Pair ?? "",

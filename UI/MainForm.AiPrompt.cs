@@ -284,10 +284,30 @@ RISK PARAMETERS:
 - Daily Loss Remaining: ${{risk.daily_loss_remaining}}
 
 NEWS:
-- News Risk Level: {{news.news_risk_level}}
-- High Impact Next 60 Min: {{news.high_impact_next_60_min}}
-- Events Last 2 Hours: {{news.events_last_2_hours}}
-- Events Next 60 Min: {{news.events_next_60_min}}
+- Risk Level: {{news.risk_level}}
+- Is News API Configured: {{news.is_configured}}
+- Is Blackout Active Now: {{news.is_blackout_active}}
+- Has High Impact Event Next 60 Minutes: {{news.has_high_impact_event_next_60_minutes}}
+- Next Relevant Event: {{news.next_relevant_event_summary}}
+- Blackout Event Count: {{news.blackout_event_count}}
+- Relevant Event Count Checked: {{news.relevant_event_count}}
+- Data Source: {{news.data_source}}
+- Status Reason: {{news.status_reason}}
+- Calendar Cache Updated UTC: {{news.cache_updated_at_utc}}
+- Upcoming Relevant Events JSON: {{news.events}}
+- Active Blackout Events JSON: {{news.blackout_events}}
+
+PRE-TRADE SAFETY CHECKS:
+- Signal Required Fields Valid: {{execution_barriers.signal_valid}} | {{execution_barriers.signal_valid_detail}}
+- Signal Not Expired: {{execution_barriers.signal_fresh}} | {{execution_barriers.signal_fresh_detail}}
+- Pair Allowed: {{execution_barriers.pair_allowed}} | {{execution_barriers.pair_allowed_detail}}
+- Daily Trade Limit OK: {{execution_barriers.daily_limit_ok}} | {{execution_barriers.daily_limit_detail}}
+- MT5 Account Data OK: {{execution_barriers.account_ok}} | {{execution_barriers.account_detail}}
+- Risk Reward Rule OK: {{execution_barriers.rr_ok}} | {{execution_barriers.rr_detail}}
+- Free Margin OK: {{execution_barriers.free_margin_ok}} | {{execution_barriers.free_margin_detail}}
+- Portfolio Risk Cap OK: {{execution_barriers.portfolio_risk_ok}} | {{execution_barriers.portfolio_risk_detail}}
+- Spread Limit OK: {{execution_barriers.spread_ok}} | {{execution_barriers.spread_detail}}
+- News Blackout Clear: {{execution_barriers.news_ok}} | {{execution_barriers.news_detail}}
 
 ═══════════════════════════════════════
 ANALYSIS INSTRUCTIONS
@@ -296,13 +316,23 @@ ANALYSIS INSTRUCTIONS
 Using your 30 years of institutional experience, analyze the above data following this exact thought process:
 
 STEP 1 — HARD FILTERS (if ANY fail → NO_TRADE immediately):
+Only the following are true hard blockers. Do NOT treat signal_valid or signal_fresh as blockers.
 - Is market open and terminal connected?
 - Is London or New York session active?
 - Is daily loss limit reached?
 - Are consecutive losses >= 3?
 - Is same pair already open?
-- Is spread abnormally high?
-- Is high impact news in next 60 minutes?
+- Is spread above the pair-specific limit shown in Pre-Trade Safety Checks?
+- Is news blackout active now OR is a high-impact event inside the blackout window?
+- Is execution_barriers.news_ok = false?
+- Is execution_barriers.spread_ok = false?
+
+IMPORTANT — signal_valid and signal_fresh are NOT hard blockers:
+- signal_valid = false (e.g. stop_loss=0): YOU must derive stop_loss and take_profit from current
+  market structure, ATR, and key levels. This is expected — treat it as a fresh analysis request.
+- signal_fresh = false (signal expired): Ignore the original signal entirely. Use only the live
+  market snapshot in front of you to make a fresh decision. Do NOT cite signal age as a reason
+  for NO_TRADE. The snapshot timestamps confirm the data is current.
 
 STEP 2 — TREND ANALYSIS:
 - What is the dominant trend on H4 and H1?
@@ -347,17 +377,23 @@ STRICT RULES — NEVER BREAK THESE
 - SL must be behind real structure — never random
 - TP must have clear space — no major barrier in the way
 - Never trade Asian session (UTC 00:00–07:00) unless overlap
-- Never trade if news_risk_level = HIGH_RISK
+- Never trade if news.risk_level = HIGH, news.is_blackout_active = true, or news.has_high_impact_event_next_60_minutes = true
+- Never trade if execution_barriers.news_ok = false
 - Never trade if consecutive_losses >= 3
 - Never trade if same_pair_open = true
-- Never trade if spread > 3 pips
+- Never trade if execution_barriers.spread_ok = false. Use the pair-specific spread rule shown in Pre-Trade Safety Checks, not a fixed generic pip limit.
 - Never trade if daily_loss_limit_reached = true
 - Lot size must match calculated_lot from risk data
-- SL and TP must be in 5 decimal places
+- SL and TP decimals must match symbol.digits for this broker symbol
 - Use Ask price for BUY entry reference
 - Use Bid price for SELL entry reference
 - entry_price must always be 0 for MARKET orders
 - Always set move_sl_to_be_after_tp1 to true
+- stop_loss and take_profit in your JSON output are YOUR values derived from structure/ATR/levels — never copy them from the input signal. Always compute them fresh.
+- Never return BUY/SELL with stop_loss=0 or take_profit=0. If you cannot find a valid structure-based SL and TP that satisfy minimum R:R, return NO_TRADE.
+- lot_size must always equal risk.calculated_lot from the snapshot — never copy from the input signal.
+- entry_price must always be 0 for MARKET orders.
+- If the input signal had stop_loss=0 or was expired, that is irrelevant to your output. Derive everything from the live market data.
 
 ═══════════════════════════════════════
 OUTPUT FORMAT — RETURN ONLY JSON
@@ -365,9 +401,19 @@ OUTPUT FORMAT — RETURN ONLY JSON
 No markdown. No explanation. No extra text.
 Return one single valid JSON object only.
 
-If there is no valid trade, return the same shape with "trade_type": "NO_TRADE", zero prices, and a short reason in "comment".
+If there is no valid trade, return the same shape with "trade_type": "NO_TRADE" and zero prices.
+The "comment" field must explain the market analysis reasons only — never mention signal_valid, signal_fresh, stop_loss=0, or signal age. Cover every applicable point:
+1. HARD BLOCKER (only if a real one fired) — name it with exact value: e.g. "Spread 45.2 pips > pair max 30 pips", "Same pair SELL already open", "News blackout: NFP in 18 min"
+2. TREND CONFLICT — which timeframe(s) disagree and why: e.g. "H4 RANGING+bearish inside bar conflicts with H1 bullish", "Price below H1 EMA200 4665.94 = major resistance overhead"
+3. STRUCTURE MISSING — what confirmation is absent: e.g. "No BOS/CHoCH detected", "No liquidity sweep", "No clean pullback to key level", "entry_confirmed=false"
+4. ENTRY TIMING — candle and indicator issues: e.g. "M5 bearish inside bar = indecision", "H1 MACD histogram -0.58 falling", "Stoch overbought 85 = no momentum"
+5. WHAT WOULD CHANGE IT — the one concrete condition to flip this: e.g. "Valid BUY after H4 bullish close above 4630 with BOS", "Valid SELL on break below swing low 4615 with M5 bearish engulf"
 
-If a trade is valid, return exactly this JSON shape and no extra fields:
+Example comment (adapt all values to actual data):
+"H4 RANGING+bearish inside bar conflicts with H1 bullish trend | Price below H1 EMA200 4665.94 = major resistance | No BOS/CHoCH, no pullback, entry_confirmed=false | M5 bearish inside bar, H1 MACD histogram negative | Valid BUY after H4 bullish close above 4630 with confirmed BOS"
+
+If a trade is valid, return exactly this JSON shape and no extra fields.
+The "comment" field for a valid trade must list the top 3 confluence reasons that confirmed the entry, pipe-separated (e.g. "H1+M15+M5 aligned bullish | M5 MACD expanding | SL behind swing low 4618"):
 {
   "pair": "{{symbol.name}}",
   "trade_type": "BUY",
@@ -377,7 +423,7 @@ If a trade is valid, return exactly this JSON shape and no extra fields:
   "take_profit": 1.35180,
   "take_profit_2": 1.35395,
   "lot_size": {{risk.calculated_lot}},
-  "comment": "Claude_AI",
+  "comment": "Claude_AI | H1+M15+M5 aligned bullish | M5 MACD expanding | SL behind swing low",
   "magic_number": 999001,
   "move_sl_to_be_after_tp1": true
 }

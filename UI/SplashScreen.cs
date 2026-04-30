@@ -13,13 +13,15 @@ namespace MT5TradingBot.UI
         private readonly List<CheckRowControl> _rows = new();
         private int _totalModules;
         private int _passedModules;
+        private CancellationTokenSource? _cts;
 
         public SplashScreen()
         {
             InitializeComponent();
             AppIcon.ApplyTo(this);
-            this.Load  += SplashScreen_Load;
+            this.Load         += SplashScreen_Load;
             _btnProceed.Click += BtnProceed_Click;
+            _btnCancel.Click  += BtnCancel_Click;
         }
 
         private async void SplashScreen_Load(object? sender, EventArgs e)
@@ -42,22 +44,33 @@ namespace MT5TradingBot.UI
 
             _totalModules = modules.Length;
 
-            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+            using var cts = CancellationTokenSource.CreateLinkedTokenSource(
+                new CancellationTokenSource(TimeSpan.FromSeconds(15)).Token);
+            _cts = cts;
 
-            foreach (var module in modules)
+            try
             {
-                var row = AddCheckRow(module.Icon, module.Name, module.Description);
-                SetStatus($"Checking {module.Name}...");
-                await Task.Delay(150, cts.Token).ConfigureAwait(false);
+                foreach (var module in modules)
+                {
+                    cts.Token.ThrowIfCancellationRequested();
 
-                ModuleStatus result;
-                try   { result = await module.CheckAsync(cts.Token).ConfigureAwait(false); }
-                catch { result = new ModuleStatus(false, "Check timed out or threw an exception"); }
+                    var row = AddCheckRow(module.Icon, module.Name, module.Description);
+                    SetStatus($"Checking {module.Name}...");
+                    await Task.Delay(150, cts.Token).ConfigureAwait(false);
 
-                row.SetResult(result.IsOk, result.Message);
-                if (result.IsOk) _passedModules++;
+                    ModuleStatus result;
+                    try   { result = await module.CheckAsync(cts.Token).ConfigureAwait(false); }
+                    catch { result = new ModuleStatus(false, "Check timed out or threw an exception"); }
 
-                AdvanceProgress(_passedModules + (_totalModules - _passedModules));
+                    row.SetResult(result.IsOk, result.Message);
+                    if (result.IsOk) _passedModules++;
+
+                    AdvanceProgress(_passedModules + (_totalModules - _passedModules));
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                return;
             }
 
             AdvanceProgress(_totalModules, final: true);
@@ -69,7 +82,9 @@ namespace MT5TradingBot.UI
                 SetStatus("All checks passed — ready to launch.");
                 EnableProceed("Continue", Color.FromArgb(39, 174, 96));
 
-                await Task.Delay(1500).ConfigureAwait(false);
+                try { await Task.Delay(1500, cts.Token).ConfigureAwait(false); }
+                catch (OperationCanceledException) { return; }
+
                 this.Invoke(LaunchMainForm);
             }
             else
@@ -140,6 +155,13 @@ namespace MT5TradingBot.UI
         }
 
         private void BtnProceed_Click(object? sender, EventArgs e) => LaunchMainForm();
+
+        private void BtnCancel_Click(object? sender, EventArgs e)
+        {
+            _cts?.Cancel();
+            ShouldProceed = false;
+            this.Close();
+        }
 
         // ── Inner control — one row per module ────────────────────
 

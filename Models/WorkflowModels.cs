@@ -109,12 +109,31 @@ namespace MT5TradingBot.Models
         public string Title { get; set; } = "";
         public string Impact { get; set; } = "";
         public DateTime EventTimeUtc { get; set; }
+        public string Country { get; set; } = "";
+        public string Source { get; set; } = "";
+        public string Previous { get; set; } = "";
+        public string Forecast { get; set; } = "";
+        public string Actual { get; set; } = "";
     }
 
     public sealed class NewsFilterResult
     {
         public bool IsBlocked { get; set; }
         public string Reason { get; set; } = "";
+        public IReadOnlyList<NewsEvent> BlockingEvents { get; set; } = [];
+    }
+
+    public sealed class NewsRiskSnapshot
+    {
+        public string RiskLevel { get; set; } = "UNAVAILABLE";
+        public bool HighImpactNext60Minutes { get; set; }
+        public bool IsBlackoutActive { get; set; }
+        public bool IsConfigured { get; set; }
+        public string Source { get; set; } = "";
+        public string Reason { get; set; } = "";
+        public DateTime CheckedAtUtc { get; set; } = DateTime.UtcNow;
+        public DateTime CacheUpdatedAtUtc { get; set; }
+        public IReadOnlyList<NewsEvent> RelevantEvents { get; set; } = [];
         public IReadOnlyList<NewsEvent> BlockingEvents { get; set; } = [];
     }
 

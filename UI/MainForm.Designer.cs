@@ -705,7 +705,6 @@ namespace MT5TradingBot.UI
             _cmbPair.FlatStyle = FlatStyle.Flat;
             _cmbPair.Font = new Font("Segoe UI", 9F);
             _cmbPair.ForeColor = Color.FromArgb(218, 218, 230);
-            _cmbPair.Items.AddRange(new object[] { "GBPUSD", "EURUSD", "USDJPY", "XAUUSD", "USDCAD", "AUDUSD", "EURGBP" });
             _cmbPair.Location = new Point(130, 48);
             _cmbPair.Name = "_cmbPair";
             _cmbPair.Size = new Size(210, 23);
@@ -1455,12 +1454,6 @@ namespace MT5TradingBot.UI
             _cmbAllowedPair.Name = "_cmbAllowedPair";
             _cmbAllowedPair.Size = new Size(340, 23);
             _cmbAllowedPair.TabIndex = 14;
-            _cmbAllowedPair.Items.AddRange(new object[]
-            {
-                "GBPUSD", "EURUSD", "USDJPY", "USDCHF", "AUDUSD", "USDCAD", "NZDUSD",
-                "EURJPY", "GBPJPY", "EURGBP", "AUDJPY", "EURCAD", "GBPCAD",
-                "XAUUSD", "XAGUSD", "US30", "NAS100", "SPX500", "BTCUSD"
-            });
             // 
             // _lblDrawdownLabel
             // 
@@ -1832,7 +1825,6 @@ namespace MT5TradingBot.UI
             _txtClaudeSymbols.Name = "_txtClaudeSymbols";
             _txtClaudeSymbols.Size = new Size(320, 22);
             _txtClaudeSymbols.TabIndex = 6;
-            _txtClaudeSymbols.Text = "GBPUSD,EURUSD,USDJPY";
             // 
             // _lblPollSecLabel
             // 
@@ -1904,7 +1896,7 @@ namespace MT5TradingBot.UI
             // _cmbNewsProvider
             // 
             _cmbNewsProvider.DropDownStyle = ComboBoxStyle.DropDownList;
-            _cmbNewsProvider.Items.AddRange(new object[] { "Trading Economics", "None" });
+            _cmbNewsProvider.Items.AddRange(new object[] { "Financial Modeling Prep", "Trading Economics", "None" });
             _cmbNewsProvider.Location = new Point(210, 328);
             _cmbNewsProvider.Name = "_cmbNewsProvider";
             _cmbNewsProvider.Size = new Size(180, 23);

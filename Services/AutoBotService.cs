@@ -1,6 +1,8 @@
 using MT5TradingBot.Core;
 using MT5TradingBot.Models;
 using MT5TradingBot.Modules.BrokerIntegration;
+using MT5TradingBot.Modules.NewsFilter;
+using MT5TradingBot.Modules.PairSettings;
 using Newtonsoft.Json;
 using Serilog;
 
@@ -24,7 +26,10 @@ namespace MT5TradingBot.Services
     {
         // ── Dependencies ──────────────────────────────────────────
         private readonly MT5Bridge _bridge;
+        private readonly IPairSettingsService? _pairSettings;
+        private readonly INewsCalendarService? _newsCalendar;
         private BotConfig _cfg;
+        private ApiIntegrationConfig _apiConfig;
 
         // ── Concurrency ───────────────────────────────────────────
         private readonly SemaphoreSlim _tradeLock = new(1, 1);
@@ -72,10 +77,18 @@ namespace MT5TradingBot.Services
         private readonly Dictionary<string, DateTime> _processedIds = [];
 
         // ═════════════════════════════════════════════════════════
-        public AutoBotService(MT5Bridge bridge, BotConfig cfg)
+        public AutoBotService(
+            MT5Bridge bridge,
+            BotConfig cfg,
+            IPairSettingsService? pairSettings = null,
+            INewsCalendarService? newsCalendar = null,
+            ApiIntegrationConfig? apiConfig = null)
         {
             _bridge = bridge;
             _cfg = cfg;
+            _pairSettings = pairSettings;
+            _newsCalendar = newsCalendar;
+            _apiConfig = apiConfig ?? new ApiIntegrationConfig();
         }
 
         // ══════════════════════════════════════════════════════════
@@ -140,6 +153,11 @@ namespace MT5TradingBot.Services
         public void UpdateConfig(BotConfig newCfg)
         {
             _cfg = newCfg;
+        }
+
+        public void UpdateApiConfig(ApiIntegrationConfig newCfg)
+        {
+            _apiConfig = newCfg;
         }
 
         private async Task HeartbeatLoopAsync()
@@ -448,6 +466,9 @@ namespace MT5TradingBot.Services
                 // ── 5. Fetch live symbol info (price + spread) ─────
                 // Single call reused for auto-lot, R:R, portfolio risk, and spread check.
                 var symbolInfo = await _bridge.GetSymbolInfoAsync(request.Pair).ConfigureAwait(false);
+                var pairRules = _pairSettings?.GetForPair(request.Pair);
+                if (pairRules != null)
+                    Log($"[BOT] Pair-specific rules loaded for {pairRules.Pair}: max spread {pairRules.MaxSpreadPips:F1}, SL {pairRules.MinSlPips:F1}-{pairRules.MaxSlPips:F1} pips, min TP {pairRules.MinTpPips:F1} pips, min R:R {pairRules.ScalpingMinRR:F2}.");
 
                 // Real market price: Ask for BUY, Bid for SELL
                 double livePrice = symbolInfo != null
@@ -472,12 +493,34 @@ namespace MT5TradingBot.Services
 
                 // ── 7. R:R check ───────────────────────────────────
                 double rr = LotCalculator.RiskRewardRatio(refEntry, request.StopLoss, request.TakeProfit);
-                if (_cfg.EnforceRR && rr < _cfg.MinRRRatio)
+                double minRr = pairRules?.ScalpingMinRR > 0 ? pairRules.ScalpingMinRR : _cfg.MinRRRatio;
+                if (_cfg.EnforceRR && rr < minRr)
                     return Fail(request.Id, "REJECTED_CONFIG",
-                        $"R:R {rr:F2} is below minimum {_cfg.MinRRRatio:F2}");
+                        $"R:R {rr:F2} is below minimum {minRr:F2}");
 
-                if (rr < _cfg.MinRRRatio)
-                    Log($"[WARN] R:R {rr:F2} below minimum {_cfg.MinRRRatio:F2} - proceeding (enforce_rr=false)");
+                if (rr < minRr)
+                    Log($"[WARN] R:R {rr:F2} below minimum {minRr:F2} - proceeding (enforce_rr=false)");
+
+                if (pairRules != null && refEntry > 0)
+                {
+                    double pipSize = pairRules.PipSize > 0 ? pairRules.PipSize : LotCalculator.GetPipSize(request.Pair);
+                    double slPips = Math.Abs(refEntry - request.StopLoss) / pipSize;
+                    double tpPips = Math.Abs(request.TakeProfit - refEntry) / pipSize;
+
+                    if (pairRules.MinSlPips > 0 && slPips < pairRules.MinSlPips)
+                        return Fail(request.Id, "PAIR_MIN_SL",
+                            $"{request.Pair} SL distance {slPips:F1} pips is below pair minimum {pairRules.MinSlPips:F1} pips");
+
+                    if (pairRules.MaxSlPips > 0 && slPips > pairRules.MaxSlPips)
+                        return Fail(request.Id, "PAIR_MAX_SL",
+                            $"{request.Pair} SL distance {slPips:F1} pips exceeds pair maximum {pairRules.MaxSlPips:F1} pips");
+
+                    if (pairRules.MinTpPips > 0 && tpPips < pairRules.MinTpPips)
+                        return Fail(request.Id, "PAIR_MIN_TP",
+                            $"{request.Pair} TP distance {tpPips:F1} pips is below pair minimum {pairRules.MinTpPips:F1} pips");
+
+                    Log($"[BOT] Pair rule distances: SL {slPips:F1} pips, TP {tpPips:F1} pips.");
+                }
 
                 // ── 8. Margin check ────────────────────────────────
                 if (account.FreeMargin < account.Balance * 0.05)
@@ -505,15 +548,26 @@ namespace MT5TradingBot.Services
                 }
 
                 // ── 10. Spread check ───────────────────────────────
-                if (_cfg.MaxSpreadPips > 0)
+                double maxSpreadPips = pairRules?.MaxSpreadPips > 0 ? pairRules.MaxSpreadPips : _cfg.MaxSpreadPips;
+                if (maxSpreadPips > 0)
                 {
                     if (symbolInfo != null)
                     {
-                        if (symbolInfo.SpreadPips > _cfg.MaxSpreadPips)
+                        if (symbolInfo.SpreadPips > maxSpreadPips)
                             return Fail(request.Id, "HIGH_SPREAD",
-                                $"{request.Pair} spread {symbolInfo.SpreadPips:F1} pips exceeds max {_cfg.MaxSpreadPips:F1} pips");
+                                $"{request.Pair} spread {symbolInfo.SpreadPips:F1} pips exceeds max {maxSpreadPips:F1} pips");
 
-                        Log($"[BOT] Spread: {symbolInfo.SpreadPips:F1} pips (max {_cfg.MaxSpreadPips:F1})");
+                        if (pairRules?.AvoidTradeIfSpreadAbovePercentOfTp > 0 && refEntry > 0)
+                        {
+                            double pipSize = pairRules.PipSize > 0 ? pairRules.PipSize : LotCalculator.GetPipSize(request.Pair);
+                            double tpPips = Math.Abs(request.TakeProfit - refEntry) / pipSize;
+                            double spreadPercentOfTp = tpPips > 0 ? symbolInfo.SpreadPips / tpPips * 100.0 : 0;
+                            if (tpPips > 0 && spreadPercentOfTp > pairRules.AvoidTradeIfSpreadAbovePercentOfTp)
+                                return Fail(request.Id, "PAIR_SPREAD_TP_RATIO",
+                                    $"{request.Pair} spread is {spreadPercentOfTp:F1}% of TP distance; pair max is {pairRules.AvoidTradeIfSpreadAbovePercentOfTp:F1}%");
+                        }
+
+                        Log($"[BOT] Spread: {symbolInfo.SpreadPips:F1} pips (max {maxSpreadPips:F1})");
                     }
                     else
                     {
@@ -522,6 +576,33 @@ namespace MT5TradingBot.Services
                 }
 
                 // ── 11. Execute ────────────────────────────────────
+                if (_newsCalendar != null)
+                {
+                    var news = await _newsCalendar.GetRiskSnapshotAsync(request.Pair, _apiConfig).ConfigureAwait(false);
+                    bool providerDisabled = string.Equals(_apiConfig.NewsProvider, "None", StringComparison.OrdinalIgnoreCase);
+
+                    if (providerDisabled)
+                    {
+                        Log("[BOT] News filter disabled in AI API Config.");
+                    }
+                    else if (!news.IsConfigured)
+                    {
+                        if (_apiConfig.BlockTradesWhenNewsUnavailable)
+                            return Fail(request.Id, "NEWS_UNAVAILABLE", news.Reason);
+
+                        Log($"[WARN] News check unavailable: {news.Reason}");
+                    }
+                    else
+                    {
+                        Log($"[BOT] News risk: {news.RiskLevel} - {news.Reason}");
+                        if (_apiConfig.BlockTradesOnHighImpactNews &&
+                            (news.IsBlackoutActive || news.HighImpactNext60Minutes))
+                        {
+                            return Fail(request.Id, "NEWS_BLACKOUT", news.Reason);
+                        }
+                    }
+                }
+
                 if (request.TakeProfit2 > 0)
                     Log($"[BOT] TP2 {request.TakeProfit2:F5} detected but one-click mode opens only one trade using TP {request.TakeProfit:F5}.");
 
@@ -534,18 +615,21 @@ namespace MT5TradingBot.Services
                     Log($"[OK] MT5 accepted ticket #{result.Ticket} | Trades today: {_tradesToday}/{_cfg.MaxTradesPerDay}");
 
                     // Slippage check: only for MARKET orders where we have a live reference price
+                    double maxSlippagePips = pairRules?.MaxSlippagePips > 0
+                        ? pairRules.MaxSlippagePips
+                        : _cfg.MaxSlippagePips;
                     if (request.OrderType == OrderType.MARKET &&
-                        _cfg.MaxSlippagePips > 0 &&
+                        maxSlippagePips > 0 &&
                         livePrice > 0 &&
                         result.ExecutedPrice > 0)
                     {
                         double pipSize = LotCalculator.GetPipSize(request.Pair.ToUpperInvariant());
                         double slippagePips = Math.Abs(result.ExecutedPrice - livePrice) / pipSize;
-                        if (slippagePips > _cfg.MaxSlippagePips)
+                        if (slippagePips > maxSlippagePips)
                             Log($"[WARN] HIGH SLIPPAGE on #{result.Ticket}: {slippagePips:F1} pips " +
                                 $"(expected {livePrice:F5}, filled {result.ExecutedPrice:F5})");
                         else
-                            Log($"[BOT] Slippage: {slippagePips:F1} pips (max {_cfg.MaxSlippagePips:F1})");
+                            Log($"[BOT] Slippage: {slippagePips:F1} pips (max {maxSlippagePips:F1})");
                     }
                 }
                 else

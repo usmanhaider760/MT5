@@ -229,7 +229,7 @@ namespace MT5TradingBot.Models
         public int MaxTradesPerDay { get; set; } = 5;
 
         [JsonProperty("allowed_pairs")]
-        public List<string> AllowedPairs { get; set; } = ["GBPUSD", "EURUSD", "USDJPY"];
+        public List<string> AllowedPairs { get; set; } = [];
 
         [JsonProperty("auto_lot_calculation")]
         public bool AutoLotCalculation { get; set; } = true;
@@ -279,6 +279,87 @@ namespace MT5TradingBot.Models
         /// </summary>
         [JsonProperty("symbol_suffix")]
         public string SymbolSuffix { get; set; } = "";
+    }
+
+    public sealed class PairTradingSettings
+    {
+        [JsonIgnore]
+        public string Pair { get; set; } = "";
+
+        [JsonProperty("pip_size")]
+        public double PipSize { get; set; } = 0.0001;
+
+        [JsonProperty("max_spread_pips")]
+        public double MaxSpreadPips { get; set; } = 3;
+
+        [JsonProperty("good_spread_pips")]
+        public double GoodSpreadPips { get; set; } = 1.5;
+
+        [JsonProperty("acceptable_spread_pips")]
+        public double AcceptableSpreadPips { get; set; } = 2;
+
+        [JsonProperty("min_sl_pips")]
+        public double MinSlPips { get; set; } = 8;
+
+        [JsonProperty("max_sl_pips")]
+        public double MaxSlPips { get; set; } = 35;
+
+        [JsonProperty("min_tp_pips")]
+        public double MinTpPips { get; set; } = 8;
+
+        [JsonProperty("scalping_min_rr")]
+        public double ScalpingMinRR { get; set; } = 1.0;
+
+        [JsonProperty("preferred_rr")]
+        public double PreferredRR { get; set; } = 1.5;
+
+        [JsonProperty("atr_multiplier_sl")]
+        public double AtrMultiplierSl { get; set; } = 1.0;
+
+        [JsonProperty("atr_multiplier_tp")]
+        public double AtrMultiplierTp { get; set; } = 1.2;
+
+        [JsonProperty("min_atr_pips_m5")]
+        public double MinAtrPipsM5 { get; set; }
+
+        [JsonProperty("max_atr_pips_m5")]
+        public double MaxAtrPipsM5 { get; set; }
+
+        [JsonProperty("min_atr_pips_m15")]
+        public double MinAtrPipsM15 { get; set; }
+
+        [JsonProperty("max_atr_pips_m15")]
+        public double MaxAtrPipsM15 { get; set; }
+
+        [JsonProperty("avoid_trade_if_spread_above_percent_of_tp")]
+        public double AvoidTradeIfSpreadAbovePercentOfTp { get; set; }
+
+        [JsonProperty("minimum_distance_from_key_level_pips")]
+        public double MinimumDistanceFromKeyLevelPips { get; set; }
+
+        [JsonProperty("break_even_after_profit_pips")]
+        public double BreakEvenAfterProfitPips { get; set; }
+
+        [JsonProperty("trailing_start_pips")]
+        public double TrailingStartPips { get; set; }
+
+        [JsonProperty("trailing_step_pips")]
+        public double TrailingStepPips { get; set; }
+
+        [JsonProperty("max_slippage_pips")]
+        public double MaxSlippagePips { get; set; }
+
+        [JsonProperty("recommended_sessions")]
+        public List<string> RecommendedSessions { get; set; } = [];
+
+        [JsonProperty("avoid_sessions")]
+        public List<string> AvoidSessions { get; set; } = [];
+    }
+
+    public sealed class PairSettingsDocument
+    {
+        [JsonProperty("pair_settings")]
+        public Dictionary<string, PairTradingSettings> PairSettings { get; set; } = new(StringComparer.OrdinalIgnoreCase);
     }
 
     // ══════════════════════════════════════════════════════════════
@@ -338,6 +419,8 @@ namespace MT5TradingBot.Models
     {
         public MT5Settings Mt5 { get; set; } = new();
         public BotConfig Bot { get; set; } = new();
+        [JsonProperty("pair_settings")]
+        public Dictionary<string, PairTradingSettings> PairSettings { get; set; } = new(StringComparer.OrdinalIgnoreCase);
         public ClaudeConfig Claude { get; set; } = new();
         public ApiIntegrationConfig ApiIntegrations { get; set; } = new();
         public string Theme { get; set; } = "Dark";
@@ -360,7 +443,7 @@ namespace MT5TradingBot.Models
         public int MinimumConfidencePercent { get; set; } = 70;
 
         [JsonProperty("news_provider")]
-        public string NewsProvider { get; set; } = "Trading Economics";
+        public string NewsProvider { get; set; } = "Financial Modeling Prep";
 
         [JsonProperty("news_api_key")]
         public string NewsApiKey { get; set; } = "";
@@ -376,6 +459,12 @@ namespace MT5TradingBot.Models
 
         [JsonProperty("news_blackout_after_minutes")]
         public int NewsBlackoutAfterMinutes { get; set; } = 15;
+
+        [JsonProperty("block_trades_on_high_impact_news")]
+        public bool BlockTradesOnHighImpactNews { get; set; } = true;
+
+        [JsonProperty("block_trades_when_news_unavailable")]
+        public bool BlockTradesWhenNewsUnavailable { get; set; } = false;
 
         [JsonProperty("telegram_bot_token")]
         public string TelegramBotToken { get; set; } = "";
@@ -436,7 +525,7 @@ namespace MT5TradingBot.Models
         public int PollIntervalSeconds { get; set; } = 60;
 
         [JsonProperty("watch_symbols")]
-        public List<string> WatchSymbols { get; set; } = ["GBPUSD", "EURUSD", "USDJPY"];
+        public List<string> WatchSymbols { get; set; } = [];
 
         [JsonProperty("system_prompt")]
         public string SystemPrompt { get; set; } = DefaultPrompt;

@@ -3,6 +3,8 @@ using MT5TradingBot.Models;
 using MT5TradingBot.Modules.BrokerIntegration;
 using MT5TradingBot.Modules.MarketData;
 using MT5TradingBot.Modules.PairScanner;
+using MT5TradingBot.Modules.PairSettings;
+using MT5TradingBot.Modules.NewsFilter;
 using MT5TradingBot.Services;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
@@ -20,6 +22,8 @@ namespace MT5TradingBot.UI
         private AutoBotService? _bot;
         private ClaudeSignalService? _claude;
         private readonly SettingsManager _settings = new();
+        private PairSettingsService? _pairSettings;
+        private readonly INewsCalendarService _newsCalendar = new FmpNewsCalendarService();
         private AppSettings _cfg = new();
         private bool _warnedZeroAccountValues;
         private bool _shownEaDeployNotice;
@@ -36,9 +40,18 @@ namespace MT5TradingBot.UI
         private string _activeWatchFolder = "";
         private FileSystemWatcher? _signalFeedWatcher;
         private readonly System.Windows.Forms.Timer _signalFeedPollTimer = new() { Interval = 2500 };
+        private Action<TradeRequest>? _reviewSignalPush;
 
         // -- Timers ------------------------------------------------
         private readonly System.Windows.Forms.Timer _refreshTimer = new() { Interval = 2500 };
+
+        // -- Pair Settings tab ------------------------------------
+        private readonly TabPage _tabPairSettings = new() { Text = "  Pair Settings  ", Name = "_tabPairSettings" };
+        private readonly DataGridView _gridPairSettings = new();
+        private readonly Button _btnPairAdd = new();
+        private readonly Button _btnPairEdit = new();
+        private readonly Button _btnPairDelete = new();
+        private readonly Button _btnPairImport = new();
 
         private sealed class AutoCloseTarget
         {
@@ -53,7 +66,8 @@ namespace MT5TradingBot.UI
             double TargetPips,
             double TargetMoney,
             double LotSize   = 0,
-            int    Leverage  = 100);
+            int    Leverage  = 100,
+            TradeRequest? FinalRequest = null);
 
         // ==========================================================
         public MainForm()
@@ -66,6 +80,7 @@ namespace MT5TradingBot.UI
             {
                 _tabControl.DrawMode = TabDrawMode.OwnerDrawFixed;
                 _txtClaudePrompt.Text = ClaudeConfig.DefaultPrompt;
+                EnsurePairSettingsTab();
                 WireEvents();
                 _txtJson.Text = DefaultJsonSample();
                 _clockTimer.Start();
@@ -80,6 +95,7 @@ namespace MT5TradingBot.UI
         {
             await _settings.LoadAsync();
             _cfg = _settings.Current;
+            _pairSettings = new PairSettingsService(_settings, _cfg);
             ApplySettingsToUI();
 
             if (_cfg.AutoConnectOnLaunch)
@@ -149,6 +165,12 @@ namespace MT5TradingBot.UI
 
             _btnClearLog.Click += BtnClearLog_Click;
             _btnSaveLog.Click  += BtnSaveLog_Click;
+
+            _btnPairAdd.Click += BtnPairAdd_Click;
+            _btnPairEdit.Click += BtnPairEdit_Click;
+            _btnPairDelete.Click += BtnPairDelete_Click;
+            _btnPairImport.Click += BtnPairImport_Click;
+            _gridPairSettings.CellDoubleClick += GridPairSettings_CellDoubleClick;
         }
 
         // ==========================================================
@@ -213,6 +235,14 @@ namespace MT5TradingBot.UI
         {
             if (!AssertConnected()) return;
 
+            string pair = _cmbPair.SelectedItem?.ToString() ?? "";
+            if (string.IsNullOrWhiteSpace(pair))
+            {
+                Log("[ERROR] No trading pair configured. Add a pair in the Pair Settings tab first.", C_RED);
+                _tabControl.SelectedTab = _tabPairSettings;
+                return;
+            }
+
             if (!double.TryParse(_txtSL.Text, out double sl) || sl == 0)
             { Log("[ERROR] Invalid Stop Loss", C_RED); return; }
             if (!double.TryParse(_txtTP.Text, out double tp) || tp == 0)
@@ -225,7 +255,7 @@ namespace MT5TradingBot.UI
 
             var req = new TradeRequest
             {
-                Pair      = _cmbPair.SelectedItem?.ToString() ?? "GBPUSD",
+                Pair      = pair,
                 TradeType = dir,
                 OrderType = _cmbOrderType.SelectedIndex switch
                 { 1 => OrderType.LIMIT, 2 => OrderType.STOP, _ => OrderType.MARKET },
@@ -321,7 +351,7 @@ namespace MT5TradingBot.UI
                 }
 
                 await (_bot?.DisposeAsync() ?? ValueTask.CompletedTask);
-                _bot = new AutoBotService(_bridge, _cfg.Bot) { ManualExecuteOnly = true };
+                _bot = new AutoBotService(_bridge, _cfg.Bot, _pairSettings, _newsCalendar, _cfg.ApiIntegrations) { ManualExecuteOnly = true };
                 _bot.OnLog += msg => Log(msg);
                 _bot.OnTradeExecuted += r =>
                 {
@@ -363,6 +393,7 @@ namespace MT5TradingBot.UI
 
                 // â"€â"€ 2. Watch folder â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
                 _cfg.Claude = ReadClaudeConfigFromUI();
+                _cfg.ApiIntegrations = ReadApiIntegrationConfigFromUI();
                 UpdateAiApiConfigStatus(_cfg.Claude, logResult: true);
 
                 _cfg.Bot = ReadBotConfigFromUI();
@@ -422,7 +453,7 @@ namespace MT5TradingBot.UI
                 await _settings.SaveAsync(_cfg);
                 await (_bot?.DisposeAsync() ?? ValueTask.CompletedTask);
 
-                _bot = new AutoBotService(_bridge, _cfg.Bot) { ManualExecuteOnly = true };
+                _bot = new AutoBotService(_bridge, _cfg.Bot, _pairSettings, _newsCalendar, _cfg.ApiIntegrations) { ManualExecuteOnly = true };
                 _bot.OnLog += msg => Log(msg);
                 _bot.OnTradeExecuted += r =>
                 {
@@ -485,7 +516,8 @@ namespace MT5TradingBot.UI
                 .Where(s => !string.IsNullOrWhiteSpace(s)).ToList();
             if (allPairs.Count == 0)
             {
-                Log("[BOT] No pairs available in pair dropdown.", C_YELLOW);
+                Log("[BOT] No pairs configured. Add pairs in the Pair Settings tab first.", C_YELLOW);
+                _tabControl.SelectedTab = _tabPairSettings;
                 return;
             }
 
@@ -493,7 +525,7 @@ namespace MT5TradingBot.UI
             {
                 _btnAnalyzePairs.Enabled = false;
                 SetBotBadge("ANALYZING PAIRS...", C_ACCENT);
-                Log($"[BOT] Analyze Pair clicked - scanning {allPairs.Count} pairs from dropdown...", C_ACCENT);
+                Log($"[BOT] Analyze Pair clicked - scanning {allPairs.Count} pairs from Pair Settings...", C_ACCENT);
 
                 _cfg.Bot = ReadBotConfigFromUI();
                 await _settings.SaveAsync(_cfg);
@@ -616,6 +648,7 @@ namespace MT5TradingBot.UI
 
             _cfg.Claude = ReadClaudeConfigFromUI();
             _cfg.ApiIntegrations = ReadApiIntegrationConfigFromUI();
+            _bot?.UpdateApiConfig(_cfg.ApiIntegrations);
             await _settings.SaveAsync(_cfg);
 
             if (_claude != null) { await _claude.DisposeAsync(); _claude = null; }
@@ -629,7 +662,11 @@ namespace MT5TradingBot.UI
                     : bridge.OpenTradeAsync(req));
 
             _claude.OnLog            += msg => Log($"[AI] {msg}");
-            _claude.OnSignalGenerated += req => Log($"[AI] Signal: {req}", C_ACCENT);
+            _claude.OnSignalGenerated += req =>
+            {
+                Log($"[AI] Signal: {req}", C_ACCENT);
+                _reviewSignalPush?.Invoke(req);
+            };
             _claude.OnStatusChanged  += on => UpdateClaudeBadge(on);
 
             try { await _claude.StartAsync(); }
@@ -654,6 +691,7 @@ namespace MT5TradingBot.UI
             var cfg = ReadClaudeConfigFromUI();
             _cfg.Claude = cfg;
             _cfg.ApiIntegrations = ReadApiIntegrationConfigFromUI();
+            _bot?.UpdateApiConfig(_cfg.ApiIntegrations);
             await _settings.SaveAsync(_cfg);
             string key = cfg.ApiKey;
 
@@ -718,24 +756,42 @@ namespace MT5TradingBot.UI
         private async Task TestNewsApiConfigAsync()
         {
             _cfg.ApiIntegrations = ReadApiIntegrationConfigFromUI();
+            _bot?.UpdateApiConfig(_cfg.ApiIntegrations);
             await _settings.SaveAsync(_cfg);
 
             bool disabled = string.Equals(_cfg.ApiIntegrations.NewsProvider, "None", StringComparison.OrdinalIgnoreCase);
             bool configured = disabled || !string.IsNullOrWhiteSpace(_cfg.ApiIntegrations.NewsApiKey);
-            string message = disabled
-                ? "News provider disabled."
-                : configured
-                    ? $"Configured for {_cfg.ApiIntegrations.NewsProvider}; live API call not wired yet."
-                    : "Enter a news API key before enabling news filtering.";
+            string message;
+            Color color;
+            if (disabled)
+            {
+                message = "News provider disabled.";
+                color = C_GREEN;
+            }
+            else if (!configured)
+            {
+                message = "Enter a news API key before enabling news filtering.";
+                color = C_YELLOW;
+            }
+            else
+            {
+                var pair = _cmbAllowedPair.SelectedItem?.ToString() ?? _cfg.Bot.AllowedPairs.FirstOrDefault() ?? "XAUUSD";
+                var risk = await _newsCalendar.GetRiskSnapshotAsync(pair, _cfg.ApiIntegrations);
+                message = risk.IsConfigured
+                    ? $"{risk.Source}: {risk.RiskLevel} for {pair} - {risk.Reason}"
+                    : risk.Reason;
+                color = risk.IsConfigured ? C_GREEN : C_YELLOW;
+            }
 
-            SetNewsTestStatus(message, configured ? C_GREEN : C_YELLOW);
-            Log($"[AI] News API config check: {message}", configured ? C_GREEN : C_YELLOW);
+            SetNewsTestStatus(message, color);
+            Log($"[AI] News API config check: {message}", color);
             UpdateAiApiConfigStatus(_cfg.Claude);
         }
 
         private async Task TestTelegramConfigAsync()
         {
             _cfg.ApiIntegrations = ReadApiIntegrationConfigFromUI();
+            _bot?.UpdateApiConfig(_cfg.ApiIntegrations);
             await _settings.SaveAsync(_cfg);
 
             bool configured = !string.IsNullOrWhiteSpace(_cfg.ApiIntegrations.TelegramBotToken)
@@ -977,10 +1033,15 @@ SAFETY RULES:
                     _            => OrderType.MARKET
                 };
 
+                string responsePair = jobj.Value<string>("pair") ?? jobj.Value<string>("symbol") ?? original.Pair;
+                string finalPair = responsePair.StartsWith(original.Pair, StringComparison.OrdinalIgnoreCase)
+                    ? original.Pair
+                    : responsePair;
+
                 return new TradeRequest
                 {
                     Id          = Guid.NewGuid().ToString("N")[..8].ToUpper(),
-                    Pair        = jobj.Value<string>("pair") ?? jobj.Value<string>("symbol") ?? original.Pair,
+                    Pair        = finalPair,
                     TradeType   = dir == "SELL" ? TradeType.SELL : TradeType.BUY,
                     OrderType   = orderType,
                     EntryPrice  = entryPrice,
@@ -1174,7 +1235,7 @@ SAFETY RULES:
                 double lots = 0.01;
                 if (!_chkAutoLot.Checked) double.TryParse(_txtLot.Text, out lots);
 
-                string sym    = _cmbPair.SelectedItem?.ToString() ?? "GBPUSD";
+                string sym    = _cmbPair.SelectedItem?.ToString() ?? "";
                 double risk   = LotCalculator.DollarRisk(lots, entry, sl, sym);
                 double profit = LotCalculator.DollarProfit(lots, entry, tp, sym);
 
@@ -1319,6 +1380,8 @@ SAFETY RULES:
         private void ApplySettingsToUI()
         {
             _cfg.ApiIntegrations ??= new ApiIntegrationConfig();
+            _cfg.PairSettings ??= new Dictionary<string, PairTradingSettings>(StringComparer.OrdinalIgnoreCase);
+            SyncPairDropdownsFromPairSettings();
             _cmbMode.SelectedIndex   = _cfg.Mt5.Mode == ConnectionMode.NamedPipe ? 0 : 1;
             _txtPipeName.Text        = _cfg.Mt5.PipeName;
             _chkAutoConn.Checked     = _cfg.AutoConnectOnLaunch;
@@ -1352,7 +1415,298 @@ SAFETY RULES:
             _lblClaudeNote1.Text     = "Startup checks validate saved AI configuration only; no prompt is sent.";
             _lblClaudeNote2.Text     = "Tokens are used only when AI analysis/monitoring sends market data to the provider.";
             UpdateAiApiConfigStatus(_cfg.Claude);
+            RefreshPairSettingsGrid();
         }
+
+        private void SyncPairDropdownsFromPairSettings()
+        {
+            var pairs = _pairSettings?.GetAll()
+                .Select(p => p.Pair)
+                .Where(p => !string.IsNullOrWhiteSpace(p))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .OrderBy(p => p, StringComparer.OrdinalIgnoreCase)
+                .ToList() ?? [];
+
+            string currentManual = _cmbPair.SelectedItem?.ToString() ?? _cfg.Bot.AllowedPairs.FirstOrDefault() ?? "";
+            string currentBot = _cmbAllowedPair.SelectedItem?.ToString() ?? _cfg.Bot.AllowedPairs.FirstOrDefault() ?? "";
+
+            _cmbPair.Items.Clear();
+            _cmbAllowedPair.Items.Clear();
+            foreach (string pair in pairs)
+            {
+                _cmbPair.Items.Add(pair);
+                _cmbAllowedPair.Items.Add(pair);
+            }
+
+            SelectComboPair(_cmbPair, currentManual);
+            SelectComboPair(_cmbAllowedPair, currentBot);
+
+            _cfg.Bot.AllowedPairs = SelectedAllowedPairList();
+            _cfg.Claude.WatchSymbols = pairs;
+            _txtClaudeSymbols.Text = string.Join(",", pairs);
+        }
+
+        private static void SelectComboPair(ComboBox comboBox, string? preferred)
+        {
+            if (!string.IsNullOrWhiteSpace(preferred))
+            {
+                for (int i = 0; i < comboBox.Items.Count; i++)
+                {
+                    if (string.Equals(comboBox.Items[i]?.ToString(), preferred, StringComparison.OrdinalIgnoreCase))
+                    {
+                        comboBox.SelectedIndex = i;
+                        return;
+                    }
+                }
+            }
+
+            comboBox.SelectedIndex = comboBox.Items.Count > 0 ? 0 : -1;
+        }
+
+        private void EnsurePairSettingsTab()
+        {
+            if (_tabControl.TabPages.Contains(_tabPairSettings))
+                return;
+
+            _gridPairSettings.AllowUserToAddRows = false;
+            _gridPairSettings.AllowUserToDeleteRows = false;
+            _gridPairSettings.AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill;
+            _gridPairSettings.Dock = DockStyle.Fill;
+            _gridPairSettings.MultiSelect = false;
+            _gridPairSettings.ReadOnly = true;
+            _gridPairSettings.RowHeadersVisible = false;
+            _gridPairSettings.SelectionMode = DataGridViewSelectionMode.FullRowSelect;
+            _gridPairSettings.Columns.Add("Pair", "Pair");
+            _gridPairSettings.Columns.Add("PipSize", "Pip size");
+            _gridPairSettings.Columns.Add("MaxSpread", "Max spread");
+            _gridPairSettings.Columns.Add("GoodSpread", "Good spread");
+            _gridPairSettings.Columns.Add("AcceptableSpread", "Acceptable spread");
+            _gridPairSettings.Columns.Add("MaxSl", "Max SL");
+            _gridPairSettings.Columns.Add("MinTp", "Min TP");
+            _gridPairSettings.Columns.Add("ScalpRR", "Scalp RR");
+            _gridPairSettings.Columns.Add("PreferredRR", "Preferred RR");
+            _gridPairSettings.Columns.Add("AtrSl", "ATR SL");
+            _gridPairSettings.Columns.Add("AtrTp", "ATR TP");
+            _gridPairSettings.Columns.Add("AtrM5", "ATR M5");
+            _gridPairSettings.Columns.Add("AtrM15", "ATR M15");
+            _gridPairSettings.Columns.Add("SpreadTpPct", "Spread/TP %");
+            _gridPairSettings.Columns.Add("KeyLevelDistance", "Key level dist");
+            _gridPairSettings.Columns.Add("BreakEven", "BE pips");
+            _gridPairSettings.Columns.Add("Trailing", "Trailing");
+            _gridPairSettings.Columns.Add("MaxSlippage", "Slippage");
+            _gridPairSettings.Columns.Add("RecommendedSessions", "Recommended sessions");
+            _gridPairSettings.Columns.Add("AvoidSessions", "Avoid sessions");
+            StyleDataGrid(_gridPairSettings);
+
+            ConfigurePairButton(_btnPairAdd, "Add Pair", C_GREEN);
+            ConfigurePairButton(_btnPairEdit, "Edit Pair", C_ACCENT);
+            ConfigurePairButton(_btnPairDelete, "Delete Pair", C_RED);
+            ConfigurePairButton(_btnPairImport, "Import JSON", C_YELLOW);
+
+            var buttonRow = new FlowLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                FlowDirection = FlowDirection.LeftToRight,
+                Padding = new Padding(0),
+                Margin = Padding.Empty
+            };
+            buttonRow.Controls.AddRange([_btnPairAdd, _btnPairEdit, _btnPairDelete, _btnPairImport]);
+
+            var layout = new TableLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                Padding = new Padding(12),
+                ColumnCount = 1,
+                RowCount = 2
+            };
+            layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 48));
+            layout.Controls.Add(_gridPairSettings, 0, 0);
+            layout.Controls.Add(buttonRow, 0, 1);
+
+            _tabPairSettings.BackColor = C_BG;
+            _tabPairSettings.Controls.Add(layout);
+
+            int insertAt = Math.Max(0, _tabControl.TabPages.IndexOf(_tabBot));
+            _tabControl.TabPages.Insert(insertAt, _tabPairSettings);
+        }
+
+        private static void ConfigurePairButton(Button button, string text, Color color)
+        {
+            button.Text = text;
+            button.Size = new Size(112, 34);
+            button.BackColor = color;
+            button.ForeColor = Color.FromArgb(10, 10, 20);
+            button.FlatStyle = FlatStyle.Flat;
+            button.Font = new Font("Segoe UI Semibold", 9F);
+            button.Cursor = Cursors.Hand;
+            button.Margin = new Padding(0, 6, 8, 0);
+            button.FlatAppearance.BorderSize = 0;
+        }
+
+        private void RefreshPairSettingsGrid()
+        {
+            if (_pairSettings == null || _gridPairSettings.IsDisposed)
+                return;
+
+            _gridPairSettings.Rows.Clear();
+            foreach (var settings in _pairSettings.GetAll())
+            {
+                int row = _gridPairSettings.Rows.Add(
+                    settings.Pair,
+                    settings.PipSize.ToString("0.#####", CultureInfo.InvariantCulture),
+                    settings.MaxSpreadPips.ToString("0.##", CultureInfo.InvariantCulture),
+                    settings.GoodSpreadPips.ToString("0.##", CultureInfo.InvariantCulture),
+                    settings.AcceptableSpreadPips.ToString("0.##", CultureInfo.InvariantCulture),
+                    settings.MaxSlPips.ToString("0.##", CultureInfo.InvariantCulture),
+                    settings.MinTpPips.ToString("0.##", CultureInfo.InvariantCulture),
+                    settings.ScalpingMinRR.ToString("0.##", CultureInfo.InvariantCulture),
+                    settings.PreferredRR.ToString("0.##", CultureInfo.InvariantCulture),
+                    settings.AtrMultiplierSl.ToString("0.##", CultureInfo.InvariantCulture),
+                    settings.AtrMultiplierTp.ToString("0.##", CultureInfo.InvariantCulture),
+                    $"{settings.MinAtrPipsM5:0.##}-{settings.MaxAtrPipsM5:0.##}",
+                    $"{settings.MinAtrPipsM15:0.##}-{settings.MaxAtrPipsM15:0.##}",
+                    settings.AvoidTradeIfSpreadAbovePercentOfTp.ToString("0.##", CultureInfo.InvariantCulture),
+                    settings.MinimumDistanceFromKeyLevelPips.ToString("0.##", CultureInfo.InvariantCulture),
+                    settings.BreakEvenAfterProfitPips.ToString("0.##", CultureInfo.InvariantCulture),
+                    $"{settings.TrailingStartPips:0.##}/{settings.TrailingStepPips:0.##}",
+                    settings.MaxSlippagePips.ToString("0.##", CultureInfo.InvariantCulture),
+                    string.Join(",", settings.RecommendedSessions),
+                    string.Join(",", settings.AvoidSessions));
+                _gridPairSettings.Rows[row].Tag = settings;
+            }
+        }
+
+        private PairTradingSettings? SelectedPairSettings() =>
+            _gridPairSettings.CurrentRow?.Tag as PairTradingSettings;
+
+        private void BtnPairAdd_Click(object? sender, EventArgs e)
+        {
+            using var form = new PairSettingsEditForm();
+            if (form.ShowDialog(this) != DialogResult.OK || _pairSettings == null)
+                return;
+
+            try
+            {
+                _pairSettings.Upsert(form.Settings);
+                SyncPairDropdownsFromPairSettings();
+                RefreshPairSettingsGrid();
+                Log($"[PAIR] Saved settings for {form.Settings.Pair}.", C_GREEN);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(this, ex.Message, "Pair Settings", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            }
+        }
+
+        private void BtnPairEdit_Click(object? sender, EventArgs e) => EditSelectedPairSettings();
+
+        private void GridPairSettings_CellDoubleClick(object? sender, DataGridViewCellEventArgs e)
+        {
+            if (e.RowIndex >= 0)
+                EditSelectedPairSettings();
+        }
+
+        private void EditSelectedPairSettings()
+        {
+            var selected = SelectedPairSettings();
+            if (selected == null || _pairSettings == null)
+                return;
+
+            using var form = new PairSettingsEditForm(selected);
+            if (form.ShowDialog(this) != DialogResult.OK)
+                return;
+
+            try
+            {
+                if (!string.Equals(selected.Pair, form.Settings.Pair, StringComparison.OrdinalIgnoreCase))
+                    _pairSettings.Delete(selected.Pair);
+                _pairSettings.Upsert(form.Settings);
+                SyncPairDropdownsFromPairSettings();
+                RefreshPairSettingsGrid();
+                Log($"[PAIR] Updated settings for {form.Settings.Pair}.", C_GREEN);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(this, ex.Message, "Pair Settings", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            }
+        }
+
+        private void BtnPairDelete_Click(object? sender, EventArgs e)
+        {
+            var selected = SelectedPairSettings();
+            if (selected == null || _pairSettings == null)
+                return;
+
+            var result = MessageBox.Show(
+                this,
+                $"Delete pair settings for {selected.Pair}?",
+                "Pair Settings",
+                MessageBoxButtons.YesNo,
+                MessageBoxIcon.Warning);
+            if (result != DialogResult.Yes)
+                return;
+
+            if (_pairSettings.Delete(selected.Pair))
+            {
+                RefreshPairSettingsGrid();
+                SyncPairDropdownsFromPairSettings();
+                Log($"[PAIR] Deleted settings for {selected.Pair}.", C_YELLOW);
+            }
+        }
+
+        private void BtnPairImport_Click(object? sender, EventArgs e)
+        {
+            if (_pairSettings == null)
+                return;
+
+            using var form = new PairSettingsJsonForm(DefaultPairSettingsJson());
+            if (form.ShowDialog(this) != DialogResult.OK)
+                return;
+
+            try
+            {
+                int count = _pairSettings.ImportJson(form.JsonText);
+                SyncPairDropdownsFromPairSettings();
+                RefreshPairSettingsGrid();
+                Log($"[PAIR] Imported {count} pair setting(s) from JSON.", C_GREEN);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(this, ex.Message, "Pair Settings JSON", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            }
+        }
+
+        private static string DefaultPairSettingsJson() => """
+        {
+          "pair_settings": {
+            "GBPUSD": {
+              "pip_size": 0.0001,
+              "max_spread_pips": 3,
+              "good_spread_pips": 1.5,
+              "acceptable_spread_pips": 2,
+              "max_sl_pips": 35,
+              "min_tp_pips": 8,
+              "scalping_min_rr": 1.0,
+              "preferred_rr": 1.5,
+              "atr_multiplier_sl": 1.0,
+              "atr_multiplier_tp": 1.2,
+              "min_atr_pips_m5": 3,
+              "max_atr_pips_m5": 30,
+              "min_atr_pips_m15": 6,
+              "max_atr_pips_m15": 60,
+              "avoid_trade_if_spread_above_percent_of_tp": 25,
+              "minimum_distance_from_key_level_pips": 5,
+              "break_even_after_profit_pips": 10,
+              "trailing_start_pips": 15,
+              "trailing_step_pips": 5,
+              "max_slippage_pips": 3,
+              "recommended_sessions": ["London", "NewYork", "London_NewYork_Overlap"],
+              "avoid_sessions": ["Rollover"]
+            }
+          }
+        }
+        """;
 
         private static void SelectComboValue(ComboBox comboBox, string value)
         {
@@ -1408,7 +1762,7 @@ SAFETY RULES:
             OpenAiApiKey = _txtOpenAiApiKey.Text.Trim(),
             OpenAiModel = string.IsNullOrWhiteSpace(_txtOpenAiModel.Text) ? "gpt-5.1" : _txtOpenAiModel.Text.Trim(),
             MinimumConfidencePercent = (int)_nudAiConfidence.Value,
-            NewsProvider = _cmbNewsProvider.SelectedItem?.ToString() ?? "Trading Economics",
+            NewsProvider = _cmbNewsProvider.SelectedItem?.ToString() ?? "Financial Modeling Prep",
             NewsApiKey = _txtNewsApiKey.Text.Trim(),
             NewsCurrencies = [.. _txtNewsCurrencies.Text.Split(',').Select(s => s.Trim().ToUpper()).Where(s => s.Length > 0)],
             NewsImpactFilter = _cmbNewsImpact.SelectedItem?.ToString() ?? "High only",
@@ -1509,7 +1863,7 @@ SAFETY RULES:
         private static string DefaultJsonSample() =>
             JsonConvert.SerializeObject(new TradeRequest
             {
-                Pair       = "GBPUSD", TradeType = TradeType.BUY,
+                Pair       = "", TradeType = TradeType.BUY,
                 OrderType  = OrderType.MARKET, EntryPrice = 0,
                 StopLoss   = 1.34750, TakeProfit = 1.35200,
                 TakeProfit2 = 1.35500, LotSize = 0.01,
@@ -1642,9 +1996,9 @@ SAFETY RULES:
             {
                 _cfg.Bot = ReadBotConfigFromUI();
                 _bot?.UpdateConfig(_cfg.Bot);
+                _bot?.UpdateApiConfig(_cfg.ApiIntegrations);
                 _ = _settings.SaveAsync(_cfg);
                 Log($"[BOT] Manual pair selected: {pair}", C_ACCENT);
-                _ = OnPairSelectionChangedAsync(pair);
             }
         }
 
@@ -2463,8 +2817,20 @@ SAFETY RULES:
                 Log($"[BOT] Could not collect live MT5 review data: {ex.Message}", C_YELLOW);
             }
 
-            string snapshot = liveSnapshot?.ToString(Formatting.Indented)
-                ?? BuildTradeReviewSnapshotJson(request, account, symbol, positions);
+            JObject reviewSnapshot = liveSnapshot
+                ?? JObject.Parse(BuildTradeReviewSnapshotJson(request, account, symbol, positions));
+
+            try
+            {
+                var news = await _newsCalendar.GetRiskSnapshotAsync(request.Pair, _cfg.ApiIntegrations).ConfigureAwait(false);
+                reviewSnapshot["news"] = BuildReviewNewsJson(news);
+            }
+            catch (Exception ex)
+            {
+                Log($"[BOT] News snapshot unavailable for review: {ex.Message}", C_YELLOW);
+            }
+
+            string snapshot = reviewSnapshot.ToString(Formatting.Indented);
 
             if (InvokeRequired)
                 return (TradeReviewDecision)Invoke(() => ShowTradeReviewDialog(request, info, snapshot, symbol, account, positions))!;
@@ -2480,6 +2846,7 @@ SAFETY RULES:
             AccountInfo? account = null,
             IReadOnlyCollection<LivePosition>? reviewPositions = null)
         {
+            TradeRequest activeRequest = request;
             using var form = new Form
             {
                 Text = $"Review Trade - {request.TradeType} {request.Pair}",
@@ -2520,7 +2887,7 @@ SAFETY RULES:
             string latestSnapshotJson = currentSnapshot.ToString(Formatting.Indented);
             form.Tag = latestSnapshotJson;
             IReadOnlyCollection<LivePosition> latestPositions = reviewPositions ?? [];
-            Func<double> getCurrentReviewLotSize = () => Math.Max(0.01, request.LotSize);
+            Func<double> getCurrentReviewLotSize = () => Math.Max(0.01, activeRequest.LotSize);
 
             var bindings = new List<(string Path, Label Value, string Format)>();
             var dashboard = BuildReviewDashboard(bindings, out var liveStatus);
@@ -2528,63 +2895,162 @@ SAFETY RULES:
             UpdateReviewExecutionBarrierSnapshot(currentSnapshot, request, request.LotSize, latestPositions);
             RefreshReviewDashboard(currentSnapshot, bindings);
 
-            bool refreshingSnapshot = false;
-            DateTime lastSyncTime = DateTime.Now;
-            const int syncIntervalMs = 5000;
+            bool fastRefreshing = false;
+            bool contextRefreshing = false;
+            bool slowRefreshing = false;
+            DateTime lastFastSync = DateTime.MinValue;
+            DateTime lastContextSync = DateTime.MinValue;
+            DateTime lastSlowSync = DateTime.MinValue;
 
-            var liveTimer = new System.Windows.Forms.Timer { Interval = syncIntervalMs };
-            liveTimer.Tick += async (_, _) =>
+            void ReloadReviewConfig()
             {
-                if (refreshingSnapshot || _bridge == null || form.IsDisposed) return;
-                refreshingSnapshot = true;
                 try
                 {
-                    // Try full EA snapshot first
-                    JObject? updated = await _bridge.GetMarketSnapshotAsync(request, _cfg.Bot);
-                    try { latestPositions = await _bridge.GetPositionsAsync(); } catch { }
+                    _cfg.Bot = ReadBotConfigFromUISafe();
+                    _pairSettings ??= new PairSettingsService(_settings, _cfg);
+                }
+                catch { }
+            }
 
-                    // EA doesn't implement GET_MARKET_SNAPSHOT - fetch fields individually
-                    if (updated == null && !form.IsDisposed)
+            void CommitReviewSnapshot(string lane)
+            {
+                UpdateReviewExecutionBarrierSnapshot(currentSnapshot, activeRequest, getCurrentReviewLotSize(), latestPositions);
+                latestSnapshotJson = currentSnapshot.ToString(Formatting.Indented);
+                form.Tag = latestSnapshotJson;
+                RefreshReviewDashboard(currentSnapshot, bindings);
+
+                DateTime now = DateTime.Now;
+                if (lane == "Fast") lastFastSync = now;
+                else if (lane == "Context") lastContextSync = now;
+                else if (lane == "Slow") lastSlowSync = now;
+            }
+
+            async Task RefreshReviewFastAsync()
+            {
+                if (fastRefreshing || _bridge == null || form.IsDisposed) return;
+                fastRefreshing = true;
+                try
+                {
+                    ReloadReviewConfig();
+                    AccountInfo? acct = null;
+                    SymbolInfo? sym = null;
+                    List<LivePosition> pos = [];
+                    try { acct = await _bridge.GetAccountInfoAsync(); } catch { }
+                    try { sym = await _bridge.GetSymbolInfoAsync(activeRequest.Pair); } catch { }
+                    try { pos = await _bridge.GetPositionsAsync(); } catch { }
+                    latestPositions = pos;
+
+                    var fastSnapshot = JObject.Parse(BuildTradeReviewSnapshotJson(activeRequest, acct, sym, pos));
+                    MergeReviewSnapshotSections(currentSnapshot, fastSnapshot,
+                        "collected_at_utc", "collected_at_pkt", "account", "price", "positions", "risk", "last_order");
+                    PatchSnapshotSignalFields(currentSnapshot, activeRequest);
+                    CommitReviewSnapshot("Fast");
+                }
+                catch (Exception ex)
+                {
+                    if (!form.IsDisposed)
+                        liveStatus.Text = $"  {DateTime.Now:HH:mm:ss}  |  Fast refresh failed: {ex.Message}";
+                }
+                finally
+                {
+                    fastRefreshing = false;
+                }
+            }
+
+            async Task RefreshReviewContextAsync()
+            {
+                if (contextRefreshing || _bridge == null || form.IsDisposed) return;
+                contextRefreshing = true;
+                try
+                {
+                    ReloadReviewConfig();
+                    JObject? contextSnapshot = await _bridge.GetMarketSnapshotAsync(activeRequest, _cfg.Bot);
+                    if (contextSnapshot != null && !form.IsDisposed)
                     {
-                        AccountInfo?       acct = null;
-                        SymbolInfo?        sym  = null;
-                        List<LivePosition> pos  = [];
-                        try { acct = await _bridge.GetAccountInfoAsync(); }  catch { }
-                        try { sym  = await _bridge.GetSymbolInfoAsync(request.Pair); } catch { }
-                        try { pos  = await _bridge.GetPositionsAsync(); }      catch { }
-                        latestPositions = pos;
-                        try { updated = JObject.Parse(BuildTradeReviewSnapshotJson(request, acct, sym, pos)); } catch { }
+                        MergeReviewSnapshotSections(currentSnapshot, contextSnapshot,
+                            "collected_at_utc", "collected_at_pkt", "session", "candles", "indicators", "structure", "levels");
+                        PatchSnapshotSignalFields(currentSnapshot, activeRequest);
+                        CommitReviewSnapshot("Context");
                     }
-
-                    if (updated != null && !form.IsDisposed)
+                    else
                     {
-                        currentSnapshot    = updated;
-                        UpdateReviewExecutionBarrierSnapshot(currentSnapshot, request, getCurrentReviewLotSize(), latestPositions);
-                        latestSnapshotJson = currentSnapshot.ToString(Formatting.Indented);
-                        form.Tag           = latestSnapshotJson;
-                        RefreshReviewDashboard(currentSnapshot, bindings);
+                        lastContextSync = DateTime.Now;
                     }
                 }
                 catch (Exception ex)
                 {
                     if (!form.IsDisposed)
-                        liveStatus.Text = $"  {DateTime.Now:HH:mm:ss}  |  Sync failed: {ex.Message}";
+                        liveStatus.Text = $"  {DateTime.Now:HH:mm:ss}  |  Context refresh failed: {ex.Message}";
                 }
                 finally
                 {
-                    refreshingSnapshot = false;
-                    lastSyncTime = DateTime.Now;
+                    contextRefreshing = false;
                 }
-            };
-            form.FormClosed += (_, _) => liveTimer.Stop();
-            liveTimer.Start();
+            }
+
+            async Task RefreshReviewSlowAsync()
+            {
+                if (slowRefreshing || _bridge == null || form.IsDisposed) return;
+                slowRefreshing = true;
+                try
+                {
+                    ReloadReviewConfig();
+                    JObject? slowSnapshot = await _bridge.GetMarketSnapshotAsync(activeRequest, _cfg.Bot);
+                    if (slowSnapshot != null && !form.IsDisposed)
+                    {
+                        MergeReviewSnapshotSections(currentSnapshot, slowSnapshot,
+                            "symbol", "news", "history", "pair_rules");
+                    }
+                    else
+                    {
+                        SymbolInfo? sym = null;
+                        try { sym = await _bridge.GetSymbolInfoAsync(activeRequest.Pair); } catch { }
+                        var fallback = JObject.Parse(BuildTradeReviewSnapshotJson(activeRequest, null, sym, latestPositions));
+                        MergeReviewSnapshotSections(currentSnapshot, fallback, "symbol", "news", "history", "pair_rules");
+                    }
+
+                    var news = await _newsCalendar.GetRiskSnapshotAsync(activeRequest.Pair, _cfg.ApiIntegrations);
+                    currentSnapshot["news"] = BuildReviewNewsJson(news);
+
+                    PatchSnapshotSignalFields(currentSnapshot, activeRequest);
+                    CommitReviewSnapshot("Slow");
+                }
+                catch (Exception ex)
+                {
+                    if (!form.IsDisposed)
+                        liveStatus.Text = $"  {DateTime.Now:HH:mm:ss}  |  Slow refresh failed: {ex.Message}";
+                }
+                finally
+                {
+                    slowRefreshing = false;
+                }
+            }
+
+            var fastTimer = new System.Windows.Forms.Timer { Interval = 1000 };
+            fastTimer.Tick += async (_, _) => await RefreshReviewFastAsync();
+            form.FormClosed += (_, _) => fastTimer.Stop();
+            fastTimer.Start();
+
+            var contextTimer = new System.Windows.Forms.Timer { Interval = 5000 };
+            contextTimer.Tick += async (_, _) => await RefreshReviewContextAsync();
+            form.FormClosed += (_, _) => contextTimer.Stop();
+            contextTimer.Start();
+
+            var slowTimer = new System.Windows.Forms.Timer { Interval = 60000 };
+            slowTimer.Tick += async (_, _) => await RefreshReviewSlowAsync();
+            form.FormClosed += (_, _) => slowTimer.Stop();
+            slowTimer.Start();
+
+            _ = RefreshReviewFastAsync();
+            _ = RefreshReviewContextAsync();
+            _ = RefreshReviewSlowAsync();
 
             var clockTimer = new System.Windows.Forms.Timer { Interval = 1000 };
             clockTimer.Tick += (_, _) =>
             {
                 if (form.IsDisposed) return;
-                int secsToNext = Math.Max(0, syncIntervalMs / 1000 - (int)(DateTime.Now - lastSyncTime).TotalSeconds);
-                liveStatus.Text = $"  {DateTime.Now:HH:mm:ss}  |  Last sync: {lastSyncTime:HH:mm:ss}  |  Next sync in: {secsToNext}s";
+                liveStatus.Text =
+                    $"  {DateTime.Now:HH:mm:ss}  |  Fast: {FormatReviewSyncAge(lastFastSync)}  |  Context: {FormatReviewSyncAge(lastContextSync)}  |  Slow: {FormatReviewSyncAge(lastSlowSync)}";
             };
             form.FormClosed += (_, _) => clockTimer.Stop();
             clockTimer.Start();
@@ -2666,8 +3132,8 @@ SAFETY RULES:
                 string levStr = cmbLeverage.SelectedItem?.ToString() ?? "1:100";
                 int colon = levStr.IndexOf(':');
                 if (colon < 0 || !int.TryParse(levStr[(colon + 1)..], out int lev)) lev = 100;
-                if (equityForCalc <= 0 || entryForCalc <= 0 || request.StopLoss <= 0) return;
-                double baseLots = LotCalculator.Calculate(equityForCalc, _cfg.Bot.MaxRiskPercent, entryForCalc, request.StopLoss, request.Pair);
+                if (equityForCalc <= 0 || entryForCalc <= 0 || activeRequest.StopLoss <= 0) return;
+                double baseLots = LotCalculator.Calculate(equityForCalc, _cfg.Bot.MaxRiskPercent, entryForCalc, activeRequest.StopLoss, activeRequest.Pair);
                 double scaledLots = Math.Max(0.01, Math.Min(100.0, Math.Round(baseLots * lev / 100.0, 2)));
                 cmbLotSize.SelectedItem = lotOptions.OrderBy(o => Math.Abs(o.Size - scaledLots)).First();
             };
@@ -2725,14 +3191,14 @@ SAFETY RULES:
                 syncing = true;
                 nudMoney.Value = Math.Min(nudMoney.Maximum, Math.Round(nudPips.Value * (decimal)PipValue(), 2));
                 syncing = false;
-                UpdateReviewExecutionBarrierSnapshot(currentSnapshot, request, GetSelectedReviewLotSize(), latestPositions);
+                UpdateReviewExecutionBarrierSnapshot(currentSnapshot, activeRequest, GetSelectedReviewLotSize(), latestPositions);
                 latestSnapshotJson = currentSnapshot.ToString(Formatting.Indented);
                 form.Tag = latestSnapshotJson;
                 RefreshReviewDashboard(currentSnapshot, bindings);
             };
 
             double GetSelectedReviewLotSize() =>
-                cmbLotSize.SelectedItem is LotSizeOption selected ? selected.Size : Math.Max(0.01, request.LotSize);
+                cmbLotSize.SelectedItem is LotSizeOption selected ? selected.Size : Math.Max(0.01, activeRequest.LotSize);
             getCurrentReviewLotSize = GetSelectedReviewLotSize;
 
             int GetSelectedReviewLeverage()
@@ -2781,14 +3247,15 @@ SAFETY RULES:
 
             // State shared across handlers
             string aiResponseJson = "";
+            TradeRequest? aiCompletedRequest = null;
             TradeReviewDecision decision = new(false, false, 0, 0);
 
             // â"€â"€ Build buttons â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
             var btnPlay         = MakeDialogButton("Play / Start Trade", C_GREEN);
             var btnCancel       = MakeDialogButton("Cancel", Color.FromArgb(110, 110, 130));
-            var btnSignalJson   = MakeDialogButton("Signal JSON",  Color.FromArgb(20, 38, 68));
-            var btnViewJson     = MakeDialogButton("View JSON",    Color.FromArgb(28, 45, 80));
-            var btnFilledValues = MakeDialogButton("Input Prompt", Color.FromArgb(28, 40, 65));
+            var btnSignalJson   = MakeDialogButton("Signal",      Color.FromArgb(20, 38, 68));
+            var btnViewJson     = MakeDialogButton("Values JSON", Color.FromArgb(28, 45, 80));
+            var btnFilledValues = MakeDialogButton("Prompt",      Color.FromArgb(28, 40, 65));
             var btnAiResponse   = MakeDialogButton("AI Response",  Color.FromArgb(40, 28, 65));
 
             btnSignalJson.ForeColor   = Color.FromArgb(180, 220, 255);
@@ -3019,7 +3486,11 @@ SAFETY RULES:
                 btnPlay.Enabled   = false;
                 btnPlay.Text      = "Analyzing...";
 
-                var failedRules = GetFailedReviewBarrierMessages(currentSnapshot);
+                bool aiEnabled = !string.IsNullOrWhiteSpace(_cfg.Claude.ApiKey)
+                              && !_cfg.Claude.ApiKey.StartsWith("sk-ant-..")
+                              && _cfg.Claude.ApiKey.Length > 20;
+
+                var failedRules = GetFailedReviewBarrierMessages(currentSnapshot, allowAiCompletion: aiEnabled);
                 if (failedRules.Count > 0)
                 {
                     string message =
@@ -3042,10 +3513,6 @@ SAFETY RULES:
                 }
 
                 string aiInputPrompt = BuildCurrentAiInputPrompt();
-
-                bool aiEnabled = !string.IsNullOrWhiteSpace(_cfg.Claude.ApiKey)
-                              && !_cfg.Claude.ApiKey.StartsWith("sk-ant-..")
-                              && _cfg.Claude.ApiKey.Length > 20;
 
                 if (aiEnabled)
                 {
@@ -3082,7 +3549,18 @@ SAFETY RULES:
                         }
 
                         // AI approved - build signal from response and write to watch folder
-                        var signalReq = BuildSignalFromAiDecision(request, respJson);
+                        var signalReq = BuildSignalFromAiDecision(activeRequest, respJson);
+                        var (aiSignalValid, aiSignalError) = signalReq.Validate();
+                        if (!aiSignalValid)
+                        {
+                            SetPlayStatus($"AI response invalid: {aiSignalError}", C_RED);
+                            Log($"[AI] Approved response rejected by local validation: {aiSignalError}", C_RED);
+                            btnPlay.Text    = "Play / Start Trade";
+                            btnPlay.Enabled = true;
+                            return;
+                        }
+
+                        aiCompletedRequest = signalReq;
                         string signalPath = WriteSignalFile(signalReq);
                         Log($"[AI] APPROVED - {aiDecision} | Signal: {Path.GetFileName(signalPath)}", C_GREEN);
                         SetPlayStatus($"AI approved {aiDecision}. Signal: {Path.GetFileName(signalPath)}", C_GREEN);
@@ -3109,7 +3587,8 @@ SAFETY RULES:
                     (double)nudPips.Value,
                     (double)nudMoney.Value,
                     GetSelectedReviewLotSize(),
-                    GetSelectedReviewLeverage());
+                    GetSelectedReviewLeverage(),
+                    aiCompletedRequest);
                 form.DialogResult = DialogResult.OK;
                 form.Close();
             };
@@ -3119,6 +3598,55 @@ SAFETY RULES:
                 decision = new TradeReviewDecision(false, false, 0, 0);
                 form.DialogResult = DialogResult.Cancel;
                 form.Close();
+            };
+
+            // ── Live signal push: update all signal-derived data when a new signal arrives
+            _reviewSignalPush = newReq =>
+            {
+                if (form.IsDisposed) return;
+                void Apply()
+                {
+                    activeRequest = newReq;
+                    title.Text = $"{newReq.TradeType} {newReq.Pair} | Lots {newReq.LotSize:F2} | SL {newReq.StopLoss:F5} | TP {newReq.TakeProfit:F5}";
+                    PatchSnapshotSignalFields(currentSnapshot, activeRequest);
+                    UpdateReviewExecutionBarrierSnapshot(currentSnapshot, activeRequest, getCurrentReviewLotSize(), latestPositions);
+                    latestSnapshotJson = currentSnapshot.ToString(Formatting.Indented);
+                    form.Tag = latestSnapshotJson;
+                    RefreshReviewDashboard(currentSnapshot, bindings);
+                }
+                if (form.InvokeRequired) form.BeginInvoke(Apply);
+                else Apply();
+            };
+
+            // ── Watch the signal file itself for on-disk edits
+            FileSystemWatcher? sigFileWatcher = null;
+            string sigFilePath = ResolveSignalFilePath(info) ?? "";
+            if (!string.IsNullOrWhiteSpace(sigFilePath) && File.Exists(sigFilePath))
+            {
+                sigFileWatcher = new FileSystemWatcher(
+                    Path.GetDirectoryName(sigFilePath)!,
+                    Path.GetFileName(sigFilePath))
+                {
+                    NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.Size,
+                    EnableRaisingEvents = true
+                };
+                sigFileWatcher.Changed += async (_, _) =>
+                {
+                    try
+                    {
+                        await Task.Delay(120).ConfigureAwait(false); // let writer finish
+                        string newJson = await Task.Run(() => File.ReadAllText(sigFilePath)).ConfigureAwait(false);
+                        var newReq = JsonConvert.DeserializeObject<TradeRequest>(newJson);
+                        if (newReq != null) _reviewSignalPush?.Invoke(newReq);
+                    }
+                    catch { }
+                };
+            }
+
+            form.FormClosed += (_, _) =>
+            {
+                _reviewSignalPush = null;
+                sigFileWatcher?.Dispose();
             };
 
             form.ShowDialog(this);
@@ -3168,133 +3696,151 @@ SAFETY RULES:
             };
             scroll.Controls.Add(flow);
 
-            AddReviewGroup(flow, bindings, "Trade Barriers", [
-                ("Signal Valid", "execution_barriers.signal_valid_detail", "barrier:execution_barriers.signal_valid"),
-                ("Signal Fresh", "execution_barriers.signal_fresh_detail", "barrier:execution_barriers.signal_fresh"),
-                ("Pair Allowed", "execution_barriers.pair_allowed_detail", "barrier:execution_barriers.pair_allowed"),
-                ("Daily Limit", "execution_barriers.daily_limit_detail", "barrier:execution_barriers.daily_limit_ok"),
-                ("MT5 Account", "execution_barriers.account_detail", "barrier:execution_barriers.account_ok"),
-                ("R:R Allowed", "execution_barriers.rr_detail", "barrier:execution_barriers.rr_ok"),
-                ("Free Margin", "execution_barriers.free_margin_detail", "barrier:execution_barriers.free_margin_ok"),
-                ("Portfolio Cap", "execution_barriers.portfolio_risk_detail", "barrier:execution_barriers.portfolio_risk_ok"),
-                ("Spread OK", "execution_barriers.spread_detail", "barrier:execution_barriers.spread_ok")
+            var reviewTips = new ToolTip
+            {
+                AutoPopDelay = 22000,
+                InitialDelay = 350,
+                ReshowDelay = 100,
+                ShowAlways = true
+            };
+            host.Tag = reviewTips;
+            reviewTips.SetToolTip(liveStatus, "Shows when the Review Trade data last refreshed from MT5 and when the next refresh will run.");
+
+            AddReviewGroup(flow, bindings, reviewTips, "Pre-Trade Safety Checks", [
+                ("Signal has required fields", "execution_barriers.signal_valid_detail", "barrier:execution_barriers.signal_valid"),
+                ("Signal is not expired", "execution_barriers.signal_fresh_detail", "barrier:execution_barriers.signal_fresh"),
+                ("Pair is allowed", "execution_barriers.pair_allowed_detail", "barrier:execution_barriers.pair_allowed"),
+                ("Daily trade limit", "execution_barriers.daily_limit_detail", "barrier:execution_barriers.daily_limit_ok"),
+                ("Account data available", "execution_barriers.account_detail", "barrier:execution_barriers.account_ok"),
+                ("Risk/reward rule", "execution_barriers.rr_detail", "barrier:execution_barriers.rr_ok"),
+                ("Free margin available", "execution_barriers.free_margin_detail", "barrier:execution_barriers.free_margin_ok"),
+                ("Total account risk cap", "execution_barriers.portfolio_risk_detail", "barrier:execution_barriers.portfolio_risk_ok"),
+                ("Spread within limit", "execution_barriers.spread_detail", "barrier:execution_barriers.spread_ok"),
+                ("News blackout clear", "execution_barriers.news_detail", "barrier:execution_barriers.news_ok")
             ]);
 
-            AddReviewGroup(flow, bindings, "Account", [
-                ("Balance", "account.balance", "money"),
-                ("Equity", "account.equity", "money"),
-                ("Free Margin", "account.free_margin", "money"),
-                ("Margin Used", "account.margin_used", "money"),
-                ("Margin Level", "account.margin_level", "pct"),
-                ("Floating P/L", "account.floating_pnl", "money"),
-                ("Daily P/L", "account.daily_pnl", "money"),
-                ("Trades Today", "account.daily_trades_taken", "plain")
+            AddReviewGroup(flow, bindings, reviewTips, "Account Health", [
+                ("Account balance", "account.balance", "money"),
+                ("Live account equity", "account.equity", "money"),
+                ("Free margin available", "account.free_margin", "money"),
+                ("Margin currently used", "account.margin_used", "money"),
+                ("Margin level percent", "account.margin_level", "pct"),
+                ("Open trade profit/loss", "account.floating_pnl", "money"),
+                ("Profit/loss today", "account.daily_pnl", "money"),
+                ("Trades opened today", "account.daily_trades_taken", "plain")
             ]);
 
-            AddReviewGroup(flow, bindings, "Price", [
-                ("Bid", "price.bid", "price"),
-                ("Ask", "price.ask", "price"),
-                ("Spread", "price.spread_pips", "pips"),
-                ("Daily Open", "price.daily_open", "price"),
-                ("Daily High", "price.daily_high", "price"),
-                ("Daily Low", "price.daily_low", "price"),
-                ("Daily Range", "price.daily_range_pips", "pips"),
-                ("Prev High", "price.prev_day_high", "price")
+            AddReviewGroup(flow, bindings, reviewTips, "Live Price And Spread", [
+                ("Bid price", "price.bid", "price"),
+                ("Ask price", "price.ask", "price"),
+                ("Current spread", "price.spread_pips", "pips"),
+                ("Today open price", "price.daily_open", "price"),
+                ("Today high price", "price.daily_high", "price"),
+                ("Today low price", "price.daily_low", "price"),
+                ("Today range", "price.daily_range_pips", "pips"),
+                ("Previous day high", "price.prev_day_high", "price")
             ]);
 
-            AddReviewGroup(flow, bindings, "Trade Risk", [
-                ("Risk $", "risk.dollar_risk", "money"),
-                ("TP1 Profit", "risk.dollar_profit_tp1", "money"),
-                ("TP2 Profit", "risk.dollar_profit_tp2", "money"),
-                ("SL Distance", "risk.sl_distance_pips", "pips"),
-                ("TP1 Distance", "risk.tp1_distance_pips", "pips"),
-                ("R:R", "risk.rr_ratio", "ratio"),
-                ("Max Risk", "risk.max_risk_pct", "pct"),
-                ("Daily Loss Left", "risk.daily_loss_remaining", "money")
+            AddReviewGroup(flow, bindings, reviewTips, "Trade Risk Preview", [
+                ("Money at risk", "risk.dollar_risk", "money"),
+                ("Profit at TP1", "risk.dollar_profit_tp1", "money"),
+                ("Profit at TP2", "risk.dollar_profit_tp2", "money"),
+                ("Stop-loss distance", "risk.sl_distance_pips", "pips"),
+                ("TP1 distance", "risk.tp1_distance_pips", "pips"),
+                ("Risk/reward ratio", "risk.rr_ratio", "ratio"),
+                ("Max risk per trade", "risk.max_risk_pct", "pct"),
+                ("Daily loss room left", "risk.daily_loss_remaining", "money")
             ]);
 
-            AddReviewGroup(flow, bindings, "Symbol", [
-                ("Name", "symbol.name", "plain"),
-                ("Digits", "symbol.digits", "plain"),
-                ("Min Lot", "symbol.min_lot", "lots"),
-                ("Max Lot", "symbol.max_lot", "lots"),
-                ("Lot Step", "symbol.lot_step", "lots"),
-                ("Trade Allowed", "symbol.trade_allowed", "bool"),
-                ("Execution", "symbol.execution_mode", "plain"),
-                ("Filling", "symbol.filling_mode", "plain")
+            AddReviewGroup(flow, bindings, reviewTips, "Broker Symbol Rules", [
+                ("Broker symbol name", "symbol.name", "plain"),
+                ("Price decimals", "symbol.digits", "plain"),
+                ("Minimum lot size", "symbol.min_lot", "lots"),
+                ("Maximum lot size", "symbol.max_lot", "lots"),
+                ("Lot size step", "symbol.lot_step", "lots"),
+                ("Trading allowed now", "symbol.trade_allowed", "bool"),
+                ("Broker execution rule", "symbol.execution_mode", "plain"),
+                ("Order fill rule", "symbol.filling_mode", "plain")
             ]);
 
-            AddReviewGroup(flow, bindings, "Session", [
-                ("Broker Time", "session.broker_time", "plain"),
-                ("Connected", "session.terminal_connected", "bool"),
-                ("Market Open", "session.market_open", "bool"),
-                ("London", "session.london_open", "bool"),
-                ("New York", "session.newyork_open", "bool"),
-                ("Overlap", "session.overlap_active", "bool"),
-                ("Session", "session.session_name", "plain"),
-                ("Weekend", "session.is_weekend", "bool")
+            AddReviewGroup(flow, bindings, reviewTips, "Market Session", [
+                ("Broker server time", "session.broker_time", "plain"),
+                ("MT5 terminal connected", "session.terminal_connected", "bool"),
+                ("Market is open", "session.market_open", "bool"),
+                ("London session open", "session.london_open", "bool"),
+                ("New York session open", "session.newyork_open", "bool"),
+                ("London/New York overlap", "session.overlap_active", "bool"),
+                ("Current session name", "session.session_name", "plain"),
+                ("Weekend market status", "session.is_weekend", "bool")
             ]);
 
-            AddReviewGroup(flow, bindings, "H1 Indicators", [
-                ("RSI", "indicators.h1.rsi", "one"),
-                ("RSI Signal", "indicators.h1.rsi_signal", "plain"),
-                ("MACD Bias", "indicators.h1.macd_bias", "plain"),
-                ("EMA 20", "indicators.h1.ema20", "price"),
-                ("EMA 50", "indicators.h1.ema50", "price"),
-                ("EMA 200", "indicators.h1.ema200", "price"),
-                ("ADX", "indicators.h1.adx", "one"),
-                ("ATR", "indicators.h1.atr", "price")
+            AddReviewGroup(flow, bindings, reviewTips, "H1 Indicator Signals", [
+                ("Momentum score (RSI)", "indicators.h1.rsi", "one"),
+                ("Momentum meaning", "indicators.h1.rsi_signal", "plain"),
+                ("Direction bias (MACD)", "indicators.h1.macd_bias", "plain"),
+                ("Fast average price (EMA 20)", "indicators.h1.ema20", "price"),
+                ("Medium average price (EMA 50)", "indicators.h1.ema50", "price"),
+                ("Long trend price (EMA 200)", "indicators.h1.ema200", "price"),
+                ("Trend strength (ADX)", "indicators.h1.adx", "one"),
+                ("Volatility size (ATR)", "indicators.h1.atr", "price")
             ]);
 
-            AddReviewGroup(flow, bindings, "Candles", [
-                ("H4", "candles.h4_last.direction", "plain"),
-                ("H1", "candles.h1_last.direction", "plain"),
-                ("M15", "candles.m15_last.direction", "plain"),
-                ("M5", "candles.m5_last.direction", "plain"),
-                ("H1 Body", "candles.h1_last.body_pips", "pips"),
-                ("M15 Body", "candles.m15_last.body_pips", "pips"),
-                ("M5 Doji", "candles.m5_last.is_doji", "bool"),
-                ("M15 Inside", "candles.m15_last.is_inside_bar", "bool")
+            AddReviewGroup(flow, bindings, reviewTips, "Recent Candle Behavior", [
+                ("H4 candle direction", "candles.h4_last.direction", "plain"),
+                ("H1 candle direction", "candles.h1_last.direction", "plain"),
+                ("M15 candle direction", "candles.m15_last.direction", "plain"),
+                ("M5 candle direction", "candles.m5_last.direction", "plain"),
+                ("H1 candle body size", "candles.h1_last.body_pips", "pips"),
+                ("M15 candle body size", "candles.m15_last.body_pips", "pips"),
+                ("M5 candle is doji", "candles.m5_last.is_doji", "bool"),
+                ("M15 candle is inside bar", "candles.m15_last.is_inside_bar", "bool")
             ]);
 
-            AddReviewGroup(flow, bindings, "Structure", [
-                ("H4 Trend", "structure.trend_h4", "plain"),
-                ("H1 Trend", "structure.trend_h1", "plain"),
-                ("M15 Trend", "structure.trend_m15", "plain"),
-                ("M5 Trend", "structure.trend_m5", "plain"),
-                ("Aligned", "structure.all_timeframes_aligned", "bool"),
-                ("Regime", "structure.market_regime", "plain"),
-                ("Swing High", "structure.swing_high", "price"),
-                ("Swing Low", "structure.swing_low", "price")
+            AddReviewGroup(flow, bindings, reviewTips, "Market Structure", [
+                ("H4 trend direction", "structure.trend_h4", "plain"),
+                ("H1 trend direction", "structure.trend_h1", "plain"),
+                ("M15 trend direction", "structure.trend_m15", "plain"),
+                ("M5 trend direction", "structure.trend_m5", "plain"),
+                ("All timeframes agree", "structure.all_timeframes_aligned", "bool"),
+                ("Market condition", "structure.market_regime", "plain"),
+                ("Nearest swing high", "structure.swing_high", "price"),
+                ("Nearest swing low", "structure.swing_low", "price")
             ]);
 
-            AddReviewGroup(flow, bindings, "Levels", [
-                ("Support 1", "levels.nearest_support_1", "price"),
-                ("Support 2", "levels.nearest_support_2", "price"),
-                ("Resistance 1", "levels.nearest_resistance_1", "price"),
-                ("Resistance 2", "levels.nearest_resistance_2", "price"),
-                ("To Support", "levels.distance_to_support_pips", "pips"),
-                ("To Resistance", "levels.distance_to_resistance_pips", "pips"),
-                ("Key Level", "levels.price_at_key_level", "bool"),
-                ("Key Type", "levels.key_level_type", "plain")
+            AddReviewGroup(flow, bindings, reviewTips, "Support And Resistance", [
+                ("Nearest support level", "levels.nearest_support_1", "price"),
+                ("Second support level", "levels.nearest_support_2", "price"),
+                ("Nearest resistance level", "levels.nearest_resistance_1", "price"),
+                ("Second resistance level", "levels.nearest_resistance_2", "price"),
+                ("Distance to support", "levels.distance_to_support_pips", "pips"),
+                ("Distance to resistance", "levels.distance_to_resistance_pips", "pips"),
+                ("Price near key level", "levels.price_at_key_level", "bool"),
+                ("Nearest key level type", "levels.key_level_type", "plain")
             ]);
 
-            AddReviewGroup(flow, bindings, "Positions", [
-                ("Open Total", "positions.total_open", "plain"),
-                ("Same Pair", "positions.same_pair_open", "bool"),
-                ("Same Direction", "positions.same_pair_direction", "plain"),
-                ("Duplicate", "positions.duplicate_trade_exists", "bool"),
-                ("Opposite", "positions.opposite_trade_exists", "bool"),
-                ("Last Result", "last_order.execution_result", "plain"),
-                ("Ticket", "last_order.ticket", "plain"),
-                ("Today Win Rate", "history.win_rate_today_pct", "pct")
+            AddReviewGroup(flow, bindings, reviewTips, "Open Position Check", [
+                ("Total open positions", "positions.total_open", "plain"),
+                ("Same pair already open", "positions.same_pair_open", "bool"),
+                ("Existing trade direction", "positions.same_pair_direction", "plain"),
+                ("Duplicate trade exists", "positions.duplicate_trade_exists", "bool"),
+                ("Opposite trade exists", "positions.opposite_trade_exists", "bool"),
+                ("Last order result", "last_order.execution_result", "plain"),
+                ("Last order ticket", "last_order.ticket", "plain"),
+                ("Today win rate", "history.win_rate_today_pct", "pct")
             ]);
 
-            AddReviewGroup(flow, bindings, "News", [
-                ("Risk", "news.news_risk_level", "plain"),
-                ("High Impact", "news.high_impact_next_60_min", "bool"),
-                ("Source", "news.source", "plain")
+            AddReviewGroup(flow, bindings, reviewTips, "News Risk", [
+                ("News risk level", "news.news_risk_level", "plain"),
+                ("High impact within 60 min", "news.high_impact_next_60_min", "bool"),
+                ("Blackout active now", "news.blackout_active", "bool"),
+                ("Next relevant event", "news.next_event", "plain"),
+                ("Why this news status", "news.reason", "plain"),
+                ("Events checked", "news.relevant_event_count", "plain"),
+                ("News data source", "news.source", "plain")
             ]);
+
+            ResizeReviewGroups(flow);
+            flow.Resize += (_, _) => ResizeReviewGroups(flow);
 
             return host;
         }
@@ -3319,6 +3865,9 @@ SAFETY RULES:
             }
 
             string pair = reviewRequest.Pair.ToUpperInvariant();
+            var pairRules = _pairSettings?.GetForPair(pair);
+            double minRr = pairRules?.ScalpingMinRR > 0 ? pairRules.ScalpingMinRR : _cfg.Bot.MinRRRatio;
+            double maxSpreadPips = pairRules?.MaxSpreadPips > 0 ? pairRules.MaxSpreadPips : _cfg.Bot.MaxSpreadPips;
             bool pairAllowed = _cfg.Bot.AllowedPairs.Count == 0 || _cfg.Bot.AllowedPairs.Contains(pair);
 
             double tradesToday = ReadReviewNumber(snapshot, "account.daily_trades_taken");
@@ -3332,10 +3881,10 @@ SAFETY RULES:
             bool freeMarginOk = accountOk && (double.IsNaN(balance) || balance <= 0 || freeMargin >= balance * 0.05);
 
             double rr = CalculateReviewRiskReward(snapshot, reviewRequest);
-            bool rrOk = !_cfg.Bot.EnforceRR || rr >= _cfg.Bot.MinRRRatio;
+            bool rrOk = !_cfg.Bot.EnforceRR || rr >= minRr;
 
             double entry = GetReviewReferenceEntry(snapshot, reviewRequest);
-            double newTradeRisk = entry > 0
+            double newTradeRisk = entry > 0 && reviewRequest.StopLoss != 0
                 ? LotCalculator.DollarRisk(reviewRequest.LotSize, entry, reviewRequest.StopLoss, reviewRequest.Pair)
                 : ReadReviewNumber(snapshot, "risk.dollar_risk");
             if (double.IsNaN(newTradeRisk)) newTradeRisk = 0;
@@ -3348,8 +3897,18 @@ SAFETY RULES:
                 || (!double.IsNaN(totalRiskPct) && totalRiskPct <= _cfg.Bot.MaxTotalRiskPercent);
 
             double spread = ReadReviewNumber(snapshot, "price.spread_pips");
-            bool spreadOk = _cfg.Bot.MaxSpreadPips <= 0
-                || (!double.IsNaN(spread) && spread <= _cfg.Bot.MaxSpreadPips);
+            bool spreadOk = maxSpreadPips <= 0
+                || (!double.IsNaN(spread) && spread <= maxSpreadPips);
+
+            string newsRisk = snapshot.SelectToken("news.news_risk_level")?.ToString() ?? "UNAVAILABLE";
+            bool newsConfigured = snapshot.SelectToken("news.configured")?.Value<bool?>() == true;
+            bool newsBlackout = snapshot.SelectToken("news.blackout_active")?.Value<bool?>() == true;
+            bool highImpactNext60 = snapshot.SelectToken("news.high_impact_next_60_min")?.Value<bool?>() == true;
+            string newsReason = snapshot.SelectToken("news.reason")?.ToString() ?? "News data unavailable.";
+            bool newsUnavailableBlocks = _cfg.ApiIntegrations.BlockTradesWhenNewsUnavailable && !newsConfigured;
+            bool highImpactBlocks = _cfg.ApiIntegrations.BlockTradesOnHighImpactNews && (newsBlackout || highImpactNext60);
+            bool newsOk = string.Equals(_cfg.ApiIntegrations.NewsProvider, "None", StringComparison.OrdinalIgnoreCase)
+                || (!newsUnavailableBlocks && !highImpactBlocks);
 
             snapshot["execution_barriers"] = new JObject
             {
@@ -3373,7 +3932,7 @@ SAFETY RULES:
                     : "Current: unavailable | Base: equity > 0 and margin known",
                 ["rr_ok"] = rrOk,
                 ["rr_detail"] = _cfg.Bot.EnforceRR
-                    ? $"Current: {rr:0.00} | Base: >= {_cfg.Bot.MinRRRatio:0.00}"
+                    ? $"Current: {rr:0.00} | Base: >= {minRr:0.00}{(pairRules == null ? "" : $" ({pairRules.Pair})")}"
                     : $"Current: {rr:0.00} | Base: disabled",
                 ["free_margin_ok"] = freeMarginOk,
                 ["free_margin_detail"] = accountOk
@@ -3386,11 +3945,19 @@ SAFETY RULES:
                         ? $"Current: unavailable | Base: <= {_cfg.Bot.MaxTotalRiskPercent:0.0}%"
                         : $"Current: {totalRiskPct:0.0}% | Base: <= {_cfg.Bot.MaxTotalRiskPercent:0.0}%",
                 ["spread_ok"] = spreadOk,
-                ["spread_detail"] = _cfg.Bot.MaxSpreadPips <= 0
+                ["spread_detail"] = maxSpreadPips <= 0
                     ? "Current: not checked | Base: disabled"
                     : double.IsNaN(spread)
-                        ? $"Current: unavailable | Base: <= {_cfg.Bot.MaxSpreadPips:0.0} pips"
-                        : $"Current: {spread:0.0} pips | Base: <= {_cfg.Bot.MaxSpreadPips:0.0} pips"
+                        ? $"Current: unavailable | Base: <= {maxSpreadPips:0.0} pips"
+                        : $"Current: {spread:0.0} pips | Base: <= {maxSpreadPips:0.0} pips{(pairRules == null ? "" : $" ({pairRules.Pair})")}",
+                ["news_ok"] = newsOk,
+                ["news_detail"] = string.Equals(_cfg.ApiIntegrations.NewsProvider, "None", StringComparison.OrdinalIgnoreCase)
+                    ? "Current: disabled | Base: news filter disabled"
+                    : highImpactBlocks
+                        ? $"Current: {newsRisk} blackout active | Base: no high-impact news within {_cfg.ApiIntegrations.NewsBlackoutBeforeMinutes}m before / {_cfg.ApiIntegrations.NewsBlackoutAfterMinutes}m after"
+                        : newsUnavailableBlocks
+                            ? $"Current: unavailable | Base: news data required ({newsReason})"
+                            : $"Current: {newsRisk}{(highImpactNext60 ? ", high impact <= 60m" : "")} | Base: no active blackout"
             };
 
             UpsertReviewNumber(snapshot, "risk.calculated_lot", reviewRequest.LotSize);
@@ -3481,21 +4048,53 @@ SAFETY RULES:
             node[parts[^1]] = Math.Round(value, 4);
         }
 
+        private static void MergeReviewSnapshotSections(JObject target, JObject source, params string[] sectionNames)
+        {
+            foreach (string section in sectionNames)
+            {
+                if (!source.TryGetValue(section, out JToken? value))
+                    continue;
+
+                // Field-level merge for objects: null source values never overwrite real target values.
+                // This preserves data (e.g. daily OHLC) that came from a richer snapshot and is absent
+                // in the lightweight fast-refresh snapshot.
+                if (value is JObject sourceObj && target[section] is JObject targetObj)
+                {
+                    foreach (var prop in sourceObj.Properties())
+                    {
+                        if (prop.Value.Type != JTokenType.Null)
+                            targetObj[prop.Name] = prop.Value.DeepClone();
+                    }
+                }
+                else
+                {
+                    target[section] = value.DeepClone();
+                }
+            }
+        }
+
+        private static string FormatReviewSyncAge(DateTime syncTime)
+        {
+            if (syncTime == DateTime.MinValue)
+                return "-";
+
+            double seconds = Math.Max(0, (DateTime.Now - syncTime).TotalSeconds);
+            return seconds < 1 ? "now" : $"{seconds:0}s ago";
+        }
+
         private void AddReviewGroup(
             FlowLayoutPanel parent,
             List<(string Path, Label Value, string Format)> bindings,
+            ToolTip toolTip,
             string title,
             IReadOnlyList<(string Label, string Path, string Format)> metrics)
         {
-            bool isBarrierGroup = title == "Trade Barriers";
-            int rowH            = isBarrierGroup ? 30 : 27;
-            int maxRows         = isBarrierGroup ? 9 : 7;
+            bool isBarrierGroup = metrics.Any(m => m.Format.StartsWith("barrier:", StringComparison.OrdinalIgnoreCase));
+            int rowH          = isBarrierGroup ? 30 : 27;
             const int headerH = 24;
             const int padV    = 10;
 
-            bool needsScroll = metrics.Count > maxRows;
-            int  visRows     = Math.Min(metrics.Count, maxRows);
-            int  groupH      = headerH + padV + visRows * rowH + padV;
+            int groupH = headerH + padV + metrics.Count * rowH + padV;
 
             var bg = Color.FromArgb(14, 16, 26);
             var group = new GroupBox
@@ -3509,23 +4108,26 @@ SAFETY RULES:
                 Padding   = new Padding(6, 4, 6, 6),
                 Margin    = new Padding(0, 0, 12, 12)
             };
+            group.Tag = isBarrierGroup ? "review-barrier" : "review-card";
+            toolTip.SetToolTip(group, GetReviewGroupTooltip(title));
 
             var scroll = new Panel
             {
                 Dock        = DockStyle.Fill,
-                AutoScroll  = needsScroll,
+                AutoScroll  = false,
                 BackColor   = bg
             };
             group.Controls.Add(scroll);
 
             var grid = new TableLayoutPanel
             {
-                Dock        = needsScroll ? DockStyle.Top : DockStyle.Fill,
-                AutoSize    = needsScroll,
+                Dock        = DockStyle.Fill,
+                AutoSize    = false,
                 ColumnCount = 2,
                 RowCount    = metrics.Count,
                 BackColor   = bg,
-                Padding     = new Padding(2, 4, 2, 4)
+                Padding     = new Padding(2, 4, 2, 4),
+                CellBorderStyle = TableLayoutPanelCellBorderStyle.Single
             };
             grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 46));
             grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 54));
@@ -3546,10 +4148,12 @@ SAFETY RULES:
                     Text      = metrics[i].Label,
                     Dock      = DockStyle.Fill,
                     ForeColor = Color.FromArgb(115, 124, 152),
+                    BackColor = i % 2 == 0 ? Color.FromArgb(16, 19, 31) : Color.FromArgb(20, 23, 37),
                     Font      = new Font("Segoe UI", 8.2F),
                     TextAlign = ContentAlignment.MiddleLeft,
                     AutoEllipsis = true,
-                    Padding   = new Padding(4, 0, 0, 0)
+                    Padding   = new Padding(6, 0, 0, 0),
+                    Cursor = Cursors.Help
                 };
 
                 var (initFg, initBg) = ReviewValueStyle(metrics[i].Path, null);
@@ -3562,8 +4166,13 @@ SAFETY RULES:
                     Font      = new Font("Consolas", 8.5F, FontStyle.Bold),
                     TextAlign = isBarrierGroup ? ContentAlignment.MiddleLeft : ContentAlignment.MiddleRight,
                     AutoEllipsis = true,
-                    Padding   = isBarrierGroup ? new Padding(6, 2, 6, 2) : new Padding(0, 2, 6, 2)
+                    Padding   = isBarrierGroup ? new Padding(8, 2, 8, 2) : new Padding(0, 2, 8, 2),
+                    Cursor = Cursors.Help
                 };
+
+                string tip = GetReviewMetricTooltip(title, metrics[i].Label, metrics[i].Path, metrics[i].Format);
+                toolTip.SetToolTip(name, tip);
+                toolTip.SetToolTip(value, tip);
 
                 grid.Controls.Add(name, 0, i);
                 grid.Controls.Add(value, 1, i);
@@ -3571,6 +4180,274 @@ SAFETY RULES:
             }
 
             parent.Controls.Add(group);
+        }
+
+        private static void ResizeReviewGroups(FlowLayoutPanel flow)
+        {
+            int available = Math.Max(320, flow.ClientSize.Width - 28);
+            int columns = available >= 1180 ? 4
+                : available >= 880 ? 3
+                : available >= 620 ? 2
+                : 1;
+
+            int cardWidth = Math.Max(284, (available - (columns - 1) * 12) / columns);
+            int barrierWidth = columns == 1
+                ? cardWidth
+                : Math.Min(available, cardWidth * Math.Min(columns, 2) + 12);
+
+            foreach (Control control in flow.Controls)
+            {
+                if (control is not GroupBox group)
+                    continue;
+
+                bool isBarrier = string.Equals(group.Tag?.ToString(), "review-barrier", StringComparison.OrdinalIgnoreCase);
+                group.Width = isBarrier ? barrierWidth : cardWidth;
+
+                foreach (Control child in group.Controls)
+                {
+                    if (child is Panel panel)
+                    {
+                        foreach (Control inner in panel.Controls)
+                        {
+                            if (inner is TableLayoutPanel grid)
+                                grid.Width = Math.Max(1, panel.ClientSize.Width);
+                        }
+                    }
+                }
+            }
+        }
+
+        private static string GetReviewGroupTooltip(string title)
+        {
+            string intro = title switch
+            {
+                "Pre-Trade Safety Checks" => "Hard safety checks that should pass before the trade can be started. These rows compare live/calculated values against configured limits.",
+                "Account Health" => "Live account money and margin information from MT5. Use this to confirm the account can safely support another position.",
+                "Live Price And Spread" => "Current bid, ask, spread, and daily price range for the selected pair. These values affect entry price and trading cost.",
+                "Trade Risk Preview" => "Estimated money risk, profit targets, distances in pips, and risk/reward for this trade using the selected lot size.",
+                "Broker Symbol Rules" => "Broker limits for this symbol, such as lot size range, lot step, execution mode, and whether trading is currently allowed.",
+                "Market Session" => "Connection, market-open status, broker time, and active trading sessions. Session quality can affect liquidity and spread.",
+                "H1 Indicator Signals" => "One-hour indicator readings used as market context. These values support analysis but do not execute trades by themselves.",
+                "Recent Candle Behavior" => "Recent candle direction and candle-pattern clues across timeframes. Useful for timing and momentum checks.",
+                "Market Structure" => "Trend and structure context across timeframes, including whether the market is aligned or choppy.",
+                "Support And Resistance" => "Nearby support and resistance levels and how close price is to important levels.",
+                "Open Position Check" => "Existing positions and recent execution context. Use this to avoid duplicate or conflicting trades.",
+                "News Risk" => "Upcoming news-event risk. High-impact news can cause spread spikes and fast price movement.",
+                _ => "Review information for this trade before starting it."
+            };
+
+            return $"{title}\n\n{intro}\n\nColor guide:\nGreen = safe/pass/favorable.\nYellow = caution or near a limit.\nRed = unsafe/fail/outside limit.\nBlue = information only.\nDim gray = static metadata, missing data, or not a direct safety signal.";
+        }
+
+        private static string GetReviewMetricTooltip(string groupTitle, string label, string path, string format)
+        {
+            string units = format switch
+            {
+                "money" => "Value is shown as account currency.",
+                "price" => "Value is shown as a market price.",
+                "pips" => "Value is shown in pips.",
+                "pct" => "Value is shown as a percent.",
+                "ratio" => "Value is shown as a ratio.",
+                "lots" => "Value is shown in lots.",
+                "bool" => "Yes means true or currently active. No means false or not active.",
+                _ when format.StartsWith("barrier:", StringComparison.OrdinalIgnoreCase) => "This row shows current value versus the required safety rule.",
+                _ => "Value is shown as reported by MT5 or the review snapshot."
+            };
+
+            string meaning = path switch
+            {
+                "execution_barriers.signal_valid_detail" => "Checks that the signal has a pair, direction, lot size, stop loss, and take profit.",
+                "execution_barriers.signal_fresh_detail" => "Checks whether the signal is still inside its expiry window.",
+                "execution_barriers.pair_allowed_detail" => "Checks whether this pair is allowed by the bot configuration.",
+                "execution_barriers.daily_limit_detail" => "Checks whether today's trade count is still below the configured maximum.",
+                "execution_barriers.account_detail" => "Checks whether MT5 returned usable equity and margin data.",
+                "execution_barriers.rr_detail" => "Checks whether expected reward is high enough compared with the stop-loss risk.",
+                "execution_barriers.free_margin_detail" => "Checks whether the account has enough available margin before opening another trade.",
+                "execution_barriers.portfolio_risk_detail" => "Checks whether total open risk plus this trade stays within the account risk cap.",
+                "execution_barriers.spread_detail" => "Checks whether current spread is inside the pair or global spread limit.",
+                "execution_barriers.news_detail" => "Checks whether high-impact news is inside the configured blackout window.",
+                "account.balance" => "Closed account value before current floating profit or loss.",
+                "account.equity" => "Live account value including open trade profit or loss.",
+                "account.free_margin" => "Margin still available for new trades.",
+                "account.margin_used" => "Margin currently locked by open positions.",
+                "account.margin_level" => "Equity divided by used margin. Lower values mean less margin safety.",
+                "account.floating_pnl" => "Current unrealized profit or loss from open positions.",
+                "account.daily_pnl" => "Profit or loss recorded for today's trading activity.",
+                "account.daily_trades_taken" => "Number of trades opened today according to the snapshot.",
+                "price.bid" => "Price used when selling or closing a buy position.",
+                "price.ask" => "Price used when buying or closing a sell position.",
+                "price.spread_pips" => "Trading cost gap between ask and bid. Lower spread is usually better.",
+                "price.daily_open" => "Price at the start of the broker's trading day.",
+                "price.daily_high" => "Highest price reached today.",
+                "price.daily_low" => "Lowest price reached today.",
+                "price.daily_range_pips" => "Distance between today's high and low.",
+                "price.prev_day_high" => "Previous trading day's high, often watched as resistance.",
+                "risk.dollar_risk" => "Estimated loss if stop loss is hit with the selected lot size.",
+                "risk.dollar_profit_tp1" => "Estimated profit if the first take-profit target is hit.",
+                "risk.dollar_profit_tp2" => "Estimated profit if the second take-profit target is hit.",
+                "risk.sl_distance_pips" => "Distance from entry price to stop loss.",
+                "risk.tp1_distance_pips" => "Distance from entry price to first take profit.",
+                "risk.rr_ratio" => "Reward compared with risk. 1.5 means target profit is 1.5 times the stop-loss risk.",
+                "risk.max_risk_pct" => "Maximum account percentage allowed for one trade by configuration.",
+                "risk.daily_loss_remaining" => "Estimated loss room left before the daily loss protection limit is reached.",
+                "symbol.name" => "Exact broker symbol that MT5 is using for this pair.",
+                "symbol.digits" => "Number of decimal places used in this symbol's price.",
+                "symbol.min_lot" => "Smallest lot size the broker allows for this symbol.",
+                "symbol.max_lot" => "Largest lot size the broker allows for this symbol.",
+                "symbol.lot_step" => "Smallest allowed lot-size increment.",
+                "symbol.trade_allowed" => "Whether MT5 and the broker currently allow trading this symbol.",
+                "symbol.execution_mode" => "How the broker executes orders for this symbol.",
+                "symbol.filling_mode" => "Allowed order filling behavior for this symbol.",
+                "session.broker_time" => "Current server time reported by the broker.",
+                "session.terminal_connected" => "Whether the MT5 terminal connection is active.",
+                "session.market_open" => "Whether the market appears open for trading.",
+                "session.london_open" => "Whether London session conditions are active.",
+                "session.newyork_open" => "Whether New York session conditions are active.",
+                "session.overlap_active" => "Whether London and New York sessions overlap, often a more liquid period.",
+                "session.session_name" => "Current detected trading session name.",
+                "session.is_weekend" => "Whether the market is in weekend status.",
+                "indicators.h1.rsi" => "Relative Strength Index on H1. High can mean overbought, low can mean oversold.",
+                "indicators.h1.rsi_signal" => "Plain-language interpretation of the H1 RSI value.",
+                "indicators.h1.macd_bias" => "MACD directional bias on H1.",
+                "indicators.h1.ema20" => "Shorter-term moving average on H1.",
+                "indicators.h1.ema50" => "Medium-term moving average on H1.",
+                "indicators.h1.ema200" => "Long-term trend moving average on H1.",
+                "indicators.h1.adx" => "Trend-strength reading. Higher values usually mean stronger trend.",
+                "indicators.h1.atr" => "Average True Range on H1, used as volatility context.",
+                "candles.h4_last.direction" => "Direction of the latest H4 candle.",
+                "candles.h1_last.direction" => "Direction of the latest H1 candle.",
+                "candles.m15_last.direction" => "Direction of the latest M15 candle.",
+                "candles.m5_last.direction" => "Direction of the latest M5 candle.",
+                "candles.h1_last.body_pips" => "Body size of the latest H1 candle, excluding wicks.",
+                "candles.m15_last.body_pips" => "Body size of the latest M15 candle, excluding wicks.",
+                "candles.m5_last.is_doji" => "Doji candles can show hesitation or indecision.",
+                "candles.m15_last.is_inside_bar" => "Inside bars can show compression before a move.",
+                "structure.trend_h4" => "Detected trend direction on H4.",
+                "structure.trend_h1" => "Detected trend direction on H1.",
+                "structure.trend_m15" => "Detected trend direction on M15.",
+                "structure.trend_m5" => "Detected trend direction on M5.",
+                "structure.all_timeframes_aligned" => "Whether the checked timeframes point in the same direction.",
+                "structure.market_regime" => "Detected market condition, such as trend or range.",
+                "structure.swing_high" => "Nearby recent high used as structure reference.",
+                "structure.swing_low" => "Nearby recent low used as structure reference.",
+                "levels.nearest_support_1" => "Closest lower price area where buyers may appear.",
+                "levels.nearest_support_2" => "Second lower support area.",
+                "levels.nearest_resistance_1" => "Closest upper price area where sellers may appear.",
+                "levels.nearest_resistance_2" => "Second upper resistance area.",
+                "levels.distance_to_support_pips" => "How far current price is from nearest support.",
+                "levels.distance_to_resistance_pips" => "How far current price is from nearest resistance.",
+                "levels.price_at_key_level" => "Whether price is close to a detected support or resistance area.",
+                "levels.key_level_type" => "Type of key level closest to price.",
+                "positions.total_open" => "Total open positions currently reported by MT5.",
+                "positions.same_pair_open" => "Whether this pair already has an open position.",
+                "positions.same_pair_direction" => "Direction of any existing position on this pair.",
+                "positions.duplicate_trade_exists" => "Whether a same-pair, same-direction trade already exists.",
+                "positions.opposite_trade_exists" => "Whether an opposite-direction trade exists for this pair.",
+                "last_order.execution_result" => "Most recent order result reported in the review snapshot.",
+                "last_order.ticket" => "Broker ticket number for the last order if available.",
+                "history.win_rate_today_pct" => "Today's approximate win rate from available history.",
+                "news.news_risk_level" => "Detected news risk level for this pair or market.",
+                "news.high_impact_next_60_min" => "Whether high-impact news is expected within the next hour.",
+                "news.blackout_active" => "Whether a high-impact event is inside the configured no-trade window right now.",
+                "news.next_event" => "Next relevant economic calendar event for either currency in the pair.",
+                "news.reason" => "Plain-language explanation for the current news risk color and barrier result.",
+                "news.relevant_event_count" => "Number of matching news events found for the pair currencies in the next review window.",
+                "news.source" => "Source used for the news risk data.",
+                _ => $"Shows {label.ToLowerInvariant()} for this trade review."
+            };
+
+            string source = GetReviewMetricSource(path, format);
+            string color = GetReviewMetricColorExplanation(path, format);
+
+            return $"{label}\n\nWhat it means:\n{meaning}\n\nWhere it comes from:\n{source}\n\nHow to read the color:\n{color}\n\nFormat:\n{units}";
+        }
+
+        private static string GetReviewMetricSource(string path, string format)
+        {
+            if (format.StartsWith("barrier:", StringComparison.OrdinalIgnoreCase))
+            {
+                return path switch
+                {
+                    "execution_barriers.signal_valid_detail" => "Calculated inside the Review Trade window from the signal JSON fields: pair, direction, lot size, stop loss, and take profit.",
+                    "execution_barriers.signal_fresh_detail" => "Calculated inside the Review Trade window from signal created_at and expiry_minutes.",
+                    "execution_barriers.pair_allowed_detail" => "Calculated from the signal pair and the Bot Configuration allowed-pair list, which is synced from Pair Settings.",
+                    "execution_barriers.daily_limit_detail" => "Uses today's trade count from the MT5/review snapshot and compares it with Bot Configuration max trades per day.",
+                    "execution_barriers.account_detail" => "Uses live account equity and free margin returned by MT5 through the EA/bridge snapshot.",
+                    "execution_barriers.rr_detail" => "Calculated from entry, stop loss, take profit, and the minimum R:R from Pair Settings or Bot Configuration.",
+                    "execution_barriers.free_margin_detail" => "Uses live MT5 free margin and balance from the account snapshot.",
+                    "execution_barriers.portfolio_risk_detail" => "Calculated from live open positions, their stop losses, this trade's selected lot size, and Bot Configuration max total risk.",
+                    "execution_barriers.spread_detail" => "Uses live MT5 spread and compares it with the pair-specific spread limit or global bot spread limit.",
+                    "execution_barriers.news_detail" => "Uses cached Financial Modeling Prep economic-calendar events and compares them with configured news blackout minutes.",
+                    _ => "Calculated inside the Review Trade window from the current snapshot and bot safety settings."
+                };
+            }
+
+            if (path.StartsWith("account.", StringComparison.OrdinalIgnoreCase))
+                return "Live account data from MT5 through the EA/bridge snapshot. If MT5 cannot provide it, the value may show as unavailable.";
+            if (path.StartsWith("price.", StringComparison.OrdinalIgnoreCase))
+                return "Live symbol price data from MT5 through the EA/bridge snapshot. Spread is broker bid/ask difference converted to pips.";
+            if (path.StartsWith("risk.", StringComparison.OrdinalIgnoreCase))
+                return path switch
+                {
+                    "risk.max_risk_pct" => "Read from Bot Configuration max risk percent.",
+                    "risk.daily_loss_remaining" => "Calculated from account/history snapshot data and the configured daily loss limit when available.",
+                    _ => "Calculated in the Review Trade window from the signal entry/SL/TP, selected lot size, pip size, and account settings."
+                };
+            if (path.StartsWith("symbol.", StringComparison.OrdinalIgnoreCase))
+                return "Broker symbol rules from MT5 for the selected pair, such as lot limits and whether trading is allowed.";
+            if (path.StartsWith("session.", StringComparison.OrdinalIgnoreCase))
+                return "Session and connection data from MT5/server time in the EA/bridge snapshot.";
+            if (path.StartsWith("indicators.", StringComparison.OrdinalIgnoreCase))
+                return "Indicator values calculated by the MT5 Expert Advisor snapshot from live chart data.";
+            if (path.StartsWith("candles.", StringComparison.OrdinalIgnoreCase))
+                return "Recent candle data calculated by the MT5 Expert Advisor snapshot from live chart candles.";
+            if (path.StartsWith("structure.", StringComparison.OrdinalIgnoreCase))
+                return "Market structure estimate calculated by the MT5 Expert Advisor snapshot from recent price action.";
+            if (path.StartsWith("levels.", StringComparison.OrdinalIgnoreCase))
+                return "Support/resistance estimate calculated by the MT5 Expert Advisor snapshot from recent highs and lows.";
+            if (path.StartsWith("positions.", StringComparison.OrdinalIgnoreCase))
+                return "Live open-position data from MT5, filtered for this pair and direction where applicable.";
+            if (path.StartsWith("last_order.", StringComparison.OrdinalIgnoreCase))
+                return "Most recent order result stored in the review snapshot after an execution attempt, if one exists.";
+            if (path.StartsWith("history.", StringComparison.OrdinalIgnoreCase))
+                return "Trade-history summary from the MT5/review snapshot when available.";
+            if (path.StartsWith("news.", StringComparison.OrdinalIgnoreCase))
+                return "Live/cached Financial Modeling Prep economic-calendar data filtered by the pair currencies, configured impact level, and blackout minutes. If no API key is set, it shows unavailable.";
+
+            return "Read from the current Review Trade snapshot.";
+        }
+
+        private static string GetReviewMetricColorExplanation(string path, string format)
+        {
+            if (format.StartsWith("barrier:", StringComparison.OrdinalIgnoreCase))
+                return "Green means this safety check passed. Red means this rule failed and can block or warn before trade start. The text shows current value versus the required base rule.";
+
+            if (path is "symbol.digits" or "symbol.min_lot" or "symbol.max_lot" or "symbol.lot_step"
+                     or "symbol.execution_mode" or "symbol.filling_mode"
+                     or "last_order.ticket" or "news.source" or "levels.key_level_type"
+                     or "account.daily_trades_taken" or "session.session_name")
+                return "Dim gray/blue means informational metadata. It usually does not mean good or bad by itself.";
+
+            if (path is "price.spread_pips")
+                return "Green means spread is within the allowed limit. Yellow/red means spread is expensive or above the configured limit.";
+
+            if (path.StartsWith("price.", StringComparison.OrdinalIgnoreCase)
+                || path.StartsWith("indicators.", StringComparison.OrdinalIgnoreCase)
+                || path.StartsWith("candles.", StringComparison.OrdinalIgnoreCase)
+                || path.StartsWith("structure.trend_", StringComparison.OrdinalIgnoreCase)
+                || path.StartsWith("levels.nearest_", StringComparison.OrdinalIgnoreCase))
+                return "Blue means context-only market information. Use it for analysis, but it is not a direct pass/fail safety check.";
+
+            if (path is "risk.rr_ratio")
+                return "Green means risk/reward meets or beats the configured minimum. Red means the reward is too small for the risk.";
+
+            if (path is "risk.dollar_risk" or "risk.max_risk_pct" or "account.daily_pnl" or "risk.daily_loss_remaining")
+                return "Green is healthy or within limit. Yellow warns the value is getting close to a limit. Red means the value is risky or outside the safety threshold.";
+
+            if (format == "bool")
+                return "Green generally means Yes is safe/active/available. Red generally means No is unsafe/unavailable. Some context-only booleans may be blue or dim.";
+
+            return "Green means favorable or within a configured safety limit. Yellow means caution. Red means unsafe or outside a limit. Blue means information only. Dim means static metadata or unavailable context.";
         }
 
         private static JObject ParseReviewSnapshot(string snapshotJson)
@@ -3653,19 +4530,20 @@ SAFETY RULES:
             return false;
         }
 
-        private static List<string> GetFailedReviewBarrierMessages(JObject snapshot)
+        private static List<string> GetFailedReviewBarrierMessages(JObject snapshot, bool allowAiCompletion = false)
         {
             var barriers = new (string Label, string FlagPath, string DetailPath)[]
             {
-                ("Signal Valid", "execution_barriers.signal_valid", "execution_barriers.signal_valid_detail"),
-                ("Signal Fresh", "execution_barriers.signal_fresh", "execution_barriers.signal_fresh_detail"),
-                ("Pair Allowed", "execution_barriers.pair_allowed", "execution_barriers.pair_allowed_detail"),
-                ("Daily Limit", "execution_barriers.daily_limit_ok", "execution_barriers.daily_limit_detail"),
-                ("MT5 Account", "execution_barriers.account_ok", "execution_barriers.account_detail"),
-                ("R:R Allowed", "execution_barriers.rr_ok", "execution_barriers.rr_detail"),
-                ("Free Margin", "execution_barriers.free_margin_ok", "execution_barriers.free_margin_detail"),
-                ("Portfolio Cap", "execution_barriers.portfolio_risk_ok", "execution_barriers.portfolio_risk_detail"),
-                ("Spread OK", "execution_barriers.spread_ok", "execution_barriers.spread_detail")
+                ("Signal has required fields", "execution_barriers.signal_valid", "execution_barriers.signal_valid_detail"),
+                ("Signal is not expired", "execution_barriers.signal_fresh", "execution_barriers.signal_fresh_detail"),
+                ("Pair is allowed", "execution_barriers.pair_allowed", "execution_barriers.pair_allowed_detail"),
+                ("Daily trade limit", "execution_barriers.daily_limit_ok", "execution_barriers.daily_limit_detail"),
+                ("Account data available", "execution_barriers.account_ok", "execution_barriers.account_detail"),
+                ("Risk/reward rule", "execution_barriers.rr_ok", "execution_barriers.rr_detail"),
+                ("Free margin available", "execution_barriers.free_margin_ok", "execution_barriers.free_margin_detail"),
+                ("Total account risk cap", "execution_barriers.portfolio_risk_ok", "execution_barriers.portfolio_risk_detail"),
+                ("Spread within limit", "execution_barriers.spread_ok", "execution_barriers.spread_detail"),
+                ("News blackout clear", "execution_barriers.news_ok", "execution_barriers.news_detail")
             };
 
             var failed = new List<string>();
@@ -3676,10 +4554,25 @@ SAFETY RULES:
                     continue;
 
                 string detail = snapshot.SelectToken(barrier.DetailPath)?.ToString(Formatting.None).Trim('"') ?? "No detail available";
+                if (allowAiCompletion && IsAiCompletableReviewBarrier(barrier.FlagPath, detail))
+                    continue;
+
                 failed.Add($"{barrier.Label}: {detail}");
             }
 
             return failed;
+        }
+
+        private static bool IsAiCompletableReviewBarrier(string flagPath, string detail)
+        {
+            if (flagPath == "execution_barriers.signal_fresh")
+                return true;
+
+            if (flagPath != "execution_barriers.signal_valid")
+                return false;
+
+            return detail.Contains("StopLoss cannot be 0", StringComparison.OrdinalIgnoreCase)
+                || detail.Contains("TakeProfit cannot be 0", StringComparison.OrdinalIgnoreCase);
         }
 
         private static (Color Fg, Color Bg) ReviewValueStyle(string path, JToken? token)
@@ -3751,6 +4644,7 @@ SAFETY RULES:
                     return boolVal ? (warnFg, warnBg) : (normFg, normBg);
 
                 case "news.high_impact_next_60_min":
+                case "news.blackout_active":
                     return boolVal ? (critFg, critBg) : (goodFg, goodBg);
 
                 case "structure.all_timeframes_aligned":
@@ -3888,6 +4782,68 @@ SAFETY RULES:
             return button;
         }
 
+        private static JObject BuildReviewNewsJson(NewsRiskSnapshot news)
+        {
+            var next = news.RelevantEvents
+                .Where(e => e.EventTimeUtc >= DateTime.UtcNow)
+                .OrderBy(e => e.EventTimeUtc)
+                .FirstOrDefault();
+
+            return new JObject
+            {
+                ["news_risk_level"] = news.RiskLevel,
+                ["risk_level"] = news.RiskLevel,
+                ["high_impact_next_60_min"] = news.HighImpactNext60Minutes,
+                ["has_high_impact_event_next_60_minutes"] = news.HighImpactNext60Minutes,
+                ["blackout_active"] = news.IsBlackoutActive,
+                ["is_blackout_active"] = news.IsBlackoutActive,
+                ["configured"] = news.IsConfigured,
+                ["is_configured"] = news.IsConfigured,
+                ["source"] = news.Source,
+                ["data_source"] = news.Source,
+                ["reason"] = news.Reason,
+                ["status_reason"] = news.Reason,
+                ["checked_at_utc"] = news.CheckedAtUtc.ToString("yyyy-MM-dd HH:mm:ss"),
+                ["cache_updated_at_utc"] = news.CacheUpdatedAtUtc == DateTime.MinValue
+                    ? null
+                    : news.CacheUpdatedAtUtc.ToString("yyyy-MM-dd HH:mm:ss"),
+                ["next_event"] = next == null
+                    ? "None in next 24h"
+                    : $"{next.EventTimeUtc:HH:mm} UTC {next.Currency} {next.Impact}: {next.Title}",
+                ["next_relevant_event_summary"] = next == null
+                    ? "None in next 24h"
+                    : $"{next.EventTimeUtc:HH:mm} UTC {next.Currency} {next.Impact}: {next.Title}",
+                ["next_event_time_utc"] = next?.EventTimeUtc.ToString("yyyy-MM-dd HH:mm:ss"),
+                ["blocking_event_count"] = news.BlockingEvents.Count,
+                ["blackout_event_count"] = news.BlockingEvents.Count,
+                ["relevant_event_count"] = news.RelevantEvents.Count,
+                ["events"] = JArray.FromObject(news.RelevantEvents.Select(e => new
+                {
+                    time_utc = e.EventTimeUtc.ToString("yyyy-MM-dd HH:mm:ss"),
+                    e.Currency,
+                    e.Country,
+                    e.Impact,
+                    e.Title,
+                    e.Previous,
+                    e.Forecast,
+                    e.Actual,
+                    e.Source
+                })),
+                ["blackout_events"] = JArray.FromObject(news.BlockingEvents.Select(e => new
+                {
+                    time_utc = e.EventTimeUtc.ToString("yyyy-MM-dd HH:mm:ss"),
+                    e.Currency,
+                    e.Country,
+                    e.Impact,
+                    e.Title,
+                    e.Previous,
+                    e.Forecast,
+                    e.Actual,
+                    e.Source
+                }))
+            };
+        }
+
         private string BuildTradeReviewSnapshotJson(
             TradeRequest request,
             AccountInfo? account,
@@ -3901,7 +4857,11 @@ SAFETY RULES:
                 : symbol != null
                     ? request.TradeType == TradeType.BUY ? symbol.Ask : symbol.Bid
                     : 0;
-            double pipSize = LotCalculator.GetPipSize((symbol?.Symbol ?? request.Pair).ToUpperInvariant());
+            var pairRules = _pairSettings?.GetForPair(request.Pair);
+            double pipSize = pairRules?.PipSize > 0
+                ? pairRules.PipSize
+                : LotCalculator.GetPipSize((symbol?.Symbol ?? request.Pair).ToUpperInvariant());
+            double maxSpreadPips = pairRules?.MaxSpreadPips > 0 ? pairRules.MaxSpreadPips : _cfg.Bot.MaxSpreadPips;
             double slPips = entry > 0 ? Math.Abs(entry - request.StopLoss) / pipSize : 0;
             double tpPips = entry > 0 ? Math.Abs(request.TakeProfit - entry) / pipSize : 0;
             double rr = slPips > 0 ? tpPips / slPips : 0;
@@ -3971,7 +4931,7 @@ SAFETY RULES:
                     ["bid"]              = symbol.Bid,
                     ["ask"]              = symbol.Ask,
                     ["spread_pips"]      = symbol.SpreadPips,
-                    ["spread_normal"]    = symbol.SpreadPips <= _cfg.Bot.MaxSpreadPips,
+                    ["spread_normal"]    = maxSpreadPips <= 0 || symbol.SpreadPips <= maxSpreadPips,
                     ["daily_open"]       = null,
                     ["daily_high"]       = null,
                     ["daily_low"]        = null,
@@ -4012,7 +4972,7 @@ SAFETY RULES:
                 {
                     ["max_risk_pct"]          = _cfg.Bot.MaxRiskPercent,
                     ["max_risk_dollar"]       = account == null ? 0 : Math.Round(account.Equity * _cfg.Bot.MaxRiskPercent / 100.0, 2),
-                    ["min_rr_ratio"]          = _cfg.Bot.MinRRRatio,
+                    ["min_rr_ratio"]          = pairRules?.ScalpingMinRR > 0 ? pairRules.ScalpingMinRR : _cfg.Bot.MinRRRatio,
                     ["suggested_sl"]          = request.StopLoss,
                     ["suggested_tp1"]         = request.TakeProfit,
                     ["suggested_tp2"]         = request.TakeProfit2,
@@ -4030,7 +4990,72 @@ SAFETY RULES:
                 ["news"] = Unavailable("News module is offline in this review window")
             };
 
+            if (pairRules != null)
+            {
+                snapshot["pair_rules"] = JObject.FromObject(new
+                {
+                    pair = pairRules.Pair,
+                    pip_size = pairRules.PipSize,
+                    max_spread_pips = pairRules.MaxSpreadPips,
+                    good_spread_pips = pairRules.GoodSpreadPips,
+                    acceptable_spread_pips = pairRules.AcceptableSpreadPips,
+                    max_sl_pips = pairRules.MaxSlPips,
+                    min_tp_pips = pairRules.MinTpPips,
+                    scalping_min_rr = pairRules.ScalpingMinRR,
+                    preferred_rr = pairRules.PreferredRR,
+                    atr_multiplier_sl = pairRules.AtrMultiplierSl,
+                    atr_multiplier_tp = pairRules.AtrMultiplierTp,
+                    min_atr_pips_m5 = pairRules.MinAtrPipsM5,
+                    max_atr_pips_m5 = pairRules.MaxAtrPipsM5,
+                    min_atr_pips_m15 = pairRules.MinAtrPipsM15,
+                    max_atr_pips_m15 = pairRules.MaxAtrPipsM15,
+                    avoid_trade_if_spread_above_percent_of_tp = pairRules.AvoidTradeIfSpreadAbovePercentOfTp,
+                    minimum_distance_from_key_level_pips = pairRules.MinimumDistanceFromKeyLevelPips,
+                    break_even_after_profit_pips = pairRules.BreakEvenAfterProfitPips,
+                    trailing_start_pips = pairRules.TrailingStartPips,
+                    trailing_step_pips = pairRules.TrailingStepPips,
+                    max_slippage_pips = pairRules.MaxSlippagePips,
+                    recommended_sessions = pairRules.RecommendedSessions,
+                    avoid_sessions = pairRules.AvoidSessions
+                });
+            }
+
             return snapshot.ToString(Formatting.Indented);
+        }
+
+        private void PatchSnapshotSignalFields(JObject snapshot, TradeRequest req)
+        {
+            var pairRules = _pairSettings?.GetForPair(req.Pair);
+            double pipSize = pairRules?.PipSize > 0
+                ? pairRules.PipSize
+                : LotCalculator.GetPipSize(req.Pair.ToUpperInvariant());
+
+            double ask   = snapshot["price"]?["ask"]?.Value<double>() ?? 0;
+            double bid   = snapshot["price"]?["bid"]?.Value<double>() ?? 0;
+            double entry = req.EntryPrice > 0 ? req.EntryPrice
+                : (req.TradeType == TradeType.BUY ? ask : bid);
+
+            double slPips  = entry > 0 && req.StopLoss   > 0 ? Math.Abs(entry - req.StopLoss)   / pipSize : 0;
+            double tpPips  = entry > 0 && req.TakeProfit  > 0 ? Math.Abs(req.TakeProfit  - entry) / pipSize : 0;
+            double tp2Pips = entry > 0 && req.TakeProfit2 > 0 ? Math.Abs(req.TakeProfit2 - entry) / pipSize : 0;
+            double rr      = slPips > 0 ? Math.Round(tpPips / slPips, 2) : 0;
+
+            double dollarRisk    = entry > 0 && req.StopLoss   > 0 ? LotCalculator.DollarRisk(req.LotSize,   entry, req.StopLoss,   req.Pair) : 0;
+            double dollarProfit  = entry > 0 && req.TakeProfit  > 0 ? LotCalculator.DollarProfit(req.LotSize, entry, req.TakeProfit,  req.Pair) : 0;
+            double dollarProfit2 = entry > 0 && req.TakeProfit2 > 0 ? LotCalculator.DollarProfit(req.LotSize, entry, req.TakeProfit2, req.Pair) : 0;
+
+            if (snapshot["risk"] is not JObject risk) return;
+            risk["suggested_sl"]      = req.StopLoss;
+            risk["suggested_tp1"]     = req.TakeProfit;
+            risk["suggested_tp2"]     = req.TakeProfit2;
+            risk["sl_distance_pips"]  = Math.Round(slPips,  1);
+            risk["tp1_distance_pips"] = Math.Round(tpPips,  1);
+            risk["tp2_distance_pips"] = Math.Round(tp2Pips, 1);
+            risk["rr_ratio"]          = rr;
+            risk["calculated_lot"]    = req.LotSize;
+            risk["dollar_risk"]       = Math.Round(dollarRisk,    2);
+            risk["dollar_profit_tp1"] = Math.Round(dollarProfit,  2);
+            risk["dollar_profit_tp2"] = Math.Round(dollarProfit2, 2);
         }
 
         private static JObject Unavailable(string reason) => new()
@@ -4141,7 +5166,9 @@ SAFETY RULES:
                 }
 
                 _cfg.Bot = ReadBotConfigFromUISafe();
+                _cfg.ApiIntegrations = ReadApiIntegrationConfigFromUI();
                 _bot.UpdateConfig(_cfg.Bot);
+                _bot.UpdateApiConfig(_cfg.ApiIntegrations);
                 await _settings.SaveAsync(_cfg).ConfigureAwait(false);
 
                 var review = await ShowTradeReviewDialogAsync(req, info).ConfigureAwait(false);
@@ -4153,6 +5180,8 @@ SAFETY RULES:
 
                 if (review.LotSize > 0)
                     req.LotSize = review.LotSize;
+                if (review.FinalRequest != null)
+                    req = review.FinalRequest;
 
                 var executing = info with
                 {
@@ -4363,63 +5392,6 @@ SAFETY RULES:
         // ==========================================================
         //  PAIR SELECTION - shared flow for manual & AI selection
         // ==========================================================
-
-        private async Task OnPairSelectionChangedAsync(string pair)
-        {
-            string watchFolder = _cfg.Bot.WatchFolder?.Trim() ?? "";
-            if (string.IsNullOrWhiteSpace(watchFolder))
-            {
-                Log($"[BOT] Pair selected: {pair}. Set a watch folder to generate a signal file.", C_YELLOW);
-                return;
-            }
-
-            try
-            {
-                SymbolInfo? sym  = null;
-                AccountInfo? acct = null;
-                if (_bridge?.IsConnected == true)
-                {
-                    try { sym  = await _bridge.GetSymbolInfoAsync(pair).ConfigureAwait(false); } catch { }
-                    try { acct = await _bridge.GetAccountInfoAsync().ConfigureAwait(false); }   catch { }
-                }
-
-                double ask    = sym?.Ask ?? 0;
-                double entry  = ask;
-                int    digits = sym?.Digits ?? 5;
-                double pip    = (digits == 3 || digits == 1) ? 0.01 : 0.0001;
-                double slPips = 20.0;
-                double sl     = entry > 0 ? Math.Round(entry - slPips * pip, digits) : 0;
-                double tp     = entry > 0 ? Math.Round(entry + slPips * 2 * pip, digits) : 0;
-
-                double equity = acct?.Equity ?? 0;
-                double lots   = 0.01;
-                if (entry > 0 && sl > 0 && equity > 0)
-                    lots = LotCalculator.Calculate(equity, _cfg.Bot.MaxRiskPercent, entry, sl, pair);
-
-                var signal = new TradeRequest
-                {
-                    Pair      = pair,
-                    TradeType = TradeType.BUY,
-                    EntryPrice = entry,
-                    StopLoss  = sl > 0 ? sl : Math.Round(entry * 0.999, digits),
-                    TakeProfit = tp > 0 ? tp : Math.Round(entry * 1.002, digits),
-                    LotSize   = Math.Max(0.01, lots),
-                    Comment   = $"PairSelect_{pair}",
-                    CreatedAt = DateTime.UtcNow
-                };
-
-                Directory.CreateDirectory(watchFolder);
-                string filename = $"Pair_{pair}_{DateTime.Now:yyyyMMdd_HHmmss}.json";
-                string filepath = Path.Combine(watchFolder, filename);
-                string json     = JsonConvert.SerializeObject(signal, Formatting.Indented);
-                await Task.Run(() => File.WriteAllText(filepath, json)).ConfigureAwait(false);
-                Log($"[BOT] Signal file written for {pair}: {filename}", C_ACCENT);
-            }
-            catch (Exception ex)
-            {
-                Log($"[BOT] Error creating signal for {pair}: {ex.Message}", C_RED);
-            }
-        }
 
         private Panel EnsureSignalFeedRowForPair(string pair)
         {

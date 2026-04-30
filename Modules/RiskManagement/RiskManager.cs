@@ -1,10 +1,18 @@
 using MT5TradingBot.Core;
 using MT5TradingBot.Models;
+using MT5TradingBot.Modules.PairSettings;
 
 namespace MT5TradingBot.Modules.RiskManagement
 {
     public sealed class RiskManager : IRiskManager
     {
+        private readonly IPairSettingsService? _pairSettings;
+
+        public RiskManager(IPairSettingsService? pairSettings = null)
+        {
+            _pairSettings = pairSettings;
+        }
+
         public Task<RiskValidationResult> ValidateAsync(
             TradeRequest request,
             AccountInfo account,
@@ -68,17 +76,50 @@ namespace MT5TradingBot.Modules.RiskManagement
                 referenceEntry,
                 request.StopLoss,
                 request.TakeProfit);
+            var pairRules = _pairSettings?.GetForPair(request.Pair);
+            double minRr = pairRules?.ScalpingMinRR > 0 ? pairRules.ScalpingMinRR : config.MinRRRatio;
 
-            if (config.EnforceRR && riskReward < config.MinRRRatio)
+            if (config.EnforceRR && riskReward < minRr)
                 return Task.FromResult(Blocked(
-                    $"R:R {riskReward:F2} is below minimum {config.MinRRRatio:F2}.",
+                    $"R:R {riskReward:F2} is below minimum {minRr:F2}.",
                     warnings,
                     referenceEntry,
                     lotSize,
                     riskReward));
 
-            if (!config.EnforceRR && riskReward < config.MinRRRatio)
-                warnings.Add($"R:R {riskReward:F2} is below configured minimum {config.MinRRRatio:F2}.");
+            if (!config.EnforceRR && riskReward < minRr)
+                warnings.Add($"R:R {riskReward:F2} is below configured minimum {minRr:F2}.");
+
+            if (pairRules != null && referenceEntry > 0)
+            {
+                double pipSize = pairRules.PipSize > 0 ? pairRules.PipSize : LotCalculator.GetPipSize(request.Pair);
+                double slPips = Math.Abs(referenceEntry - request.StopLoss) / pipSize;
+                double tpPips = Math.Abs(request.TakeProfit - referenceEntry) / pipSize;
+
+                if (pairRules.MinSlPips > 0 && slPips < pairRules.MinSlPips)
+                    return Task.FromResult(Blocked(
+                        $"{request.Pair} SL distance {slPips:F1} pips is below pair minimum {pairRules.MinSlPips:F1} pips.",
+                        warnings,
+                        referenceEntry,
+                        lotSize,
+                        riskReward));
+
+                if (pairRules.MaxSlPips > 0 && slPips > pairRules.MaxSlPips)
+                    return Task.FromResult(Blocked(
+                        $"{request.Pair} SL distance {slPips:F1} pips exceeds pair maximum {pairRules.MaxSlPips:F1} pips.",
+                        warnings,
+                        referenceEntry,
+                        lotSize,
+                        riskReward));
+
+                if (pairRules.MinTpPips > 0 && tpPips < pairRules.MinTpPips)
+                    return Task.FromResult(Blocked(
+                        $"{request.Pair} TP distance {tpPips:F1} pips is below pair minimum {pairRules.MinTpPips:F1} pips.",
+                        warnings,
+                        referenceEntry,
+                        lotSize,
+                        riskReward));
+            }
 
             double dollarRisk = LotCalculator.DollarRisk(
                 lotSize,
@@ -116,13 +157,14 @@ namespace MT5TradingBot.Modules.RiskManagement
             }
 
             double spreadPips = symbolInfo?.SpreadPips ?? 0;
-            if (config.MaxSpreadPips > 0)
+            double maxSpreadPips = pairRules?.MaxSpreadPips > 0 ? pairRules.MaxSpreadPips : config.MaxSpreadPips;
+            if (maxSpreadPips > 0)
             {
                 if (symbolInfo == null)
                     warnings.Add($"Spread unavailable for {request.Pair}; caller should decide whether to continue.");
-                else if (spreadPips > config.MaxSpreadPips)
+                else if (spreadPips > maxSpreadPips)
                     return Task.FromResult(Blocked(
-                        $"{request.Pair} spread {spreadPips:F1} pips exceeds max {config.MaxSpreadPips:F1} pips.",
+                        $"{request.Pair} spread {spreadPips:F1} pips exceeds max {maxSpreadPips:F1} pips.",
                         warnings,
                         referenceEntry,
                         lotSize,
@@ -130,6 +172,22 @@ namespace MT5TradingBot.Modules.RiskManagement
                         dollarRisk,
                         riskPercent,
                         spreadPips));
+                else if (pairRules?.AvoidTradeIfSpreadAbovePercentOfTp > 0 && referenceEntry > 0)
+                {
+                    double pipSize = pairRules.PipSize > 0 ? pairRules.PipSize : LotCalculator.GetPipSize(request.Pair);
+                    double tpPips = Math.Abs(request.TakeProfit - referenceEntry) / pipSize;
+                    double spreadPercentOfTp = tpPips > 0 ? spreadPips / tpPips * 100.0 : 0;
+                    if (tpPips > 0 && spreadPercentOfTp > pairRules.AvoidTradeIfSpreadAbovePercentOfTp)
+                        return Task.FromResult(Blocked(
+                            $"{request.Pair} spread is {spreadPercentOfTp:F1}% of TP distance; pair max is {pairRules.AvoidTradeIfSpreadAbovePercentOfTp:F1}%.",
+                            warnings,
+                            referenceEntry,
+                            lotSize,
+                            riskReward,
+                            dollarRisk,
+                            riskPercent,
+                            spreadPips));
+                }
             }
 
             return Task.FromResult(new RiskValidationResult
