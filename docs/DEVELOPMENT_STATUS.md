@@ -162,6 +162,8 @@ Project review summary:
 - Build verification completed after Start Trade warning prompt: `dotnet build MT5TradingBot.csproj --no-restore -o .\bin\VerifyBuild` succeeds with 0 warnings and 0 errors.
 - Detail/Play cross-thread fix added: the execution path now reads Bot Configuration controls through a UI-thread-safe helper after background file loading, preventing cross-thread access errors when opening the review dialog.
 - Build verification completed after Detail/Play cross-thread fix: `dotnet build MT5TradingBot.csproj --no-restore -o .\bin\VerifyBuild` succeeds with 0 warnings and 0 errors.
+- Review Trade hard-rule prompt corrected: failed Trade Barriers now show a blocking safety message instead of offering Proceed Anyway, preventing the misleading popup-close-then-row-rejected flow while preserving backend risk validation.
+- Build verification completed after hard-rule prompt correction: `dotnet build MT5TradingBot.csproj --no-restore -o .\bin\VerifyBuild` succeeds with 0 warnings and 0 errors.
 
 Status file note:
 - AGENTS.md expects this file at docs/DEVELOPMENT_STATUS.md.
