@@ -6,7 +6,12 @@
       "Skill(claude-api:*)",
       "Bash(dotnet add *)",
       "Bash(dir \"C:\\\\Users\\\\usman\\\\.nuget\\\\packages\\\\anthropic\\\\12.16.0\\\\lib\\\\net8.0\\\\\" 2>&1 | head -20)",
-      "Bash(xargs grep *)"
+      "Bash(xargs grep *)",
+      "PowerShell(\\(Get-Content \"d:\\\\Repo\\\\MT5TradingBotPro\\\\UI\\\\MainForm.cs\" -Encoding UTF8\\)[1878..1879] | ForEach-Object { [System.Text.Encoding]::UTF8.GetBytes\\($_\\) | ForEach-Object { $_.ToString\\(\"X2\"\\) } | Select-Object -First 40 })",
+      "Bash(python \"d:/Repo/MT5TradingBotPro/fix_unicode.py\")",
+      "Bash(python3 -c ' *)",
+      "Bash(python fix_curly2.py)",
+      "Bash(dotnet clean *)"
     ]
   }
 }

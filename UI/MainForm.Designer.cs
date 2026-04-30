@@ -113,7 +113,7 @@ namespace MT5TradingBot.UI
         private Label _lblRetryLabel;
         private NumericUpDown _nudRetry;
         private Label _lblAllowedPairsLabel;
-        private CheckedListBox _clbAllowedPairs;
+        private ComboBox _cmbAllowedPair;
         private Label _lblDrawdownLabel;
         private NumericUpDown _nudDrawdownPct;
         private CheckBox _chkAutoLotBot;
@@ -121,6 +121,8 @@ namespace MT5TradingBot.UI
         private CheckBox _chkDrawdown;
         private CheckBox _chkAutoStart;
         private Button _btnStartBot;
+        private Button _btnStopBot;
+        private Button _btnBotSettings;
         private Button _btnAnalyzePairs;
         private Button _btnOpenFolder;
         private Button _btnBotInstructions;
@@ -282,7 +284,7 @@ namespace MT5TradingBot.UI
             _lblRetryLabel = new Label();
             _nudRetry = new NumericUpDown();
             _lblAllowedPairsLabel = new Label();
-            _clbAllowedPairs = new CheckedListBox();
+            _cmbAllowedPair = new ComboBox();
             _lblDrawdownLabel = new Label();
             _nudDrawdownPct = new NumericUpDown();
             _chkAutoLotBot = new CheckBox();
@@ -290,6 +292,8 @@ namespace MT5TradingBot.UI
             _chkDrawdown = new CheckBox();
             _chkAutoStart = new CheckBox();
             _btnStartBot = new Button();
+            _btnStopBot = new Button();
+            _btnBotSettings = new Button();
             _btnAnalyzePairs = new Button();
             _btnOpenFolder = new Button();
             _btnBotInstructions = new Button();
@@ -1259,7 +1263,7 @@ namespace MT5TradingBot.UI
             _pnlBotCard.Controls.Add(_lblRetryLabel);
             _pnlBotCard.Controls.Add(_nudRetry);
             _pnlBotCard.Controls.Add(_lblAllowedPairsLabel);
-            _pnlBotCard.Controls.Add(_clbAllowedPairs);
+            _pnlBotCard.Controls.Add(_cmbAllowedPair);
             _pnlBotCard.Controls.Add(_lblDrawdownLabel);
             _pnlBotCard.Controls.Add(_nudDrawdownPct);
             _pnlBotCard.Controls.Add(_chkAutoLotBot);
@@ -1436,22 +1440,22 @@ namespace MT5TradingBot.UI
             _lblAllowedPairsLabel.ForeColor = Color.FromArgb(110, 110, 130);
             _lblAllowedPairsLabel.Location = new Point(14, 242);
             _lblAllowedPairsLabel.Name = "_lblAllowedPairsLabel";
-            _lblAllowedPairsLabel.Size = new Size(78, 15);
+            _lblAllowedPairsLabel.Size = new Size(73, 15);
             _lblAllowedPairsLabel.TabIndex = 13;
-            _lblAllowedPairsLabel.Text = "Allowed Pairs";
+            _lblAllowedPairsLabel.Text = "Allowed Pair";
             // 
-            // _clbAllowedPairs
+            // _cmbAllowedPair
             //
-            _clbAllowedPairs.BackColor = Color.FromArgb(22, 22, 32);
-            _clbAllowedPairs.BorderStyle = BorderStyle.FixedSingle;
-            _clbAllowedPairs.Font = new Font("Consolas", 9F);
-            _clbAllowedPairs.ForeColor = Color.FromArgb(218, 218, 230);
-            _clbAllowedPairs.Location = new Point(176, 240);
-            _clbAllowedPairs.Name = "_clbAllowedPairs";
-            _clbAllowedPairs.Size = new Size(340, 148);
-            _clbAllowedPairs.TabIndex = 14;
-            _clbAllowedPairs.CheckOnClick = true;
-            _clbAllowedPairs.Items.AddRange(new object[]
+            _cmbAllowedPair.BackColor = Color.FromArgb(22, 22, 32);
+            _cmbAllowedPair.DropDownStyle = ComboBoxStyle.DropDownList;
+            _cmbAllowedPair.FlatStyle = FlatStyle.Flat;
+            _cmbAllowedPair.Font = new Font("Consolas", 9F);
+            _cmbAllowedPair.ForeColor = Color.FromArgb(218, 218, 230);
+            _cmbAllowedPair.Location = new Point(176, 240);
+            _cmbAllowedPair.Name = "_cmbAllowedPair";
+            _cmbAllowedPair.Size = new Size(340, 23);
+            _cmbAllowedPair.TabIndex = 14;
+            _cmbAllowedPair.Items.AddRange(new object[]
             {
                 "GBPUSD", "EURUSD", "USDJPY", "USDCHF", "AUDUSD", "USDCAD", "NZDUSD",
                 "EURJPY", "GBPJPY", "EURGBP", "AUDJPY", "EURCAD", "GBPCAD",
@@ -1533,9 +1537,38 @@ namespace MT5TradingBot.UI
             _btnStartBot.TabIndex = 21;
             _btnStartBot.Text = "Start Monitoring";
             _btnStartBot.UseVisualStyleBackColor = false;
-            // 
+            //
+            // _btnStopBot
+            //
+            _btnStopBot.BackColor = Color.FromArgb(252, 95, 95);
+            _btnStopBot.Cursor = Cursors.Hand;
+            _btnStopBot.Enabled = false;
+            _btnStopBot.FlatAppearance.BorderSize = 0;
+            _btnStopBot.FlatStyle = FlatStyle.Flat;
+            _btnStopBot.Font = new Font("Segoe UI Semibold", 10F);
+            _btnStopBot.ForeColor = Color.FromArgb(10, 10, 20);
+            _btnStopBot.Name = "_btnStopBot";
+            _btnStopBot.Size = new Size(148, 42);
+            _btnStopBot.TabIndex = 23;
+            _btnStopBot.Text = "■  Stop Bot";
+            _btnStopBot.UseVisualStyleBackColor = false;
+            //
+            // _btnBotSettings
+            //
+            _btnBotSettings.BackColor = Color.FromArgb(99, 179, 237);
+            _btnBotSettings.Cursor = Cursors.Hand;
+            _btnBotSettings.FlatAppearance.BorderSize = 0;
+            _btnBotSettings.FlatStyle = FlatStyle.Flat;
+            _btnBotSettings.Font = new Font("Segoe UI Semibold", 10F);
+            _btnBotSettings.ForeColor = Color.FromArgb(10, 10, 20);
+            _btnBotSettings.Name = "_btnBotSettings";
+            _btnBotSettings.Size = new Size(138, 42);
+            _btnBotSettings.TabIndex = 24;
+            _btnBotSettings.Text = "⚙  Settings";
+            _btnBotSettings.UseVisualStyleBackColor = false;
+            //
             // _btnAnalyzePairs
-            // 
+            //
             _btnAnalyzePairs.BackColor = Color.FromArgb(99, 179, 237);
             _btnAnalyzePairs.Cursor = Cursors.Hand;
             _btnAnalyzePairs.FlatAppearance.BorderSize = 0;
@@ -1559,9 +1592,9 @@ namespace MT5TradingBot.UI
             _btnOpenFolder.ForeColor = Color.FromArgb(10, 10, 20);
             _btnOpenFolder.Location = new Point(14, 680);
             _btnOpenFolder.Name = "_btnOpenFolder";
-            _btnOpenFolder.Size = new Size(140, 30);
+            _btnOpenFolder.Size = new Size(118, 30);
             _btnOpenFolder.TabIndex = 3;
-            _btnOpenFolder.Text = "📁 Open Folder";
+            _btnOpenFolder.Text = "Select Folder";
             _btnOpenFolder.UseVisualStyleBackColor = false;
             //
             // _btnBotInstructions

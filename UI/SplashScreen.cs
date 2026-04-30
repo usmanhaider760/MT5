@@ -1,6 +1,7 @@
 using MT5TradingBot.Core;
 using MT5TradingBot.Modules.AIAnalysis;
 using MT5TradingBot.Modules.BrokerIntegration;
+using MT5TradingBot.Modules.SignalDecision;
 using MT5TradingBot.Services;
 
 namespace MT5TradingBot.UI
@@ -35,7 +36,8 @@ namespace MT5TradingBot.UI
             IModule[] modules =
             [
                 new BrokerModule(sm.Current.Mt5),
-                new AiApiConfigModule(sm.Current.Claude)
+                new AiApiConfigModule(sm.Current.Claude),
+                new SignalWatchFolderModule(sm.Current.Bot)
             ];
 
             _totalModules = modules.Length;

@@ -121,6 +121,28 @@ Project review summary:
 - Auto Bot Play review UI updated: the raw JSON view was replaced with grouped live labels for account, price, trade risk, symbol, session, indicators, candles, structure, levels, positions, and news while keeping the latest JSON snapshot in the dialog backend.
 - Review dialog live refresh added: while the review window is open it refreshes `GET_MARKET_SNAPSHOT` every 2.5 seconds and updates the visible labels with the latest MT5 values.
 - Build verification completed after grouped review UI: `dotnet build MT5TradingBot.csproj --no-restore -o .\bin\VerifyBuild` succeeds with 0 warnings and 0 errors.
+- Auto Bot settings layout updated: Allowed Pairs was moved to the top of the Bot Configuration panel, with watch folder/risk/retry/drawdown settings shifted below it.
+- Build verification completed after Allowed Pairs layout update: `dotnet build MT5TradingBot.csproj --no-restore -o .\bin\VerifyBuild` succeeds with 0 warnings and 0 errors.
+- Auto Bot allowed pair selector changed from a checked list to a single-select dropdown; the previous checked-item behavior now runs from `SelectedIndexChanged`, and selected pair is saved as the allowed pair list for existing risk/execution modules.
+- Build verification completed after allowed pair dropdown conversion: `dotnet build MT5TradingBot.csproj --no-restore -o .\bin\VerifyBuild` succeeds with 0 warnings and 0 errors.
+- Auto Bot watch-folder selector updated: the folder button was removed from the top action row, placed beside the Watch Folder textbox, renamed to Select Folder, and now opens a folder picker that updates the textbox value.
+- Build verification completed after watch-folder selector update: `dotnet build MT5TradingBot.csproj --no-restore -o .\bin\VerifyBuild` succeeds with 0 warnings and 0 errors.
+- Auto Bot monitoring made automatic: the manual Start Monitoring button was removed from the visible action row, the main form starts/restarts folder watching on load, MT5 connect, and watch-folder changes, and signal rows update continuously from FileSystemWatcher plus polling.
+- Splash startup checks now include the signal watch folder: the folder is created/validated and pending JSON count is shown before the main form opens.
+- Build verification completed after automatic watcher update: `dotnet build MT5TradingBot.csproj --no-restore -o .\bin\VerifyBuild` succeeds with 0 warnings and 0 errors.
+- MT5 connection controls moved from the top form bar into the AI API Config tab as an MT5 Connection Settings panel, leaving the top area focused on connection status/account information.
+- AI API Config prompt editor removed from the visible UI; AI analysis now uses the built-in default prompt instead of a large editable system-prompt textbox.
+- Build verification completed after moving connection settings/removing prompt editor: `dotnet build MT5TradingBot.csproj --no-restore -o .\bin\VerifyBuild` succeeds with 0 warnings and 0 errors.
+- Review Trade input prompt added: the Input Prompt button now opens the same popup viewer with the full forex analyst prompt filled from the current live market snapshot JSON, while View JSON remains the raw backend snapshot.
+- Ask AI now sends the same filled prompt that the Input Prompt popup displays, and the response parser accepts the new `action: TRADE/NO_TRADE` JSON format.
+- Build verification completed after Review Trade prompt update: `dotnet build MT5TradingBot.csproj --no-restore -o .\bin\VerifyBuild` succeeds with 0 warnings and 0 errors.
+- Review Trade prompt overrides fixed: Input Prompt and Ask AI now use the current lot size NumericUpDown value for `risk.calculated_lot` and the selected leverage dropdown value for `account.leverage`, instead of only using the original MT5 snapshot values.
+- Build verification completed after prompt override fix: `dotnet build MT5TradingBot.csproj --no-restore -o .\bin\VerifyBuild` succeeds with 0 warnings and 0 errors.
+- Review Trade lot-size selector changed from a numeric input to a predefined dropdown: Micro Lot 0.01 / 1,000 units, Mini Lot 0.10 / 10,000 units, and Standard Lot 1.00 / 100,000 units. Prompt generation, AI analysis, trade approval, and auto-close money/pip conversion now use the selected dropdown value.
+- Build verification completed after lot-size dropdown update: `dotnet build MT5TradingBot.csproj --no-restore -o .\bin\VerifyBuild` succeeds with 0 warnings and 0 errors.
+- Review Trade AI prompt output schema simplified: the prompt now requires the exact signal-file JSON shape (`pair`, `trade_type`, `order_type`, `entry_price`, `stop_loss`, `take_profit`, `take_profit_2`, `lot_size`, `comment`, `magic_number`, `move_sl_to_be_after_tp1`) with no extra fields.
+- AI response approval parsing updated so `trade_type: BUY` or `SELL` is accepted as the trade decision, while `trade_type: NO_TRADE` still blocks execution.
+- Build verification completed after AI output schema update: `dotnet build MT5TradingBot.csproj --no-restore -o .\bin\VerifyBuild` succeeds with 0 warnings and 0 errors.
 
 Status file note:
 - AGENTS.md expects docs/DEVELOPMENT_STATUS.md, but the existing file was at repository root.

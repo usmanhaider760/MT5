@@ -45,14 +45,17 @@ namespace MT5TradingBot.UI
             _layoutRoot.RowStyles.Clear();
             _layoutRoot.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
             _layoutRoot.RowStyles.Add(new RowStyle(SizeType.Absolute, 52F));
-            _layoutRoot.RowStyles.Add(new RowStyle(SizeType.Absolute, 40F));
             _layoutRoot.RowStyles.Add(new RowStyle(SizeType.Absolute, 38F));
             _layoutRoot.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
+            _layoutRoot.RowCount = 3;
+
+            if (_pnlConnBar.Parent == _layoutRoot)
+                _layoutRoot.Controls.Remove(_pnlConnBar);
+            _layoutRoot.SetRow(_pnlAccountBar, 1);
+            _layoutRoot.SetRow(_tabControl, 2);
 
             _pnlHeader.Dock = DockStyle.Fill;
             _pnlHeader.Margin = Padding.Empty;
-            _pnlConnBar.Dock = DockStyle.Fill;
-            _pnlConnBar.Margin = Padding.Empty;
             _pnlAccountBar.Dock = DockStyle.Fill;
             _pnlAccountBar.Margin = Padding.Empty;
             _tabControl.Dock = DockStyle.Fill;
@@ -202,34 +205,96 @@ namespace MT5TradingBot.UI
 
         private void ConfigureBotTabLayout()
         {
-            var layout = ResetTabLayout(_tabBot, "_botTabLayout", 2, 3);
-            layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 570F));
+            // Single-column, 5-row layout:
+            // Row 0 – badge strip
+            // Row 1 – action buttons
+            // Row 2 – Watch Folder row
+            // Row 3 – Allowed Pair row
+            // Row 4 – Signal Feed (fills remaining height)
+            var layout = ResetTabLayout(_tabBot, "_botTabLayout", 1, 5);
             layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
             layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 36F));
             layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 52F));
+            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 44F));
+            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 44F));
             layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
 
-            _lblBotBadge.Text = "BOT STOPPED";
-            _lblBotBadge.Dock = DockStyle.Fill;
-            _lblBotBadge.Margin = Padding.Empty;
+            // ── Row 0: status badge ──────────────────────────────
+            _lblBotBadge.Text      = "BOT STOPPED";
+            _lblBotBadge.Dock      = DockStyle.Fill;
+            _lblBotBadge.Margin    = Padding.Empty;
             _lblBotBadge.TextAlign = ContentAlignment.MiddleLeft;
 
-            _pnlBotCard.Dock = DockStyle.Fill;
-            _pnlBotCard.Margin = new Padding(0, 8, 10, 0);
-            _pnlBotCard.AutoScroll = true;
+            // ── Row 1: buttons ───────────────────────────────────
+            _btnBotSettings.Size    = new Size(130, 38);
+            _btnBotInstructions.Size = new Size(150, 38);
+            _btnAnalyzePairs.Size   = new Size(150, 38);
+            var botButtons = CreateButtonRow("_botButtons",
+                _btnAnalyzePairs, _btnBotSettings, _btnBotInstructions);
 
-            _pnlSignalFeed.Dock = DockStyle.Fill;
-            _pnlSignalFeed.Margin = new Padding(0, 8, 0, 0);
+            // ── Row 2: Watch Folder ──────────────────────────────
+            var pnlFolder = new Panel
+            {
+                Dock      = DockStyle.Fill,
+                BackColor = Color.FromArgb(22, 22, 32),
+                Margin    = new Padding(0, 4, 0, 0)
+            };
+            _lblWatchFolderLabel.AutoSize  = false;
+            _lblWatchFolderLabel.Location  = new Point(8, 10);
+            _lblWatchFolderLabel.Size      = new Size(114, 22);
+            _lblWatchFolderLabel.TextAlign = ContentAlignment.MiddleLeft;
+            _lblWatchFolderLabel.Text      = "Watch Folder";
+
+            _txtWatchFolder.Location = new Point(128, 8);
+            _txtWatchFolder.Anchor   = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
+
+            _btnOpenFolder.Anchor   = AnchorStyles.Top | AnchorStyles.Right;
+            _btnOpenFolder.Text     = "Select Folder";
+            _btnOpenFolder.Size     = new Size(88, 26);
+
+            // btnOpenFolder anchored right — Position is set in resize handler below
+            pnlFolder.Controls.Add(_lblWatchFolderLabel);
+            pnlFolder.Controls.Add(_txtWatchFolder);
+            pnlFolder.Controls.Add(_btnOpenFolder);
+
+            pnlFolder.Layout += (_, _) =>
+            {
+                int btnW  = 88;
+                int right = pnlFolder.ClientSize.Width - 8;
+                _btnOpenFolder.Location = new Point(right - btnW, 8);
+                _btnOpenFolder.Size     = new Size(btnW, 26);
+                _txtWatchFolder.Size    = new Size(right - btnW - 128 - 8, 26);
+            };
+
+            // ── Row 3: Allowed Pair ──────────────────────────────
+            var pnlPair = new Panel
+            {
+                Dock      = DockStyle.Fill,
+                BackColor = Color.FromArgb(22, 22, 32),
+                Margin    = new Padding(0, 0, 0, 4)
+            };
+            _lblAllowedPairsLabel.AutoSize  = false;
+            _lblAllowedPairsLabel.Location  = new Point(8, 10);
+            _lblAllowedPairsLabel.Size      = new Size(114, 22);
+            _lblAllowedPairsLabel.TextAlign = ContentAlignment.MiddleLeft;
+            _lblAllowedPairsLabel.Text      = "Trading Pair";
+
+            _cmbAllowedPair.Location = new Point(128, 8);
+            _cmbAllowedPair.Size     = new Size(240, 26);
+
+            pnlPair.Controls.Add(_lblAllowedPairsLabel);
+            pnlPair.Controls.Add(_cmbAllowedPair);
+
+            // ── Row 4: Signal Feed ────────────────────────────────
+            _pnlSignalFeed.Dock   = DockStyle.Fill;
+            _pnlSignalFeed.Margin = new Padding(0, 4, 0, 0);
 
             layout.Controls.Add(_lblBotBadge, 0, 0);
-            layout.SetColumnSpan(_lblBotBadge, 2);
-            var botButtons = CreateButtonRow("_botButtons", _btnStartBot, _btnAnalyzePairs, _btnOpenFolder, _btnBotInstructions);
-            layout.Controls.Add(botButtons, 0, 1);
-            layout.SetColumnSpan(botButtons, 2);
-            layout.Controls.Add(_pnlBotCard, 0, 2);
-            layout.Controls.Add(_pnlSignalFeed, 1, 2);
+            layout.Controls.Add(botButtons,   0, 1);
+            layout.Controls.Add(pnlFolder,    0, 2);
+            layout.Controls.Add(pnlPair,      0, 3);
+            layout.Controls.Add(_pnlSignalFeed, 0, 4);
 
-            ConfigureBotSettingsLayout();
             ConfigureSignalFeedLayout();
         }
 
@@ -270,28 +335,37 @@ namespace MT5TradingBot.UI
             _lblBotCardHeader.Location = new Point(18, 16);
             _lblBotCardHeader.Size = new Size(300, 24);
 
-            PlaceField(_lblWatchFolderLabel, _txtWatchFolder, 58, 330, 176);
-            PlaceField(_lblRiskLabel, _nudRisk, 96, 110, 176);
-            PlaceField(_lblMinRRLabel, _nudMinRR, 134, 110, 176);
-            PlaceField(_lblMaxTradesLabel, _nudMaxTrades, 172, 110, 176);
-            PlaceField(_lblPollMsLabel, _nudPollMs, 210, 130, 176);
-            PlaceField(_lblRetryLabel, _nudRetry, 248, 110, 176);
+            if (_btnOpenFolder.Parent != _pnlBotCard)
+            {
+                _btnOpenFolder.Parent?.Controls.Remove(_btnOpenFolder);
+                _pnlBotCard.Controls.Add(_btnOpenFolder);
+            }
+
+            PlaceField(_lblWatchFolderLabel, _txtWatchFolder, 96, 250, 176);
+            _btnOpenFolder.Location = new Point(436, 94);
+            _btnOpenFolder.Size = new Size(118, 30);
+            _btnOpenFolder.Text = "Select Folder";
+            PlaceField(_lblRiskLabel, _nudRisk, 134, 110, 176);
+            PlaceField(_lblMinRRLabel, _nudMinRR, 172, 110, 176);
+            PlaceField(_lblMaxTradesLabel, _nudMaxTrades, 210, 110, 176);
+            PlaceField(_lblPollMsLabel, _nudPollMs, 248, 130, 176);
+            PlaceField(_lblRetryLabel, _nudRetry, 286, 110, 176);
 
             // Allowed pairs — CheckedListBox (label above, list below)
             _lblAllowedPairsLabel.AutoSize = false;
-            _lblAllowedPairsLabel.Location = new Point(18, 289);
+            _lblAllowedPairsLabel.Location = new Point(18, 58);
             _lblAllowedPairsLabel.Size = new Size(150, 20);
             _lblAllowedPairsLabel.TextAlign = ContentAlignment.MiddleLeft;
-            _clbAllowedPairs.Location = new Point(176, 286);
-            _clbAllowedPairs.Size = new Size(340, 148);
+            _cmbAllowedPair.Location = new Point(176, 56);
+            _cmbAllowedPair.Size = new Size(340, 26);
 
             // Drawdown and checkboxes shifted down by 122 (148 - 26 = 122)
-            PlaceField(_lblDrawdownLabel, _nudDrawdownPct, 446, 110, 176);
+            PlaceField(_lblDrawdownLabel, _nudDrawdownPct, 324, 110, 176);
 
-            _chkAutoLotBot.Location = new Point(18, 496);
-            _chkEnforceRR.Location = new Point(18, 530);
-            _chkDrawdown.Location = new Point(18, 564);
-            _chkAutoStart.Location = new Point(18, 598);
+            _chkAutoLotBot.Location = new Point(18, 374);
+            _chkEnforceRR.Location = new Point(18, 408);
+            _chkDrawdown.Location = new Point(18, 442);
+            _chkAutoStart.Location = new Point(18, 476);
             _chkAutoLotBot.Size = _chkEnforceRR.Size = _chkDrawdown.Size = _chkAutoStart.Size = new Size(360, 24);
             _chkAutoLotBot.Text = "Auto calculate lot size";
             _chkEnforceRR.Text = "Enforce minimum R:R";
@@ -331,19 +405,59 @@ namespace MT5TradingBot.UI
 
             ConfigureClaudeSettingsLayout();
 
-            var promptLayout = ResetPanelLayout(_pnlClaudePromptCard, "_claudePromptLayout", 1, 3);
+            var promptLayout = ResetPanelLayout(_pnlClaudePromptCard, "_mt5ConnectionLayout", 1, 2);
             promptLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 38F));
-            promptLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
-            promptLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 46F));
+            promptLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 210F));
 
             _lblPromptHeader.Dock = DockStyle.Fill;
             _lblPromptHeader.TextAlign = ContentAlignment.MiddleLeft;
-            _txtClaudePrompt.Dock = DockStyle.Fill;
-            _txtClaudePrompt.Margin = new Padding(0, 8, 0, 8);
+            _lblPromptHeader.Text = "MT5 Connection Settings";
+            _txtClaudePrompt.Visible = false;
+            _btnResetPrompt.Visible = false;
+
+            if (_pnlConnBar.Parent != _pnlClaudePromptCard)
+            {
+                _pnlConnBar.Parent?.Controls.Remove(_pnlConnBar);
+                _pnlClaudePromptCard.Controls.Add(_pnlConnBar);
+            }
+            _pnlConnBar.Dock = DockStyle.Fill;
+            _pnlConnBar.Margin = new Padding(0, 8, 0, 0);
+            _pnlConnBar.Visible = true;
+            ConfigureConnectionSettingsPanelLayout();
 
             promptLayout.Controls.Add(_lblPromptHeader, 0, 0);
-            promptLayout.Controls.Add(_txtClaudePrompt, 0, 1);
-            promptLayout.Controls.Add(CreateButtonRow("_claudePromptButtons", _btnResetPrompt), 0, 2);
+            promptLayout.Controls.Add(_pnlConnBar, 0, 1);
+        }
+
+        private void ConfigureConnectionSettingsPanelLayout()
+        {
+            _pnlConnBar.BackColor = Color.FromArgb(18, 18, 28);
+
+            if (_pnlConnBar.Controls.Find("_lblModeLabel", false).Length == 0)
+            {
+                _pnlConnBar.Controls.Add(new Label
+                {
+                    Name = "_lblModeLabel",
+                    Text = "Connection Mode",
+                    Location = new Point(18, 17),
+                    Size = new Size(150, 22),
+                    ForeColor = Color.FromArgb(110, 110, 130),
+                    TextAlign = ContentAlignment.MiddleLeft
+                });
+            }
+
+            _cmbMode.Location = new Point(186, 14);
+            _cmbMode.Size = new Size(260, 26);
+            _lblPipeLabel.Location = new Point(18, 56);
+            _lblPipeLabel.Size = new Size(150, 22);
+            _txtPipeName.Location = new Point(186, 54);
+            _txtPipeName.Size = new Size(260, 26);
+            _chkAutoConn.Location = new Point(186, 94);
+            _chkAutoConn.Size = new Size(260, 24);
+            _btnConnect.Location = new Point(186, 136);
+            _btnConnect.Size = new Size(124, 32);
+            _btnDisconnect.Location = new Point(322, 136);
+            _btnDisconnect.Size = new Size(124, 32);
         }
 
         private void ConfigureClaudeSettingsLayout()
@@ -517,6 +631,8 @@ namespace MT5TradingBot.UI
             StylePrimaryButton(_btnBuy, C_GREEN);
             StylePrimaryButton(_btnSell, C_RED);
             StylePrimaryButton(_btnStartBot, C_GREEN);
+            StylePrimaryButton(_btnStopBot, C_RED);
+            StylePrimaryButton(_btnBotSettings, C_ACCENT);
             StylePrimaryButton(_btnAnalyzePairs, C_ACCENT);
             StylePrimaryButton(_btnStartClaude, C_GREEN);
             StylePrimaryButton(_btnStopClaude, C_RED);

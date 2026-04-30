@@ -137,6 +137,11 @@ namespace MT5TradingBot.Services
         //  HEARTBEAT LOOP  (runs on background thread)
         // ══════════════════════════════════════════════════════════
 
+        public void UpdateConfig(BotConfig newCfg)
+        {
+            _cfg = newCfg;
+        }
+
         private async Task HeartbeatLoopAsync()
         {
             while (!_cts.Token.IsCancellationRequested && _running)
@@ -230,7 +235,7 @@ namespace MT5TradingBot.Services
         // ══════════════════════════════════════════════════════════
 
         private SignalCardInfo MakeCard(TradeRequest req, string path,
-            SignalCardStatus status, string statusText, long ticket = 0)
+            SignalCardStatus status, string statusText, long ticket = 0, string rawJson = "")
         {
             // When file has been archived, compute its new location so delete works correctly
             string resolvedPath = status switch
@@ -245,6 +250,7 @@ namespace MT5TradingBot.Services
                 SignalId   = req.Id,
                 FileName   = Path.GetFileName(path),
                 FilePath   = resolvedPath,
+                RawJson    = rawJson,
                 Pair       = req.Pair,
                 TradeType  = req.TradeType.ToString(),
                 StopLoss   = req.StopLoss,
@@ -300,7 +306,7 @@ namespace MT5TradingBot.Services
                 }
 
                 Log($"[BOT] Parsed signal: {request}");
-                OnSignalUpdate?.Invoke(MakeCard(request, path, SignalCardStatus.Pending, "Pending"));
+                OnSignalUpdate?.Invoke(MakeCard(request, path, SignalCardStatus.Pending, "Pending", rawJson: json));
 
                 // Manual-execute mode: show card and stop — user clicks ▶ to trade
                 if (ManualExecuteOnly)

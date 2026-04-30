@@ -30,6 +30,7 @@ namespace MT5TradingBot.Models
         public string          SignalId    { get; init; } = "";
         public string          FileName    { get; init; } = "";
         public string          FilePath    { get; init; } = "";
+        public string          RawJson     { get; init; } = "";
         public string          Pair        { get; init; } = "";
         public string          TradeType   { get; init; } = "";
         public double          StopLoss    { get; init; }

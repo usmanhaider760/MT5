@@ -39,4 +39,9 @@
     </Content>
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- Exclude empty AiPrompt resx to avoid duplicate resource name conflict with MainForm.resx -->
+    <EmbeddedResource Remove="UI\MainForm.AiPrompt.resx" />
+  </ItemGroup>
+
 </Project>

@@ -32,7 +32,10 @@ namespace MT5TradingBot.UI
 
         // -- Pair analysis feed ------------------------------------
         private readonly Dictionary<string, Panel> _pairAnalysisCards = new(StringComparer.OrdinalIgnoreCase);
-        private bool _suppressPairCheckEvent;
+        private bool _suppressPairSelectionEvent;
+        private string _activeWatchFolder = "";
+        private FileSystemWatcher? _signalFeedWatcher;
+        private readonly System.Windows.Forms.Timer _signalFeedPollTimer = new() { Interval = 2500 };
 
         // -- Timers ------------------------------------------------
         private readonly System.Windows.Forms.Timer _refreshTimer = new() { Interval = 2500 };
@@ -48,7 +51,9 @@ namespace MT5TradingBot.UI
             bool Approved,
             bool AutoCloseEnabled,
             double TargetPips,
-            double TargetMoney);
+            double TargetMoney,
+            double LotSize   = 0,
+            int    Leverage  = 100);
 
         // ==========================================================
         public MainForm()
@@ -80,14 +85,12 @@ namespace MT5TradingBot.UI
             if (_cfg.AutoConnectOnLaunch)
                 await ConnectAsync();
 
-            if (_cfg.Bot.AutoStartOnLaunch && _bridge?.IsConnected == true)
-                await StartBotAsync();
-
             Log(_bridge?.IsConnected == true
                 ? "MT5 Trading Bot ready. MT5 is connected."
                 : "MT5 Trading Bot ready. Connect to MT5 to begin.", C_ACCENT);
             ShowEaDeployNoticeIfNeeded();
             await RefreshSignalFeedAsync();
+            await EnsureAutoWatcherAsync("form load");
         }
 
         // ==========================================================
@@ -97,6 +100,7 @@ namespace MT5TradingBot.UI
         {
             _clockTimer.Tick    += ClockTimer_Tick;
             _refreshTimer.Tick  += RefreshTimer_Tick;
+            _signalFeedPollTimer.Tick += SignalFeedPollTimer_Tick;
             this.FormClosing    += OnFormClosingAsync;
             _tabControl.DrawItem += DrawTabItem;
 
@@ -129,9 +133,10 @@ namespace MT5TradingBot.UI
             _btnImportHistory.Click += BtnImportHistory_Click;
             _btnClearHistory.Click  += BtnClearHistory_Click;
 
-            _clbAllowedPairs.ItemCheck += ClbAllowedPairs_ItemCheck;
+            _cmbAllowedPair.SelectedIndexChanged += CmbAllowedPair_SelectedIndexChanged;
 
-            _btnStartBot.Click        += BtnStartBot_Click;
+            _btnStopBot.Click         += BtnStopBot_Click;
+            _btnBotSettings.Click     += BtnBotSettings_Click;
             _btnAnalyzePairs.Click    += BtnAnalyzePairs_Click;
             _btnOpenFolder.Click      += BtnOpenFolder_Click;
             _btnBotInstructions.Click += BtnBotInstructions_Click;
@@ -141,7 +146,6 @@ namespace MT5TradingBot.UI
             _btnTestClaudeApi.Click  += BtnTestClaudeApi_Click;
             _btnTestNewsApi.Click    += BtnTestNewsApi_Click;
             _btnTestTelegram.Click   += BtnTestTelegram_Click;
-            _btnResetPrompt.Click    += BtnResetPrompt_Click;
 
             _btnClearLog.Click += BtnClearLog_Click;
             _btnSaveLog.Click  += BtnSaveLog_Click;
@@ -177,6 +181,7 @@ namespace MT5TradingBot.UI
                 Log("[OK] Connected to MT5 EA", C_GREEN);
                 await RefreshAsync();
                 ShowEaDeployNoticeIfNeeded();
+                await EnsureAutoWatcherAsync("MT5 connected");
             }
             else
             {
@@ -283,6 +288,62 @@ namespace MT5TradingBot.UI
         // ==========================================================
         //  AUTO BOT
         // ==========================================================
+        private async Task EnsureAutoWatcherAsync(string reason)
+        {
+            try
+            {
+                _cfg.Bot = ReadBotConfigFromUI();
+                string watchFolder = _cfg.Bot.WatchFolder.Trim();
+
+                if (string.IsNullOrWhiteSpace(watchFolder))
+                {
+                    SetBotBadge("WATCH FOLDER NOT SET", C_YELLOW);
+                    return;
+                }
+
+                Directory.CreateDirectory(watchFolder);
+                EnsureSignalFeedWatcher(watchFolder);
+                await _settings.SaveAsync(_cfg);
+                await RefreshSignalFeedAsync();
+
+                if (_bridge?.IsConnected != true)
+                {
+                    SetBotBadge($"WATCH FOLDER READY: {watchFolder}", C_YELLOW);
+                    Log($"[BOT] Watch folder ready ({reason}), but MT5 is disconnected. Live watcher will start after MT5 connects.", C_YELLOW);
+                    return;
+                }
+
+                if (_bot?.IsRunning == true &&
+                    string.Equals(_activeWatchFolder, watchFolder, StringComparison.OrdinalIgnoreCase))
+                {
+                    SetBotBadge($"WATCHING: {watchFolder}", C_ACCENT);
+                    return;
+                }
+
+                await (_bot?.DisposeAsync() ?? ValueTask.CompletedTask);
+                _bot = new AutoBotService(_bridge, _cfg.Bot) { ManualExecuteOnly = true };
+                _bot.OnLog += msg => Log(msg);
+                _bot.OnTradeExecuted += r =>
+                {
+                    Log(r.IsSuccess ? $"[BOT] Trade: {r}" : $"[BOT] Rejected: {r.ErrorMessage}",
+                        r.IsSuccess ? C_GREEN : C_RED);
+                    _ = RefreshBotTradeStatusAsync(r);
+                };
+                _bot.OnBotStatusChanged += on => UpdateBotBadge(on);
+                _bot.OnSignalUpdate += info => AddOrUpdateSignalCard(info);
+
+                await _bot.StartAsync();
+                _activeWatchFolder = watchFolder;
+                SetBotBadge($"WATCHING: {watchFolder}", C_ACCENT);
+                Log($"[BOT] Auto watcher active ({reason}). New signal files appear immediately; trades still require row Detail/Play approval.", C_GREEN);
+            }
+            catch (Exception ex)
+            {
+                SetBotBadge("WATCHER START FAILED", C_RED);
+                Log($"[BOT] Watcher start failed: {ex.Message}", C_RED);
+            }
+        }
+
         private async Task StartBotAsync()
         {
             try
@@ -291,16 +352,16 @@ namespace MT5TradingBot.UI
                 Log("[BOT] Checking requirements before monitoring...", C_ACCENT);
                 bool allOk = true;
 
-                // ── 1. MT5 connection ──────────────────────────────
+                // â"€â"€ 1. MT5 connection â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
                 if (_bridge?.IsConnected != true)
                 {
-                    Log("[BOT] ✗ MT5 is not connected. Click Connect first.", C_RED);
+                    Log("[BOT] [X] MT5 is not connected. Click Connect first.", C_RED);
                     SetBotBadge("BOT STOPPED - MT5 NOT CONNECTED", C_RED);
                     return;
                 }
-                Log("[BOT] ✓ MT5 is connected.", C_GREEN);
+                Log("[BOT] [OK] MT5 is connected.", C_GREEN);
 
-                // ── 2. Watch folder ────────────────────────────────
+                // â"€â"€ 2. Watch folder â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
                 _cfg.Claude = ReadClaudeConfigFromUI();
                 UpdateAiApiConfigStatus(_cfg.Claude, logResult: true);
 
@@ -308,43 +369,43 @@ namespace MT5TradingBot.UI
                 string watchFolder = _cfg.Bot.WatchFolder.Trim();
                 if (string.IsNullOrWhiteSpace(watchFolder))
                 {
-                    Log("[BOT] ✗ Watch folder is empty. Set a folder path first.", C_RED);
+                    Log("[BOT] [X] Watch folder is empty. Set a folder path first.", C_RED);
                     SetBotBadge("BOT STOPPED - WATCH FOLDER EMPTY", C_RED);
                     return;
                 }
                 Directory.CreateDirectory(watchFolder);
-                Log($"[BOT] ✓ Watch folder: {watchFolder}", C_GREEN);
+                Log($"[BOT] [OK] Watch folder: {watchFolder}", C_GREEN);
 
-                // ── 3. Account info ────────────────────────────────
+                // â"€â"€ 3. Account info â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
                 var account = await _bridge.GetAccountInfoAsync();
                 if (account != null)
                 {
-                    Log($"[BOT] ✓ Account #{account.AccountNumber} {account.Server} | Balance ${account.Balance:F2} | Equity ${account.Equity:F2}", C_GREEN);
+                    Log($"[BOT] [OK] Account #{account.AccountNumber} {account.Server} | Balance ${account.Balance:F2} | Equity ${account.Equity:F2}", C_GREEN);
                     if (account.Balance == 0 && account.Equity == 0)
                     {
-                        Log("[BOT] ⚠ Balance and Equity are 0. Ensure your MT5 account has funds.", C_YELLOW);
+                        Log("[BOT] [!] Balance and Equity are 0. Ensure your MT5 account has funds.", C_YELLOW);
                         allOk = false;
                     }
                 }
                 else
                 {
-                    Log("[BOT] ⚠ Could not fetch account info from MT5.", C_YELLOW);
+                    Log("[BOT] [!] Could not fetch account info from MT5.", C_YELLOW);
                     allOk = false;
                 }
 
-                // ── 4. Open positions ──────────────────────────────
+                // â"€â"€ 4. Open positions â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
                 var positions = await _bridge.GetPositionsAsync();
-                Log($"[BOT] ✓ MT5 has {positions.Count} open position(s).", C_GREEN);
+                Log($"[BOT] [OK] MT5 has {positions.Count} open position(s).", C_GREEN);
 
-                // ── 5. Pending signals ─────────────────────────────
+                // â"€â"€ 5. Pending signals â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
                 var pendingFiles = Directory.GetFiles(watchFolder, "*.json");
                 if (pendingFiles.Length == 0)
-                    Log("[BOT] ✓ Watch folder is empty — ready to receive signals.", C_GREEN);
+                    Log("[BOT] [OK] Watch folder is empty - ready to receive signals.", C_GREEN);
                 else
-                    Log($"[BOT] ✓ {pendingFiles.Length} pending signal file(s) in folder.", C_ACCENT);
+                    Log($"[BOT] [OK] {pendingFiles.Length} pending signal file(s) in folder.", C_ACCENT);
 
-                // ── 6. Config summary ──────────────────────────────
-                Log($"[BOT] Settings → Risk: {_cfg.Bot.MaxRiskPercent:F1}% | Max trades/day: {_cfg.Bot.MaxTradesPerDay} | Min R:R: {_cfg.Bot.MinRRRatio:F1} | Enforce R:R: {_cfg.Bot.EnforceRR}", C_ACCENT);
+                // â"€â"€ 6. Config summary â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
+                Log($"[BOT] Settings -> Risk: {_cfg.Bot.MaxRiskPercent:F1}% | Max trades/day: {_cfg.Bot.MaxTradesPerDay} | Min R:R: {_cfg.Bot.MinRRRatio:F1} | Enforce R:R: {_cfg.Bot.EnforceRR}", C_ACCENT);
                 int pairCount = _cfg.Bot.AllowedPairs.Count;
                 string pairSummary = pairCount == 0 ? "All pairs"
                     : pairCount <= 5 ? string.Join(", ", _cfg.Bot.AllowedPairs)
@@ -352,9 +413,9 @@ namespace MT5TradingBot.UI
                 Log($"[BOT] Allowed pairs: {pairSummary}", C_ACCENT);
 
                 if (!allOk)
-                    Log("[BOT] ⚠ Some checks have warnings. Review above before trading.", C_YELLOW);
+                    Log("[BOT] [!] Some checks have warnings. Review above before trading.", C_YELLOW);
 
-                // ── 7. Start monitoring ────────────────────────────
+                // â"€â"€ 7. Start monitoring â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
                 Log("[BOT] Monitoring only: trades will NOT start from this button.", C_ACCENT);
                 Log("[BOT] To place a trade, click the Play button on the signal row.", C_ACCENT);
 
@@ -373,7 +434,7 @@ namespace MT5TradingBot.UI
                 _bot.OnSignalUpdate += info => AddOrUpdateSignalCard(info);
 
                 await _bot.StartAsync();
-                Log("[BOT] Monitoring started — new signal files will appear in the feed below.", C_GREEN);
+                Log("[BOT] Monitoring started - new signal files will appear in the feed below.", C_GREEN);
                 Log("[BOT] Use the Play button on each signal row to place a trade.", C_ACCENT);
             }
             catch (Exception ex)
@@ -407,6 +468,7 @@ namespace MT5TradingBot.UI
             if (_bot == null) return;
             await _bot.DisposeAsync();
             _bot = null;
+            _activeWatchFolder = "";
             UpdateBotBadge(false);
         }
 
@@ -419,7 +481,7 @@ namespace MT5TradingBot.UI
                 return;
             }
 
-            var allPairs = _clbAllowedPairs.Items.Cast<string>()
+            var allPairs = _cmbAllowedPair.Items.Cast<string>()
                 .Where(s => !string.IsNullOrWhiteSpace(s)).ToList();
             if (allPairs.Count == 0)
             {
@@ -431,13 +493,13 @@ namespace MT5TradingBot.UI
             {
                 _btnAnalyzePairs.Enabled = false;
                 SetBotBadge("ANALYZING PAIRS...", C_ACCENT);
-                Log($"[BOT] Analyze Pair clicked — scanning {allPairs.Count} pairs from dropdown...", C_ACCENT);
+                Log($"[BOT] Analyze Pair clicked - scanning {allPairs.Count} pairs from dropdown...", C_ACCENT);
 
                 _cfg.Bot = ReadBotConfigFromUI();
                 await _settings.SaveAsync(_cfg);
 
                 // Step 1: collect MT5 data for every pair in the list
-                Log("[BOT] Pair list loaded — collecting MT5 data per pair...", C_ACCENT);
+                Log("[BOT] Pair list loaded - collecting MT5 data per pair...", C_ACCENT);
                 var scanner     = new PairScanner(new MarketDataService(_bridge));
                 var scanResults = await scanner.ScanAsync(allPairs, _cfg.Bot).ConfigureAwait(false);
 
@@ -466,12 +528,12 @@ namespace MT5TradingBot.UI
                         Log($"[BOT] AI pair selection error: {err}", C_RED);
                     else if (string.IsNullOrEmpty(aiPair) || dir == "NO_TRADE")
                     {
-                        Log($"[BOT] AI: No suitable pair — {reason}", C_YELLOW);
+                        Log($"[BOT] AI: No suitable pair - {reason}", C_YELLOW);
                         SetBotBadge("AI: NO SUITABLE PAIR", C_YELLOW);
                     }
                     else
                     {
-                        Log($"[BOT] AI best pair response: {aiPair} ({dir}, {conf}) — {reason}", C_GREEN);
+                        Log($"[BOT] AI best pair response: {aiPair} ({dir}, {conf}) - {reason}", C_GREEN);
                         selectedPair = aiPair;
                         aiConfidence = conf;
                         aiDirection  = dir;
@@ -507,10 +569,10 @@ namespace MT5TradingBot.UI
                 Log($"[BOT] Dropdown selected by AI: {dropdownPair}", C_ACCENT);
                 var card = EnsureSignalFeedRowForPair(dropdownPair);
 
-                // Step 6: check the pair in dropdown (suppress ItemCheck — we handle it here)
-                _suppressPairCheckEvent = true;
-                ProgrammaticallyCheckPair(dropdownPair);
-                _suppressPairCheckEvent = false;
+                // Step 6: select the pair in dropdown (suppress event because we update the row below)
+                _suppressPairSelectionEvent = true;
+                ProgrammaticallySelectPair(dropdownPair);
+                _suppressPairSelectionEvent = false;
 
                 // Step 7: stamp row with AI selection data
                 if (card.Tag is PairAnalysisInfo paInfo)
@@ -598,7 +660,7 @@ namespace MT5TradingBot.UI
             if (string.IsNullOrWhiteSpace(key) || key.StartsWith("sk-ant-.."))
             {
                 SetApiTestStatus("Enter a valid API key first.", C_YELLOW);
-                Log("[AI] Test skipped — no API key entered.", C_YELLOW);
+                Log("[AI] Test skipped - no API key entered.", C_YELLOW);
                 return;
             }
 
@@ -629,7 +691,7 @@ namespace MT5TradingBot.UI
 
                 string status = $"OK ({sw.ElapsedMilliseconds} ms)  |  model: {cfg.Model}  |  reply: {replyText}";
                 SetApiTestStatus(status, C_GREEN);
-                Log($"[AI] API test passed — {status}", C_GREEN);
+                Log($"[AI] API test passed - {status}", C_GREEN);
             }
             catch (Exception ex)
             {
@@ -709,21 +771,21 @@ namespace MT5TradingBot.UI
         {
             string msg = ex.Message;
             if (msg.Contains("401") || msg.Contains("authentication_error") || msg.Contains("invalid_api_key"))
-                return "Invalid API key (401) — check key in AI API Config tab";
+                return "Invalid API key (401) - check key in AI API Config tab";
             if (msg.Contains("403"))
-                return "Forbidden (403) — key may lack permissions for this model";
+                return "Forbidden (403) - key may lack permissions for this model";
             if (msg.Contains("429") || msg.Contains("rate_limit"))
-                return "Rate limited (429) — wait and retry";
+                return "Rate limited (429) - wait and retry";
             if (msg.Contains("529") || msg.Contains("overloaded"))
-                return "API overloaded (529) — retry in a few minutes";
+                return "API overloaded (529) - retry in a few minutes";
             if (msg.Contains("model_not_found") || msg.Contains("model"))
-                return $"Model not found — verify model name: {msg[..Math.Min(80, msg.Length)]}";
+                return $"Model not found - verify model name: {msg[..Math.Min(80, msg.Length)]}";
             if (msg.Contains("SocketException") || msg.Contains("HttpRequestException") || msg.Contains("timeout"))
-                return "Network error — check internet connection";
-            return msg.Length > 120 ? msg[..120] + "…" : msg;
+                return "Network error - check internet connection";
+            return msg.Length > 120 ? msg[..120] + "..." : msg;
         }
 
-        // ── AI Trade Decision (one-shot, from Review Trade dialog) ────
+        // â"€â"€ AI Trade Decision (one-shot, from Review Trade dialog) â"€â"€â"€â"€
 
         private const string AiTradeDecisionSystemPrompt = """
 You are a professional forex/CFD trading decision engine.
@@ -848,7 +910,7 @@ SAFETY RULES:
                         MaxTokens = 4096,
                         System    = new List<Anthropic.Models.Messages.TextBlockParam>
                         {
-                            new() { Text = AiTradeDecisionSystemPrompt }
+                            new() { Text = "Follow the user's trading-analysis instructions exactly. Return only one valid JSON object and no markdown." }
                         },
                         Messages  =
                         [
@@ -872,8 +934,14 @@ SAFETY RULES:
                 string responseJson = rawText[jsonStart..(jsonEnd + 1)];
                 var jobj = JObject.Parse(responseJson);
 
-                string decision = jobj.Value<string>("decision") ?? "NO_TRADE";
-                bool allowed = jobj["execution_permission"]?.Value<bool>("allowed_to_execute") == true;
+                string action = (jobj.Value<string>("action") ?? "").ToUpperInvariant();
+                string decision = (jobj.Value<string>("decision") ?? jobj.Value<string>("trade_type") ?? action).ToUpperInvariant();
+                if (string.IsNullOrWhiteSpace(decision))
+                    decision = "NO_TRADE";
+
+                bool allowed = action == "TRADE"
+                            || decision is "BUY" or "SELL"
+                            || jobj["execution_permission"]?.Value<bool>("allowed_to_execute") == true;
 
                 string prettyJson = jobj.ToString(Formatting.Indented);
                 return (prettyJson, allowed, decision.ToUpper(), "");
@@ -891,14 +959,14 @@ SAFETY RULES:
                 var jobj    = JObject.Parse(responseJson);
                 var entry   = jobj["entry"];
                 var risk    = jobj["risk_plan"];
-                string dir  = (jobj.Value<string>("direction") ?? original.TradeType.ToString()).ToUpper();
-                string etype = (entry?.Value<string>("entry_type") ?? "MARKET").ToUpper();
+                string dir  = (jobj.Value<string>("trade_type") ?? jobj.Value<string>("direction") ?? original.TradeType.ToString()).ToUpper();
+                string etype = (jobj.Value<string>("order_type") ?? entry?.Value<string>("entry_type") ?? "MARKET").ToUpper();
 
-                double entryPrice = entry?.Value<double>("entry_price") ?? 0;
-                double sl         = risk?.Value<double>("stop_loss")     ?? original.StopLoss;
-                double tp1        = risk?.Value<double>("take_profit_1") ?? original.TakeProfit;
-                double tp2        = risk?.Value<double>("take_profit_2") ?? original.TakeProfit2;
-                double lot        = risk?.Value<double>("suggested_lot") ?? original.LotSize;
+                double entryPrice = jobj.Value<double?>("entry_price")   ?? entry?.Value<double>("entry_price") ?? 0;
+                double sl         = jobj.Value<double?>("stop_loss")     ?? risk?.Value<double>("stop_loss")     ?? original.StopLoss;
+                double tp1        = jobj.Value<double?>("take_profit")   ?? risk?.Value<double>("take_profit_1") ?? original.TakeProfit;
+                double tp2        = jobj.Value<double?>("take_profit_2") ?? risk?.Value<double>("take_profit_2") ?? original.TakeProfit2;
+                double lot        = jobj.Value<double?>("lot_size")      ?? risk?.Value<double>("suggested_lot") ?? original.LotSize;
 
                 var orderType = etype switch
                 {
@@ -912,7 +980,7 @@ SAFETY RULES:
                 return new TradeRequest
                 {
                     Id          = Guid.NewGuid().ToString("N")[..8].ToUpper(),
-                    Pair        = jobj.Value<string>("symbol") ?? original.Pair,
+                    Pair        = jobj.Value<string>("pair") ?? jobj.Value<string>("symbol") ?? original.Pair,
                     TradeType   = dir == "SELL" ? TradeType.SELL : TradeType.BUY,
                     OrderType   = orderType,
                     EntryPrice  = entryPrice,
@@ -920,9 +988,9 @@ SAFETY RULES:
                     TakeProfit  = tp1,
                     TakeProfit2 = tp2,
                     LotSize     = lot > 0 ? lot : original.LotSize,
-                    Comment     = "AI_Decision",
-                    MagicNumber = original.MagicNumber,
-                    MoveSLToBreakevenAfterTP1 = original.MoveSLToBreakevenAfterTP1,
+                    Comment     = jobj.Value<string>("comment") ?? "AI_Decision",
+                    MagicNumber = jobj.Value<int?>("magic_number") ?? original.MagicNumber,
+                    MoveSLToBreakevenAfterTP1 = jobj.Value<bool?>("move_sl_to_be_after_tp1") ?? original.MoveSLToBreakevenAfterTP1,
                     CreatedAt   = DateTime.UtcNow
                 };
             }
@@ -963,8 +1031,12 @@ SAFETY RULES:
             {
                 var jobj     = JObject.Parse(responseJson);
                 var blocking = jobj["blocking_reasons"]?.ToObject<List<string>>() ?? [];
-                var reasons  = jobj["reason"]?.ToObject<List<string>>() ?? [];
-                var all      = blocking.Concat(reasons).Where(s => !string.IsNullOrWhiteSpace(s)).ToList();
+                var reasons  = jobj["reason"]?.Type == JTokenType.Array
+                    ? jobj["reason"]!.ToObject<List<string>>() ?? []
+                    : [jobj.Value<string>("reason") ?? ""];
+                var newReasons = jobj["reasons"]?.ToObject<List<string>>() ?? [];
+                var risks      = jobj["risks"]?.ToObject<List<string>>() ?? [];
+                var all        = blocking.Concat(reasons).Concat(newReasons).Concat(risks).Where(s => !string.IsNullOrWhiteSpace(s)).ToList();
                 return all.Count > 0 ? string.Join("; ", all.Take(3)) : "No details";
             }
             catch { return "Could not parse reasons"; }
@@ -1166,7 +1238,7 @@ SAFETY RULES:
             {
                 _lblBotBadge.Text      = running ? "BOT MONITORING" : "BOT STOPPED";
                 _lblBotBadge.ForeColor = running ? C_ACCENT : C_RED;
-                _btnStartBot.Enabled   = !running;
+                _btnStopBot.Enabled    = running;
             });
         }
 
@@ -1251,22 +1323,9 @@ SAFETY RULES:
             _txtPipeName.Text        = _cfg.Mt5.PipeName;
             _chkAutoConn.Checked     = _cfg.AutoConnectOnLaunch;
             _txtWatchFolder.Text     = _cfg.Bot.WatchFolder;
-            _nudRisk.Value           = (decimal)_cfg.Bot.MaxRiskPercent;
-            _nudMaxTrades.Value      = _cfg.Bot.MaxTradesPerDay;
-            _nudPollMs.Value         = _cfg.Bot.PollIntervalMs;
-            // Check saved pairs in the CheckedListBox (suppress row-creation event during bulk load)
-            _suppressPairCheckEvent = true;
-            for (int i = 0; i < _clbAllowedPairs.Items.Count; i++)
-            {
-                string item = _clbAllowedPairs.Items[i]?.ToString() ?? "";
-                bool shouldCheck = _cfg.Bot.AllowedPairs.Count == 0
-                    || _cfg.Bot.AllowedPairs.Any(p => string.Equals(p.Trim(), item, StringComparison.OrdinalIgnoreCase));
-                _clbAllowedPairs.SetItemChecked(i, shouldCheck);
-            }
-            _suppressPairCheckEvent = false;
-            _nudMinRR.Value          = (decimal)_cfg.Bot.MinRRRatio;
-            _nudDrawdownPct.Value    = (decimal)_cfg.Bot.EmergencyCloseDrawdownPct;
-            _nudRetry.Value          = _cfg.Bot.RetryCount;
+            _suppressPairSelectionEvent = true;
+            SelectAllowedPair(_cfg.Bot.AllowedPairs.FirstOrDefault());
+            _suppressPairSelectionEvent = false;
             SelectComboValue(_cmbAiProvider, _cfg.ApiIntegrations.AiProvider);
             _txtClaudeApiKey.Text    = _cfg.Claude.ApiKey;
             _txtClaudeModel.Text     = _cfg.Claude.Model;
@@ -1288,8 +1347,7 @@ SAFETY RULES:
             _chkNotifyOpened.Checked = _cfg.ApiIntegrations.NotifyTradeOpened;
             _chkNotifyClosed.Checked = _cfg.ApiIntegrations.NotifyTradeClosed;
             _chkNotifyRisk.Checked   = _cfg.ApiIntegrations.NotifyRiskBlocked;
-            _txtClaudePrompt.Text    = string.IsNullOrEmpty(_cfg.Claude.SystemPrompt)
-                ? ClaudeConfig.DefaultPrompt : _cfg.Claude.SystemPrompt;
+            _txtClaudePrompt.Text    = ClaudeConfig.DefaultPrompt;
             _lblModelValue.Text      = _cfg.Claude.Model;
             _lblClaudeNote1.Text     = "Startup checks validate saved AI configuration only; no prompt is sent.";
             _lblClaudeNote2.Text     = "Tokens are used only when AI analysis/monitoring sends market data to the provider.";
@@ -1311,12 +1369,36 @@ SAFETY RULES:
                 comboBox.SelectedIndex = 0;
         }
 
+        private void SelectAllowedPair(string? pair)
+        {
+            if (!string.IsNullOrWhiteSpace(pair))
+            {
+                for (int i = 0; i < _cmbAllowedPair.Items.Count; i++)
+                {
+                    if (string.Equals(_cmbAllowedPair.Items[i]?.ToString(), pair.Trim(), StringComparison.OrdinalIgnoreCase))
+                    {
+                        _cmbAllowedPair.SelectedIndex = i;
+                        return;
+                    }
+                }
+            }
+
+            if (_cmbAllowedPair.Items.Count > 0)
+                _cmbAllowedPair.SelectedIndex = 0;
+        }
+
+        private List<string> SelectedAllowedPairList()
+        {
+            string selected = _cmbAllowedPair.SelectedItem?.ToString()?.Trim() ?? "";
+            return string.IsNullOrWhiteSpace(selected) ? [] : [selected];
+        }
+
         private ClaudeConfig ReadClaudeConfigFromUI() => new()
         {
             ApiKey              = _txtClaudeApiKey.Text.Trim(),
             WatchSymbols        = [.. _txtClaudeSymbols.Text.Split(',').Select(s => s.Trim().ToUpper()).Where(s => s.Length > 0)],
             PollIntervalSeconds = (int)_nudClaudePollSec.Value,
-            SystemPrompt        = _txtClaudePrompt.Text,
+            SystemPrompt        = ClaudeConfig.DefaultPrompt,
             Model               = string.IsNullOrWhiteSpace(_txtClaudeModel.Text) ? "claude-opus-4-7" : _txtClaudeModel.Text.Trim()
         };
 
@@ -1343,23 +1425,34 @@ SAFETY RULES:
 
         private BotConfig ReadBotConfigFromUI() => new()
         {
-            Enabled                  = true,
-            WatchFolder              = _txtWatchFolder.Text,
-            MaxRiskPercent           = (double)_nudRisk.Value,
-            MaxTradesPerDay          = (int)_nudMaxTrades.Value,
-            PollIntervalMs           = (int)_nudPollMs.Value,
-            AllowedPairs             = [.. _clbAllowedPairs.CheckedItems.Cast<string>()],
-            AutoLotCalculation       = _chkAutoLotBot.Checked,
-            MinRRRatio               = (double)_nudMinRR.Value,
-            EnforceRR                = _chkEnforceRR.Checked,
-            DrawdownProtectionEnabled = _chkDrawdown.Checked,
-            EmergencyCloseDrawdownPct = (double)_nudDrawdownPct.Value,
-            RetryOnFail              = true,
-            RetryCount               = (int)_nudRetry.Value,
-            RetryDelayMs             = 1000,
-            AutoStartOnLaunch        = _chkAutoStart.Checked,
-            MagicNumber              = 999001
+            // UI-bound fields
+            Enabled      = true,
+            WatchFolder  = _txtWatchFolder.Text,
+            AllowedPairs = SelectedAllowedPairList(),
+            // Settings managed by ReviewTradeForm (persisted in _cfg.Bot)
+            MaxRiskPercent            = _cfg.Bot.MaxRiskPercent,
+            MaxTradesPerDay           = _cfg.Bot.MaxTradesPerDay,
+            PollIntervalMs            = _cfg.Bot.PollIntervalMs,
+            AutoLotCalculation        = _cfg.Bot.AutoLotCalculation,
+            MinRRRatio                = _cfg.Bot.MinRRRatio,
+            EnforceRR                 = _cfg.Bot.EnforceRR,
+            DrawdownProtectionEnabled = _cfg.Bot.DrawdownProtectionEnabled,
+            EmergencyCloseDrawdownPct = _cfg.Bot.EmergencyCloseDrawdownPct,
+            RetryOnFail               = true,
+            RetryCount                = _cfg.Bot.RetryCount,
+            RetryDelayMs              = 1000,
+            AutoStartOnLaunch         = _cfg.Bot.AutoStartOnLaunch,
+            MagicNumber               = 999001,
+            SymbolSuffix              = _cfg.Bot.SymbolSuffix
         };
+
+        private BotConfig ReadBotConfigFromUISafe()
+        {
+            if (!InvokeRequired)
+                return ReadBotConfigFromUI();
+
+            return (BotConfig)Invoke(() => ReadBotConfigFromUI())!;
+        }
 
         // -- Log ---------------------------------------------------
         public void Log(string msg, Color? color = null)
@@ -1399,6 +1492,8 @@ SAFETY RULES:
         private async void OnFormClosingAsync(object? sender, FormClosingEventArgs e)
         {
             _refreshTimer.Stop();
+            _signalFeedPollTimer.Stop();
+            _signalFeedWatcher?.Dispose();
             await StopClaudeAsync();
             await StopBotAsync();
             await _settings.SaveAsync(_cfg);
@@ -1427,9 +1522,9 @@ SAFETY RULES:
             -------------------------------------
 
             1. Connect the app to MT5 (Named Pipe)
-            2. Start Monitoring -> it watches your folder
+            2. The app automatically watches your selected signal folder
             3. Drop a .json file into the folder
-            4. Click the Play button on a signal row to start trade
+            4. Click Detail/Play on a signal row to review and start trade
 
             Monitoring then:
               - Reads and validates the JSON
@@ -1525,14 +1620,29 @@ SAFETY RULES:
         private void BtnClearHistory_Click(object? sender, EventArgs e)  => _gridHistory.Rows.Clear();
 
         private async void BtnStartBot_Click(object? sender, EventArgs e) => await StartBotAsync();
+        private async void BtnStopBot_Click(object? sender, EventArgs e)    => await StopBotAsync();
+
+        private void BtnBotSettings_Click(object? sender, EventArgs e)
+        {
+            using var dlg = new ReviewTradeForm(_cfg.Bot);
+            if (dlg.ShowDialog(this) == DialogResult.OK)
+            {
+                _ = _settings.SaveAsync(_cfg);
+                Log("[BOT] Trade settings saved.", C_ACCENT);
+            }
+        }
+
         private async void BtnAnalyzePairs_Click(object? sender, EventArgs e) => await AnalyzePairsAsync();
 
-        private void ClbAllowedPairs_ItemCheck(object? sender, ItemCheckEventArgs e)
+        private void CmbAllowedPair_SelectedIndexChanged(object? sender, EventArgs e)
         {
-            if (_suppressPairCheckEvent || e.NewValue != CheckState.Checked) return;
-            string pair = _clbAllowedPairs.Items[e.Index]?.ToString() ?? "";
+            if (_suppressPairSelectionEvent) return;
+            string pair = _cmbAllowedPair.SelectedItem?.ToString() ?? "";
             if (!string.IsNullOrEmpty(pair))
             {
+                _cfg.Bot = ReadBotConfigFromUI();
+                _bot?.UpdateConfig(_cfg.Bot);
+                _ = _settings.SaveAsync(_cfg);
                 Log($"[BOT] Manual pair selected: {pair}", C_ACCENT);
                 _ = OnPairSelectionChangedAsync(pair);
             }
@@ -1540,15 +1650,36 @@ SAFETY RULES:
 
         private void BtnOpenFolder_Click(object? sender, EventArgs e)
         {
-            Directory.CreateDirectory(_txtWatchFolder.Text);
-            System.Diagnostics.Process.Start("explorer.exe", _txtWatchFolder.Text);
+            string current = _txtWatchFolder.Text.Trim();
+            string initial = Directory.Exists(current)
+                ? current
+                : Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
+
+            using var dialog = new FolderBrowserDialog
+            {
+                Description = "Select the signal watch folder",
+                InitialDirectory = initial,
+                UseDescriptionForTitle = true,
+                ShowNewFolderButton = true
+            };
+
+            if (dialog.ShowDialog(this) != DialogResult.OK ||
+                string.IsNullOrWhiteSpace(dialog.SelectedPath))
+            {
+                return;
+            }
+
+            _txtWatchFolder.Text = dialog.SelectedPath;
+            Directory.CreateDirectory(dialog.SelectedPath);
+            Log($"[BOT] Watch folder selected: {dialog.SelectedPath}", C_ACCENT);
+            _ = EnsureAutoWatcherAsync("watch folder changed");
         }
 
         private void BtnBotInstructions_Click(object? sender, EventArgs e)
         {
             using var dlg = new Form
             {
-                Text            = "How It Works — Auto Bot",
+                Text            = "How It Works - Auto Bot",
                 Size            = new Size(560, 560),
                 StartPosition   = FormStartPosition.CenterParent,
                 BackColor       = Color.FromArgb(18, 18, 28),
@@ -1571,7 +1702,7 @@ SAFETY RULES:
             dlg.ShowDialog(this);
         }
 
-        // ── Signal Feed ───────────────────────────────────────────
+        // â"€â"€ Signal Feed â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
 
         private async Task RefreshSignalFeedAsync()
         {
@@ -1582,6 +1713,7 @@ SAFETY RULES:
             await LoadSignalFolderToFeedAsync(Path.Combine(root, "rejected"), SignalCardStatus.Rejected);
             await LoadSignalFolderToFeedAsync(Path.Combine(root, "executed"), SignalCardStatus.Executed);
             await LoadSignalFolderToFeedAsync(root,                           SignalCardStatus.Pending);
+            PruneMissingSignalCards(root);
         }
 
         private async Task LoadSignalFolderToFeedAsync(string folder, SignalCardStatus status)
@@ -1599,6 +1731,7 @@ SAFETY RULES:
                         SignalId   = req.Id,
                         FileName   = Path.GetFileName(file),
                         FilePath   = file,
+                        RawJson    = json,
                         Pair       = req.Pair,
                         TradeType  = req.TradeType.ToString(),
                         StopLoss   = req.StopLoss,
@@ -1614,12 +1747,77 @@ SAFETY RULES:
             }
         }
 
+        private void EnsureSignalFeedWatcher(string folder)
+        {
+            if (_signalFeedWatcher != null &&
+                string.Equals(_signalFeedWatcher.Path, folder, StringComparison.OrdinalIgnoreCase))
+            {
+                if (!_signalFeedPollTimer.Enabled)
+                    _signalFeedPollTimer.Start();
+                return;
+            }
+
+            _signalFeedPollTimer.Stop();
+            _signalFeedWatcher?.Dispose();
+            _signalFeedWatcher = null;
+
+            if (!Directory.Exists(folder)) return;
+
+            _signalFeedWatcher = new FileSystemWatcher(folder, "*.json")
+            {
+                NotifyFilter = NotifyFilters.FileName | NotifyFilters.LastWrite | NotifyFilters.Size,
+                IncludeSubdirectories = false,
+                EnableRaisingEvents = true
+            };
+            _signalFeedWatcher.Created += SignalFeedWatcherChanged;
+            _signalFeedWatcher.Changed += SignalFeedWatcherChanged;
+            _signalFeedWatcher.Deleted += SignalFeedWatcherChanged;
+            _signalFeedWatcher.Renamed += SignalFeedWatcherChanged;
+            _signalFeedWatcher.Error += (_, ex) =>
+                Log($"[BOT] Signal feed watcher warning: {ex.GetException().Message}. Polling will continue.", C_YELLOW);
+
+            _signalFeedPollTimer.Start();
+        }
+
+        private void SignalFeedWatcherChanged(object sender, FileSystemEventArgs e)
+        {
+            _ = RefreshSignalFeedAsync();
+        }
+
+        private void PruneMissingSignalCards(string root)
+        {
+            if (InvokeRequired) { Invoke(() => PruneMissingSignalCards(root)); return; }
+
+            var cards = _flpSignals.Controls.OfType<Panel>().ToList();
+            foreach (var card in cards)
+            {
+                if (card.Tag is not SignalCardInfo info) continue;
+                if (info.Ticket > 0) continue;
+                if (string.IsNullOrWhiteSpace(info.FilePath)) continue;
+                if (!info.FilePath.StartsWith(root, StringComparison.OrdinalIgnoreCase)) continue;
+                if (File.Exists(info.FilePath)) continue;
+                _flpSignals.Controls.Remove(card);
+                card.Dispose();
+            }
+        }
+
+        private async void SignalFeedPollTimer_Tick(object? sender, EventArgs e)
+        {
+            await RefreshSignalFeedAsync();
+        }
+
         private void AddOrUpdateSignalCard(SignalCardInfo info)
         {
             if (InvokeRequired) { Invoke(() => AddOrUpdateSignalCard(info)); return; }
 
             var existing = _flpSignals.Controls.OfType<Panel>()
-                .FirstOrDefault(p => (p.Tag as SignalCardInfo)?.SignalId == info.SignalId);
+                .FirstOrDefault(p =>
+                {
+                    var ci = p.Tag as SignalCardInfo;
+                    if (ci == null) return false;
+                    if (ci.SignalId == info.SignalId) return true;
+                    return !string.IsNullOrEmpty(info.FileName) && ci.FileName == info.FileName;
+                });
 
             if (existing != null)
             {
@@ -1674,19 +1872,19 @@ SAFETY RULES:
             // Left status stripe
             card.Controls.Add(new Panel { Width = 5, Dock = DockStyle.Left, BackColor = stripeColor });
 
-            // ── Row 1: direction+pair  |  action buttons ─────────────
+            // â"€â"€ Row 1: direction+pair  |  action buttons â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
             card.Controls.Add(new Label
             {
-                Text      = $"{(isBuy ? "▲ BUY" : "▼ SELL")}  {info.Pair}",
+                Text      = $"{(isBuy ? "BUY" : "SELL")}  {info.Pair}",
                 Font      = new Font("Segoe UI Semibold", 10.5F, FontStyle.Bold),
                 ForeColor = dirColor,
                 Location  = new Point(14, 8),
                 AutoSize  = true
             });
 
-            // ✕ Delete button (always visible, disabled while Executing)
-            var btnDel = MakeCardButton("✕", Color.FromArgb(80, 30, 30), Color.FromArgb(252, 95, 95),
-                "Delete — remove this signal card and file");
+            // X Delete button (always visible, disabled while Executing)
+            var btnDel = MakeCardButton("X", Color.FromArgb(80, 30, 30), Color.FromArgb(252, 95, 95),
+                "Delete - remove this signal card and file");
             btnDel.Anchor  = AnchorStyles.Top | AnchorStyles.Right;
             btnDel.Location = new Point(w - 28, 8);
             btnDel.Enabled  = info.Status != SignalCardStatus.Executing;
@@ -1694,30 +1892,30 @@ SAFETY RULES:
             btnDel.Click   += (_, _) => DeleteSignalCard(card);
             card.Controls.Add(btnDel);
 
-            // ■ Close position button (only meaningful for Executed with ticket)
-            var btnClose = MakeCardButton("■", Color.FromArgb(60, 20, 20), Color.FromArgb(252, 95, 95),
-                "Close Position — close this trade on MT5");
+            // Cls Close position button (only meaningful for Executed with ticket)
+            var btnClose = MakeCardButton("Cls", Color.FromArgb(60, 20, 20), Color.FromArgb(252, 95, 95),
+                "Close Position - close this trade on MT5");
             btnClose.Anchor   = AnchorStyles.Top | AnchorStyles.Right;
             btnClose.Location = new Point(w - 56, 8);
-            btnClose.Visible  = info.Status == SignalCardStatus.Executed && info.Ticket > 0;
+            btnClose.Enabled  = info.Status == SignalCardStatus.Executed && info.Ticket > 0;
             btnClose.Tag      = "close";
             btnClose.Click   += (_, _) => _ = CloseTradeFromCardAsync(card);
             card.Controls.Add(btnClose);
 
-            // Detail button — opens trade review dialog, does NOT immediately trade
+            // Detail button - opens trade review dialog, does NOT immediately trade
             var btnExec = MakeCardButton("Detail", Color.FromArgb(20, 50, 30), Color.FromArgb(72, 199, 142),
-                "Review — open trade details and approve before sending to MT5");
+                "Review - open trade details and approve before sending to MT5");
             btnExec.Size     = new Size(52, 22);
             btnExec.Anchor   = AnchorStyles.Top | AnchorStyles.Right;
             btnExec.Location = new Point(w - 84, 8);
-            btnExec.Visible  = CanExecuteSignal(info);
+            btnExec.Enabled  = CanExecuteSignal(info);
             btnExec.Tag      = "execute";
             btnExec.Click   += (_, _) => _ = ExecuteSignalFromCardSafeAsync(card);
             card.Controls.Add(btnExec);
 
-            // JSON button — opens the signal file in the default text editor
+            // JSON button - opens the signal file in the default text editor
             var btnJson = MakeCardButton("JSON", Color.FromArgb(20, 30, 55), Color.FromArgb(130, 170, 255),
-                "Open JSON — view the raw signal file in your default editor");
+                "Open JSON - view the raw signal file in your default editor");
             btnJson.Size     = new Size(38, 22);
             btnJson.Anchor   = AnchorStyles.Top | AnchorStyles.Right;
             btnJson.Location = new Point(w - 130, 8);
@@ -1726,17 +1924,27 @@ SAFETY RULES:
             {
                 if (card.Tag is not SignalCardInfo ci) return;
                 string path = ResolveSignalFilePath(ci);
-                if (string.IsNullOrWhiteSpace(path) || !File.Exists(path))
+                string raw  = "";
+                if (!string.IsNullOrWhiteSpace(path) && File.Exists(path))
+                {
+                    try { raw = File.ReadAllText(path); }
+                    catch (Exception ex) { Log($"[ERROR] Cannot read file: {ex.Message}", C_RED); return; }
+                }
+                else if (!string.IsNullOrWhiteSpace(ci.RawJson))
+                {
+                    raw = ci.RawJson;
+                }
+                else
                 {
                     Log($"[INFO] Signal file not found: {ci.FileName}", C_YELLOW);
                     return;
                 }
-                try { Process.Start(new ProcessStartInfo(path) { UseShellExecute = true }); }
-                catch (Exception ex) { Log($"[ERROR] Cannot open file: {ex.Message}", C_RED); }
+                using var dlg = new JsonViewForm(path, raw);
+                dlg.ShowDialog(this);
             };
             card.Controls.Add(btnJson);
 
-            // Thin marquee progress bar — shown while async work is in progress
+            // Thin marquee progress bar - shown while async work is in progress
             var pbBusy = new ProgressBar
             {
                 Style                 = ProgressBarStyle.Marquee,
@@ -1750,7 +1958,7 @@ SAFETY RULES:
             };
             card.Controls.Add(pbBusy);
 
-            // ── Row 2: status label ───────────────────────────────────
+            // â"€â"€ Row 2: status label â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
             var (statusText, statusColor) = GetNeutralStatusDisplay(info);
             card.Controls.Add(new Label
             {
@@ -1763,7 +1971,7 @@ SAFETY RULES:
                 Tag       = "status"
             });
 
-            // ── Row 3: SL / TP / Lots ─────────────────────────────────
+            // â"€â"€ Row 3: SL / TP / Lots â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
             card.Controls.Add(new Label
             {
                 Text      = $"SL: {info.StopLoss:F5}   TP: {info.TakeProfit:F5}   Lots: {info.LotSize:F2}",
@@ -1773,14 +1981,14 @@ SAFETY RULES:
                 AutoSize  = true
             });
 
-            // ── Row 4: timestamps ─────────────────────────────────────
+            // â"€â"€ Row 4: timestamps â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
             string genPart  = info.CreatedAt > DateTime.MinValue
                 ? $"Gen: {info.CreatedAt:dd MMM HH:mm:ss}"
                 : $"File: {info.Time:dd MMM HH:mm:ss}";
             string donePart = info.Status is SignalCardStatus.Executed
                                            or SignalCardStatus.Rejected
                                            or SignalCardStatus.Error
-                ? $"   →   Done: {info.Time:HH:mm:ss}"
+                ? $"   ->   Done: {info.Time:HH:mm:ss}"
                 : "";
             card.Controls.Add(new Label
             {
@@ -1792,7 +2000,7 @@ SAFETY RULES:
                 Tag       = "timestamps"
             });
 
-            // ── Row 5: filename + ID ──────────────────────────────────
+            // â"€â"€ Row 5: filename + ID â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
             card.Controls.Add(new Label
             {
                 Text      = $"{info.FileName}   ID: {info.SignalId}",
@@ -1945,7 +2153,7 @@ SAFETY RULES:
                 string donePart = info.Status is SignalCardStatus.Executed
                                                or SignalCardStatus.Rejected
                                                or SignalCardStatus.Error
-                    ? $"   →   Done: {info.Time:HH:mm:ss}"
+                    ? $"   ->   Done: {info.Time:HH:mm:ss}"
                     : "";
                 lblTs.Text = genPart + donePart;
             }
@@ -1955,14 +2163,17 @@ SAFETY RULES:
             {
                 switch (btn.Tag?.ToString())
                 {
+                    case "json":
+                        btn.Enabled = true;
+                        break;
                     case "delete":
                         btn.Enabled = info.Status != SignalCardStatus.Executing;
                         break;
                     case "close":
-                        btn.Visible = info.Status == SignalCardStatus.Executed && info.Ticket > 0;
+                        btn.Enabled = info.Status == SignalCardStatus.Executed && info.Ticket > 0;
                         break;
                     case "execute":
-                        btn.Visible = CanExecuteSignal(info);
+                        btn.Enabled = CanExecuteSignal(info);
                         break;
                 }
             }
@@ -2256,16 +2467,18 @@ SAFETY RULES:
                 ?? BuildTradeReviewSnapshotJson(request, account, symbol, positions);
 
             if (InvokeRequired)
-                return (TradeReviewDecision)Invoke(() => ShowTradeReviewDialog(request, info, snapshot, symbol))!;
+                return (TradeReviewDecision)Invoke(() => ShowTradeReviewDialog(request, info, snapshot, symbol, account, positions))!;
 
-            return ShowTradeReviewDialog(request, info, snapshot, symbol);
+            return ShowTradeReviewDialog(request, info, snapshot, symbol, account, positions);
         }
 
         private TradeReviewDecision ShowTradeReviewDialog(
             TradeRequest request,
             SignalCardInfo info,
             string snapshotJson,
-            SymbolInfo? symbol)
+            SymbolInfo? symbol,
+            AccountInfo? account = null,
+            IReadOnlyCollection<LivePosition>? reviewPositions = null)
         {
             using var form = new Form
             {
@@ -2289,7 +2502,7 @@ SAFETY RULES:
             };
             root.RowStyles.Add(new RowStyle(SizeType.Absolute, 58));
             root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-            root.RowStyles.Add(new RowStyle(SizeType.Absolute, 64));
+            root.RowStyles.Add(new RowStyle(SizeType.Absolute, 110));
             root.RowStyles.Add(new RowStyle(SizeType.Absolute, 78));
             form.Controls.Add(root);
 
@@ -2306,10 +2519,13 @@ SAFETY RULES:
             JObject currentSnapshot = ParseReviewSnapshot(snapshotJson);
             string latestSnapshotJson = currentSnapshot.ToString(Formatting.Indented);
             form.Tag = latestSnapshotJson;
+            IReadOnlyCollection<LivePosition> latestPositions = reviewPositions ?? [];
+            Func<double> getCurrentReviewLotSize = () => Math.Max(0.01, request.LotSize);
 
             var bindings = new List<(string Path, Label Value, string Format)>();
             var dashboard = BuildReviewDashboard(bindings, out var liveStatus);
             root.Controls.Add(dashboard, 0, 1);
+            UpdateReviewExecutionBarrierSnapshot(currentSnapshot, request, request.LotSize, latestPositions);
             RefreshReviewDashboard(currentSnapshot, bindings);
 
             bool refreshingSnapshot = false;
@@ -2324,23 +2540,26 @@ SAFETY RULES:
                 try
                 {
                     // Try full EA snapshot first
-                    JObject? updated = await _bridge.GetMarketSnapshotAsync(request, _cfg.Bot).ConfigureAwait(false);
+                    JObject? updated = await _bridge.GetMarketSnapshotAsync(request, _cfg.Bot);
+                    try { latestPositions = await _bridge.GetPositionsAsync(); } catch { }
 
-                    // EA doesn't implement GET_MARKET_SNAPSHOT — fetch fields individually
+                    // EA doesn't implement GET_MARKET_SNAPSHOT - fetch fields individually
                     if (updated == null && !form.IsDisposed)
                     {
                         AccountInfo?       acct = null;
                         SymbolInfo?        sym  = null;
                         List<LivePosition> pos  = [];
-                        try { acct = await _bridge.GetAccountInfoAsync().ConfigureAwait(false); }  catch { }
-                        try { sym  = await _bridge.GetSymbolInfoAsync(request.Pair).ConfigureAwait(false); } catch { }
-                        try { pos  = await _bridge.GetPositionsAsync().ConfigureAwait(false); }      catch { }
+                        try { acct = await _bridge.GetAccountInfoAsync(); }  catch { }
+                        try { sym  = await _bridge.GetSymbolInfoAsync(request.Pair); } catch { }
+                        try { pos  = await _bridge.GetPositionsAsync(); }      catch { }
+                        latestPositions = pos;
                         try { updated = JObject.Parse(BuildTradeReviewSnapshotJson(request, acct, sym, pos)); } catch { }
                     }
 
                     if (updated != null && !form.IsDisposed)
                     {
                         currentSnapshot    = updated;
+                        UpdateReviewExecutionBarrierSnapshot(currentSnapshot, request, getCurrentReviewLotSize(), latestPositions);
                         latestSnapshotJson = currentSnapshot.ToString(Formatting.Indented);
                         form.Tag           = latestSnapshotJson;
                         RefreshReviewDashboard(currentSnapshot, bindings);
@@ -2354,7 +2573,7 @@ SAFETY RULES:
                 finally
                 {
                     refreshingSnapshot = false;
-                    lastSyncTime = DateTime.Now; // always reset countdown regardless of success
+                    lastSyncTime = DateTime.Now;
                 }
             };
             form.FormClosed += (_, _) => liveTimer.Stop();
@@ -2370,15 +2589,97 @@ SAFETY RULES:
             form.FormClosed += (_, _) => clockTimer.Stop();
             clockTimer.Start();
 
-            var autoPanel = new FlowLayoutPanel
+            // â"€â"€ Row 2: two-row host (lot/leverage + auto-close) â"€â"€â"€â"€
+            var row2Host = new TableLayoutPanel
             {
-                Dock = DockStyle.Fill,
-                FlowDirection = FlowDirection.LeftToRight,
-                WrapContents = false,
-                Padding = new Padding(0, 10, 0, 0),
+                Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 2,
+                BackColor = form.BackColor, Padding = new Padding(0)
+            };
+            row2Host.RowStyles.Add(new RowStyle(SizeType.Absolute, 52));
+            row2Host.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+            root.Controls.Add(row2Host, 0, 2);
+
+            // â"€â"€ Row 2a: Lot size + Leverage â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
+            var lotPanel = new FlowLayoutPanel
+            {
+                Dock = DockStyle.Fill, FlowDirection = FlowDirection.LeftToRight,
+                WrapContents = false, Padding = new Padding(0, 8, 0, 0),
                 BackColor = form.BackColor
             };
-            root.Controls.Add(autoPanel, 0, 2);
+            row2Host.Controls.Add(lotPanel, 0, 0);
+
+            var lotOptions = new[]
+            {
+                new LotSizeOption("Micro Lot",    0.01, "1,000 units",   "GBPUSD approx $0.10/pip"),
+                new LotSizeOption("Mini Lot",     0.10, "10,000 units",  "GBPUSD approx $1.00/pip"),
+                new LotSizeOption("Standard Lot", 1.00, "100,000 units", "GBPUSD approx $10.00/pip")
+            };
+
+            var cmbLotSize = new ComboBox
+            {
+                DropDownStyle = ComboBoxStyle.DropDownList,
+                Width = 250,
+                Height = 28,
+                BackColor = Color.FromArgb(18, 20, 32),
+                ForeColor = Color.FromArgb(218, 218, 230),
+                FlatStyle = FlatStyle.Flat,
+                Font = new Font("Segoe UI", 9F),
+                Margin = new Padding(6, 4, 0, 0)
+            };
+            cmbLotSize.Items.AddRange(lotOptions);
+            cmbLotSize.SelectedItem = lotOptions
+                .OrderBy(o => Math.Abs(o.Size - Math.Max(0.01, request.LotSize)))
+                .First();
+
+            var leverageOptions = new[] { "1:50", "1:100", "1:200", "1:500", "1:1000" };
+            var cmbLeverage = new ComboBox
+            {
+                DropDownStyle = ComboBoxStyle.DropDownList,
+                Width = 88, Height = 28,
+                BackColor = Color.FromArgb(18, 20, 32),
+                ForeColor = Color.FromArgb(218, 218, 230),
+                FlatStyle = FlatStyle.Flat,
+                Font = new Font("Segoe UI", 9F),
+                Margin = new Padding(6, 4, 0, 0)
+            };
+
+            int acctLev = account?.Leverage > 0 ? account.Leverage : 100;
+            string acctLevItem = $"1:{acctLev}";
+            cmbLeverage.Items.AddRange(leverageOptions);
+            if (!leverageOptions.Contains(acctLevItem))
+                cmbLeverage.Items.Insert(0, acctLevItem);
+            cmbLeverage.SelectedItem = acctLevItem;
+            if (cmbLeverage.SelectedIndex < 0) cmbLeverage.SelectedIndex = 0;
+
+            lotPanel.Controls.Add(MakeInlineLabel("Lot size"));
+            lotPanel.Controls.Add(cmbLotSize);
+            lotPanel.Controls.Add(MakeInlineLabel("   Leverage"));
+            lotPanel.Controls.Add(cmbLeverage);
+
+            double entryForCalc = symbol != null
+                ? (request.TradeType == TradeType.BUY ? symbol.Ask : symbol.Bid)
+                : 0;
+            double equityForCalc = account?.Equity ?? 0;
+
+            cmbLeverage.SelectedIndexChanged += (_, _) =>
+            {
+                string levStr = cmbLeverage.SelectedItem?.ToString() ?? "1:100";
+                int colon = levStr.IndexOf(':');
+                if (colon < 0 || !int.TryParse(levStr[(colon + 1)..], out int lev)) lev = 100;
+                if (equityForCalc <= 0 || entryForCalc <= 0 || request.StopLoss <= 0) return;
+                double baseLots = LotCalculator.Calculate(equityForCalc, _cfg.Bot.MaxRiskPercent, entryForCalc, request.StopLoss, request.Pair);
+                double scaledLots = Math.Max(0.01, Math.Min(100.0, Math.Round(baseLots * lev / 100.0, 2)));
+                cmbLotSize.SelectedItem = lotOptions.OrderBy(o => Math.Abs(o.Size - scaledLots)).First();
+            };
+
+            // â"€â"€ Row 2b: Auto-close â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
+            var autoPanel = new FlowLayoutPanel
+            {
+                Dock = DockStyle.Fill, FlowDirection = FlowDirection.LeftToRight,
+                WrapContents = false, Padding = new Padding(0, 4, 0, 0),
+                BackColor = form.BackColor
+            };
+            row2Host.Controls.Add(autoPanel, 0, 1);
 
             var chkAutoClose = new CheckBox
             {
@@ -2397,30 +2698,59 @@ SAFETY RULES:
             autoPanel.Controls.Add(nudPips);
             autoPanel.Controls.Add(MakeInlineLabel("Money target"));
             autoPanel.Controls.Add(nudMoney);
-            autoPanel.Controls.Add(MakeInlineLabel("0 means close on any profit"));
+            autoPanel.Controls.Add(MakeInlineLabel("0 = close on any profit"));
 
             bool syncing = false;
-            double lots = request.LotSize;
             double price = symbol?.Ask > 0 ? symbol.Ask : 1.0;
             string sym = symbol?.Symbol ?? request.Pair;
-            double pipValue = Math.Max(0.0001, lots * LotCalculator.GetPipValuePerLot(sym.ToUpperInvariant(), price));
+            double PipValue() => Math.Max(0.0001, GetSelectedReviewLotSize() * LotCalculator.GetPipValuePerLot(sym.ToUpperInvariant(), price));
 
             nudPips.ValueChanged += (_, _) =>
             {
                 if (syncing) return;
                 syncing = true;
-                nudMoney.Value = Math.Min(nudMoney.Maximum, Math.Round(nudPips.Value * (decimal)pipValue, 2));
+                nudMoney.Value = Math.Min(nudMoney.Maximum, Math.Round(nudPips.Value * (decimal)PipValue(), 2));
                 syncing = false;
             };
             nudMoney.ValueChanged += (_, _) =>
             {
                 if (syncing) return;
                 syncing = true;
-                nudPips.Value = Math.Min(nudPips.Maximum, Math.Round(nudMoney.Value / (decimal)pipValue, 1));
+                nudPips.Value = Math.Min(nudPips.Maximum, Math.Round(nudMoney.Value / (decimal)PipValue(), 1));
                 syncing = false;
             };
+            cmbLotSize.SelectedIndexChanged += (_, _) =>
+            {
+                if (syncing) return;
+                syncing = true;
+                nudMoney.Value = Math.Min(nudMoney.Maximum, Math.Round(nudPips.Value * (decimal)PipValue(), 2));
+                syncing = false;
+                UpdateReviewExecutionBarrierSnapshot(currentSnapshot, request, GetSelectedReviewLotSize(), latestPositions);
+                latestSnapshotJson = currentSnapshot.ToString(Formatting.Indented);
+                form.Tag = latestSnapshotJson;
+                RefreshReviewDashboard(currentSnapshot, bindings);
+            };
 
-            // ── Bottom section: status label + button row ──────────
+            double GetSelectedReviewLotSize() =>
+                cmbLotSize.SelectedItem is LotSizeOption selected ? selected.Size : Math.Max(0.01, request.LotSize);
+            getCurrentReviewLotSize = GetSelectedReviewLotSize;
+
+            int GetSelectedReviewLeverage()
+            {
+                string levStr = cmbLeverage.SelectedItem?.ToString() ?? "1:100";
+                int colon = levStr.IndexOf(':');
+                return colon >= 0 && int.TryParse(levStr[(colon + 1)..], out int lev) ? lev : 100;
+            }
+
+            string BuildCurrentAiInputPrompt() =>
+                BuildFilledAiInputPrompt(latestSnapshotJson, GetSelectedReviewLotSize(), GetSelectedReviewLeverage());
+
+            UpdateReviewExecutionBarrierSnapshot(currentSnapshot, request, GetSelectedReviewLotSize(), latestPositions);
+            latestSnapshotJson = currentSnapshot.ToString(Formatting.Indented);
+            form.Tag = latestSnapshotJson;
+            RefreshReviewDashboard(currentSnapshot, bindings);
+
+            // â"€â"€ Bottom section: status label + button row â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
             var bottomHost = new TableLayoutPanel
             {
                 Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 2, BackColor = form.BackColor
@@ -2453,13 +2783,15 @@ SAFETY RULES:
             string aiResponseJson = "";
             TradeReviewDecision decision = new(false, false, 0, 0);
 
-            // ── Build buttons ──────────────────────────────────────
+            // â"€â"€ Build buttons â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
             var btnPlay         = MakeDialogButton("Play / Start Trade", C_GREEN);
             var btnCancel       = MakeDialogButton("Cancel", Color.FromArgb(110, 110, 130));
+            var btnSignalJson   = MakeDialogButton("Signal JSON",  Color.FromArgb(20, 38, 68));
             var btnViewJson     = MakeDialogButton("View JSON",    Color.FromArgb(28, 45, 80));
-            var btnFilledValues = MakeDialogButton("Input JSON",   Color.FromArgb(28, 40, 65));
+            var btnFilledValues = MakeDialogButton("Input Prompt", Color.FromArgb(28, 40, 65));
             var btnAiResponse   = MakeDialogButton("AI Response",  Color.FromArgb(40, 28, 65));
 
+            btnSignalJson.ForeColor   = Color.FromArgb(180, 220, 255);
             btnViewJson.ForeColor     = Color.FromArgb(130, 180, 255);
             btnFilledValues.ForeColor = Color.FromArgb(130, 220, 180);
             btnAiResponse.ForeColor   = Color.FromArgb(210, 150, 255);
@@ -2467,11 +2799,12 @@ SAFETY RULES:
 
             buttons.Controls.Add(btnPlay);
             buttons.Controls.Add(btnCancel);
+            buttons.Controls.Add(btnSignalJson);
             buttons.Controls.Add(btnViewJson);
             buttons.Controls.Add(btnFilledValues);
             buttons.Controls.Add(btnAiResponse);
 
-            // ── Helper: open a static JSON viewer form ─────────────
+            // â"€â"€ Helper: open a static JSON viewer form â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
             void OpenJsonViewer(string title, Func<string> getJson, bool liveRefresh = false)
             {
                 var jf = new Form
@@ -2518,32 +2851,197 @@ SAFETY RULES:
                 jf.Show(form);
             }
 
-            // ── Button: View JSON (live snapshot) ─────────────────
+            // -- Button: Signal JSON (view + edit the actual signal file)
+            btnSignalJson.Click += (_, _) =>
+            {
+                string signalPath = ResolveSignalFilePath(info);
+                string sigJson    = "";
+                if (!string.IsNullOrWhiteSpace(signalPath) && File.Exists(signalPath))
+                    try { sigJson = File.ReadAllText(signalPath); } catch { }
+                if (string.IsNullOrWhiteSpace(sigJson)) sigJson = info.RawJson ?? "";
+                if (string.IsNullOrWhiteSpace(sigJson))
+                {
+                    MessageBox.Show("Signal JSON not available.", "Signal JSON",
+                        MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    return;
+                }
+                try
+                {
+                    using var doc = System.Text.Json.JsonDocument.Parse(sigJson);
+                    sigJson = System.Text.Json.JsonSerializer.Serialize(doc.RootElement,
+                        new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
+                }
+                catch { }
+
+                var jf = new Form
+                {
+                    Text            = $"Signal JSON - {info.Pair}",
+                    Size            = new Size(700, 580),
+                    MinimumSize     = new Size(480, 380),
+                    BackColor       = Color.FromArgb(13, 18, 30),
+                    ForeColor       = Color.FromArgb(218, 218, 230),
+                    StartPosition   = FormStartPosition.CenterParent,
+                    FormBorderStyle = FormBorderStyle.Sizable,
+                };
+                AppIcon.ApplyTo(jf);
+
+                var rtbSig = new RichTextBox
+                {
+                    Dock        = DockStyle.Fill,
+                    ReadOnly    = false,
+                    ScrollBars  = RichTextBoxScrollBars.Both,
+                    Font        = new Font("Consolas", 10F),
+                    BackColor   = Color.FromArgb(18, 22, 36),
+                    ForeColor   = Color.FromArgb(180, 220, 255),
+                    BorderStyle = BorderStyle.None,
+                    WordWrap    = false,
+                    Text        = sigJson
+                };
+
+                bool hasFile  = !string.IsNullOrWhiteSpace(signalPath) && File.Exists(signalPath);
+
+                var btnBar = new FlowLayoutPanel
+                {
+                    Dock          = DockStyle.Bottom,
+                    Height        = 46,
+                    BackColor     = Color.FromArgb(18, 22, 36),
+                    FlowDirection = FlowDirection.LeftToRight,
+                    Padding       = new Padding(6, 6, 6, 0),
+                    WrapContents  = false,
+                };
+
+                var btnSave = new Button
+                {
+                    Text      = "Save to File",
+                    Size      = new Size(110, 32),
+                    FlatStyle = FlatStyle.Flat,
+                    BackColor = Color.FromArgb(30, 80, 50),
+                    ForeColor = Color.FromArgb(120, 230, 160),
+                    Font      = new Font("Segoe UI Semibold", 9F),
+                    Cursor    = Cursors.Hand,
+                    Enabled   = hasFile
+                };
+                btnSave.FlatAppearance.BorderSize = 0;
+
+                var btnCopy = new Button
+                {
+                    Text      = "Copy",
+                    Size      = new Size(70, 32),
+                    FlatStyle = FlatStyle.Flat,
+                    BackColor = Color.FromArgb(28, 45, 80),
+                    ForeColor = Color.FromArgb(130, 180, 255),
+                    Font      = new Font("Segoe UI Semibold", 9F),
+                    Cursor    = Cursors.Hand
+                };
+                btnCopy.FlatAppearance.BorderSize = 0;
+
+                var btnCloseJ = new Button
+                {
+                    Text      = "Close",
+                    Size      = new Size(70, 32),
+                    FlatStyle = FlatStyle.Flat,
+                    BackColor = Color.FromArgb(50, 52, 68),
+                    ForeColor = Color.FromArgb(200, 200, 220),
+                    Font      = new Font("Segoe UI Semibold", 9F),
+                    Cursor    = Cursors.Hand
+                };
+                btnCloseJ.FlatAppearance.BorderSize = 0;
+
+                var lblPath = new Label
+                {
+                    Text      = hasFile ? signalPath : "(no file - read only)",
+                    ForeColor = Color.FromArgb(90, 100, 130),
+                    Font      = new Font("Segoe UI", 8F),
+                    AutoSize  = false,
+                    Size      = new Size(380, 32),
+                    TextAlign = ContentAlignment.MiddleLeft,
+                };
+
+                btnSave.Click += (_, _) =>
+                {
+                    try
+                    {
+                        using var doc = System.Text.Json.JsonDocument.Parse(rtbSig.Text);
+                        string fmt = System.Text.Json.JsonSerializer.Serialize(doc.RootElement,
+                            new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
+                        File.WriteAllText(signalPath, fmt);
+                        rtbSig.Text  = fmt;
+                        btnSave.Text = "Saved!";
+                        var t = new System.Windows.Forms.Timer { Interval = 1500 };
+                        t.Tick += (_, _) => { btnSave.Text = "Save to File"; t.Stop(); t.Dispose(); };
+                        t.Start();
+                    }
+                    catch (Exception ex)
+                    {
+                        MessageBox.Show($"Cannot save: {ex.Message}", "Save Error",
+                            MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    }
+                };
+                btnCopy.Click += (_, _) =>
+                {
+                    try { Clipboard.SetText(rtbSig.Text); } catch { }
+                    btnCopy.Text = "Copied!";
+                    var t = new System.Windows.Forms.Timer { Interval = 1400 };
+                    t.Tick += (_, _) => { btnCopy.Text = "Copy"; t.Stop(); t.Dispose(); };
+                    t.Start();
+                };
+                btnCloseJ.Click += (_, _) => jf.Close();
+
+                btnBar.Controls.AddRange(new Control[] { btnSave, btnCopy, btnCloseJ, lblPath });
+                jf.Controls.Add(rtbSig);
+                jf.Controls.Add(btnBar);
+                jf.Show(form);
+            };
+
+            // -- Button: View JSON (live snapshot)
             btnViewJson.Click += (_, _) =>
                 OpenJsonViewer("Market Snapshot JSON", () => latestSnapshotJson, liveRefresh: true);
 
-            // ── Button: Input JSON (what was sent to AI) ──────────
+            // -- Button: Input Prompt (what is sent to AI)
             btnFilledValues.Click += (_, _) =>
-                OpenJsonViewer("AI Input — Market Snapshot", () => latestSnapshotJson);
+                OpenJsonViewer("AI Input Prompt", BuildCurrentAiInputPrompt, liveRefresh: true);
 
-            // ── Button: AI Response ───────────────────────────────
+            // â"€â"€ Button: AI Response â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
             btnAiResponse.Click += (_, _) =>
                 OpenJsonViewer("AI Trade Decision Response", () =>
                     string.IsNullOrEmpty(aiResponseJson) ? "{ \"status\": \"No AI response yet\" }" : aiResponseJson);
 
-            // ── Helper: set status label ───────────────────────────
+            // â"€â"€ Helper: set status label â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
             void SetPlayStatus(string text, Color color)
             {
                 lblPlayStatus.Text      = text;
                 lblPlayStatus.ForeColor = color;
             }
 
-            // ── Button: Play / Start Trade ────────────────────────
+            // â"€â"€ Button: Play / Start Trade â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
             btnPlay.Click += async (_, _) =>
             {
                 btnPlay.Enabled   = false;
                 btnPlay.Text      = "Analyzing...";
-                string snapshot   = latestSnapshotJson;
+
+                var failedRules = GetFailedReviewBarrierMessages(currentSnapshot);
+                if (failedRules.Count > 0)
+                {
+                    string message =
+                        "These required trade rules are not fulfilled:\n\n" +
+                        string.Join("\n", failedRules.Select(rule => "- " + rule)) +
+                        "\n\nThe trade cannot be started until these hard safety rules are fixed.";
+
+                    MessageBox.Show(
+                        form,
+                        message,
+                        "Trade Blocked By Safety Rules",
+                        MessageBoxButtons.OK,
+                        MessageBoxIcon.Warning);
+
+                    SetPlayStatus("Trade blocked because one or more required rules are not fulfilled.", C_RED);
+                    Log("[BOT] Trade blocked by review safety rules: " + string.Join(" | ", failedRules), C_RED);
+                    btnPlay.Text    = "Play / Start Trade";
+                    btnPlay.Enabled = true;
+                    return;
+                }
+
+                string aiInputPrompt = BuildCurrentAiInputPrompt();
 
                 bool aiEnabled = !string.IsNullOrWhiteSpace(_cfg.Claude.ApiKey)
                               && !_cfg.Claude.ApiKey.StartsWith("sk-ant-..")
@@ -2557,7 +3055,7 @@ SAFETY RULES:
                         Log("[AI] Running trade decision analysis on market snapshot...", C_ACCENT);
 
                         var (respJson, allowed, aiDecision, error) =
-                            await RunAiTradeDecisionAsync(snapshot).ConfigureAwait(false);
+                            await RunAiTradeDecisionAsync(aiInputPrompt).ConfigureAwait(false);
 
                         aiResponseJson = respJson;
                         if (!string.IsNullOrEmpty(respJson)) btnAiResponse.Enabled = true;
@@ -2576,17 +3074,17 @@ SAFETY RULES:
                         if (!allowed || aiDecision is not "BUY" and not "SELL")
                         {
                             string reasons = ExtractAiBlockingReasons(respJson);
-                            SetPlayStatus($"AI: {aiDecision} — {reasons}", C_YELLOW);
+                            SetPlayStatus($"AI: {aiDecision} - {reasons}", C_YELLOW);
                             Log($"[AI] Trade not approved. Decision: {aiDecision} | {reasons}", C_YELLOW);
                             btnPlay.Text    = "Play / Start Trade";
                             btnPlay.Enabled = true;
                             return;
                         }
 
-                        // AI approved — build signal from response and write to watch folder
+                        // AI approved - build signal from response and write to watch folder
                         var signalReq = BuildSignalFromAiDecision(request, respJson);
                         string signalPath = WriteSignalFile(signalReq);
-                        Log($"[AI] APPROVED — {aiDecision} | Signal: {Path.GetFileName(signalPath)}", C_GREEN);
+                        Log($"[AI] APPROVED - {aiDecision} | Signal: {Path.GetFileName(signalPath)}", C_GREEN);
                         SetPlayStatus($"AI approved {aiDecision}. Signal: {Path.GetFileName(signalPath)}", C_GREEN);
                     }
                     catch (Exception ex)
@@ -2600,16 +3098,18 @@ SAFETY RULES:
                 }
                 else
                 {
-                    Log("[AI] AI not configured — executing trade from signal values directly.", C_YELLOW);
-                    SetPlayStatus("AI not configured — executing directly.", C_YELLOW);
+                    Log("[AI] AI not configured - executing trade from signal values directly.", C_YELLOW);
+                    SetPlayStatus("AI not configured - executing directly.", C_YELLOW);
                 }
 
-                form.Tag = snapshot;
+                form.Tag = latestSnapshotJson;
                 decision  = new TradeReviewDecision(
                     true,
                     chkAutoClose.Checked,
                     (double)nudPips.Value,
-                    (double)nudMoney.Value);
+                    (double)nudMoney.Value,
+                    GetSelectedReviewLotSize(),
+                    GetSelectedReviewLeverage());
                 form.DialogResult = DialogResult.OK;
                 form.Close();
             };
@@ -2641,7 +3141,7 @@ SAFETY RULES:
 
             liveStatus = new Label
             {
-                Text = $"  {DateTime.Now:HH:mm:ss}  |  Last sync: —  |  Next sync in: 5s",
+                Text = $"  {DateTime.Now:HH:mm:ss}  |  Last sync: -  |  Next sync in: 5s",
                 Dock = DockStyle.Fill,
                 ForeColor = Color.FromArgb(150, 220, 255),
                 Font = new Font("Segoe UI Semibold", 9F, FontStyle.Bold),
@@ -2667,6 +3167,18 @@ SAFETY RULES:
                 BackColor = scroll.BackColor
             };
             scroll.Controls.Add(flow);
+
+            AddReviewGroup(flow, bindings, "Trade Barriers", [
+                ("Signal Valid", "execution_barriers.signal_valid_detail", "barrier:execution_barriers.signal_valid"),
+                ("Signal Fresh", "execution_barriers.signal_fresh_detail", "barrier:execution_barriers.signal_fresh"),
+                ("Pair Allowed", "execution_barriers.pair_allowed_detail", "barrier:execution_barriers.pair_allowed"),
+                ("Daily Limit", "execution_barriers.daily_limit_detail", "barrier:execution_barriers.daily_limit_ok"),
+                ("MT5 Account", "execution_barriers.account_detail", "barrier:execution_barriers.account_ok"),
+                ("R:R Allowed", "execution_barriers.rr_detail", "barrier:execution_barriers.rr_ok"),
+                ("Free Margin", "execution_barriers.free_margin_detail", "barrier:execution_barriers.free_margin_ok"),
+                ("Portfolio Cap", "execution_barriers.portfolio_risk_detail", "barrier:execution_barriers.portfolio_risk_ok"),
+                ("Spread OK", "execution_barriers.spread_detail", "barrier:execution_barriers.spread_ok")
+            ]);
 
             AddReviewGroup(flow, bindings, "Account", [
                 ("Balance", "account.balance", "money"),
@@ -2787,14 +3299,197 @@ SAFETY RULES:
             return host;
         }
 
+        private void UpdateReviewExecutionBarrierSnapshot(
+            JObject snapshot,
+            TradeRequest request,
+            double selectedLotSize,
+            IReadOnlyCollection<LivePosition> positions)
+        {
+            var reviewRequest = CloneReviewRequest(request);
+            reviewRequest.LotSize = Math.Max(0.01, selectedLotSize);
+
+            var (signalValid, signalError) = reviewRequest.Validate();
+            bool signalFresh = true;
+            string freshnessDetail = $"Current: no expiry | Base: expiry > 0 enables age check";
+            if (reviewRequest.ExpiryMinutes > 0)
+            {
+                double ageMinutes = (DateTime.UtcNow - reviewRequest.CreatedAt).TotalMinutes;
+                signalFresh = ageMinutes <= reviewRequest.ExpiryMinutes;
+                freshnessDetail = $"Current: {ageMinutes:F0} min old | Base: <= {reviewRequest.ExpiryMinutes} min";
+            }
+
+            string pair = reviewRequest.Pair.ToUpperInvariant();
+            bool pairAllowed = _cfg.Bot.AllowedPairs.Count == 0 || _cfg.Bot.AllowedPairs.Contains(pair);
+
+            double tradesToday = ReadReviewNumber(snapshot, "account.daily_trades_taken");
+            bool dailyLimitKnown = !double.IsNaN(tradesToday);
+            bool dailyLimitOk = !dailyLimitKnown || tradesToday < _cfg.Bot.MaxTradesPerDay;
+
+            double balance = ReadReviewNumber(snapshot, "account.balance");
+            double equity = ReadReviewNumber(snapshot, "account.equity");
+            double freeMargin = ReadReviewNumber(snapshot, "account.free_margin");
+            bool accountOk = !double.IsNaN(equity) && equity > 0 && !double.IsNaN(freeMargin);
+            bool freeMarginOk = accountOk && (double.IsNaN(balance) || balance <= 0 || freeMargin >= balance * 0.05);
+
+            double rr = CalculateReviewRiskReward(snapshot, reviewRequest);
+            bool rrOk = !_cfg.Bot.EnforceRR || rr >= _cfg.Bot.MinRRRatio;
+
+            double entry = GetReviewReferenceEntry(snapshot, reviewRequest);
+            double newTradeRisk = entry > 0
+                ? LotCalculator.DollarRisk(reviewRequest.LotSize, entry, reviewRequest.StopLoss, reviewRequest.Pair)
+                : ReadReviewNumber(snapshot, "risk.dollar_risk");
+            if (double.IsNaN(newTradeRisk)) newTradeRisk = 0;
+
+            double openRisk = positions
+                .Where(p => p.StopLoss > 0)
+                .Sum(p => LotCalculator.DollarRisk(p.Lots, p.OpenPrice, p.StopLoss, p.Symbol));
+            double totalRiskPct = equity > 0 ? (openRisk + newTradeRisk) / equity * 100.0 : double.NaN;
+            bool portfolioRiskOk = _cfg.Bot.MaxTotalRiskPercent <= 0
+                || (!double.IsNaN(totalRiskPct) && totalRiskPct <= _cfg.Bot.MaxTotalRiskPercent);
+
+            double spread = ReadReviewNumber(snapshot, "price.spread_pips");
+            bool spreadOk = _cfg.Bot.MaxSpreadPips <= 0
+                || (!double.IsNaN(spread) && spread <= _cfg.Bot.MaxSpreadPips);
+
+            snapshot["execution_barriers"] = new JObject
+            {
+                ["signal_valid"] = signalValid,
+                ["signal_valid_detail"] = signalValid
+                    ? "Current: required fields valid | Base: pair, SL, TP, lot, direction"
+                    : $"Current: {signalError} | Base: pair, SL, TP, lot, direction",
+                ["signal_fresh"] = signalFresh,
+                ["signal_fresh_detail"] = freshnessDetail,
+                ["pair_allowed"] = pairAllowed,
+                ["pair_allowed_detail"] = _cfg.Bot.AllowedPairs.Count == 0
+                    ? $"Current: {pair} | Base: all pairs allowed"
+                    : $"Current: {pair} | Base: [{string.Join(", ", _cfg.Bot.AllowedPairs)}]",
+                ["daily_limit_ok"] = dailyLimitOk,
+                ["daily_limit_detail"] = dailyLimitKnown
+                    ? $"Current: {tradesToday:0} trades today | Base: < {_cfg.Bot.MaxTradesPerDay}"
+                    : $"Current: unknown until runtime | Base: < {_cfg.Bot.MaxTradesPerDay}",
+                ["account_ok"] = accountOk,
+                ["account_detail"] = accountOk
+                    ? $"Current: equity {equity:0.00}, free {freeMargin:0.00} | Base: equity > 0 and margin known"
+                    : "Current: unavailable | Base: equity > 0 and margin known",
+                ["rr_ok"] = rrOk,
+                ["rr_detail"] = _cfg.Bot.EnforceRR
+                    ? $"Current: {rr:0.00} | Base: >= {_cfg.Bot.MinRRRatio:0.00}"
+                    : $"Current: {rr:0.00} | Base: disabled",
+                ["free_margin_ok"] = freeMarginOk,
+                ["free_margin_detail"] = accountOk
+                    ? $"Current: {freeMargin:0.00} | Base: >= {(Math.Max(0, balance) * 0.05):0.00}"
+                    : "Current: unavailable | Base: >= 5% of balance",
+                ["portfolio_risk_ok"] = portfolioRiskOk,
+                ["portfolio_risk_detail"] = _cfg.Bot.MaxTotalRiskPercent <= 0
+                    ? "Current: not checked | Base: disabled"
+                    : double.IsNaN(totalRiskPct)
+                        ? $"Current: unavailable | Base: <= {_cfg.Bot.MaxTotalRiskPercent:0.0}%"
+                        : $"Current: {totalRiskPct:0.0}% | Base: <= {_cfg.Bot.MaxTotalRiskPercent:0.0}%",
+                ["spread_ok"] = spreadOk,
+                ["spread_detail"] = _cfg.Bot.MaxSpreadPips <= 0
+                    ? "Current: not checked | Base: disabled"
+                    : double.IsNaN(spread)
+                        ? $"Current: unavailable | Base: <= {_cfg.Bot.MaxSpreadPips:0.0} pips"
+                        : $"Current: {spread:0.0} pips | Base: <= {_cfg.Bot.MaxSpreadPips:0.0} pips"
+            };
+
+            UpsertReviewNumber(snapshot, "risk.calculated_lot", reviewRequest.LotSize);
+            if (entry > 0)
+            {
+                UpsertReviewNumber(snapshot, "risk.rr_ratio", rr);
+                UpsertReviewNumber(snapshot, "risk.dollar_risk", newTradeRisk);
+                UpsertReviewNumber(snapshot, "risk.dollar_profit_tp1",
+                    LotCalculator.DollarProfit(reviewRequest.LotSize, entry, reviewRequest.TakeProfit, reviewRequest.Pair));
+                if (reviewRequest.TakeProfit2 > 0)
+                {
+                    UpsertReviewNumber(snapshot, "risk.dollar_profit_tp2",
+                        LotCalculator.DollarProfit(reviewRequest.LotSize, entry, reviewRequest.TakeProfit2, reviewRequest.Pair));
+                }
+            }
+        }
+
+        private static TradeRequest CloneReviewRequest(TradeRequest request) => new()
+        {
+            Id = request.Id,
+            Pair = request.Pair,
+            TradeType = request.TradeType,
+            OrderType = request.OrderType,
+            EntryPrice = request.EntryPrice,
+            StopLoss = request.StopLoss,
+            TakeProfit = request.TakeProfit,
+            TakeProfit2 = request.TakeProfit2,
+            LotSize = request.LotSize,
+            Comment = request.Comment,
+            MagicNumber = request.MagicNumber,
+            ExpiryMinutes = request.ExpiryMinutes,
+            MoveSLToBreakevenAfterTP1 = request.MoveSLToBreakevenAfterTP1,
+            SlToBeTrigerPct = request.SlToBeTrigerPct,
+            CreatedAt = request.CreatedAt
+        };
+
+        private static double ReadReviewNumber(JObject snapshot, string path)
+        {
+            var token = snapshot.SelectToken(path);
+            if (token == null || token.Type == JTokenType.Null)
+                return double.NaN;
+
+            return double.TryParse(token.ToString(), NumberStyles.Any, CultureInfo.InvariantCulture, out double value)
+                ? value
+                : double.NaN;
+        }
+
+        private static double GetReviewReferenceEntry(JObject snapshot, TradeRequest request)
+        {
+            if (request.EntryPrice > 0)
+                return request.EntryPrice;
+
+            string pricePath = request.TradeType == TradeType.BUY ? "price.ask" : "price.bid";
+            double livePrice = ReadReviewNumber(snapshot, pricePath);
+            if (!double.IsNaN(livePrice) && livePrice > 0)
+                return livePrice;
+
+            return request.TradeType == TradeType.BUY
+                ? request.StopLoss * 1.002
+                : request.StopLoss * 0.998;
+        }
+
+        private static double CalculateReviewRiskReward(JObject snapshot, TradeRequest request)
+        {
+            double entry = GetReviewReferenceEntry(snapshot, request);
+            return entry > 0
+                ? LotCalculator.RiskRewardRatio(entry, request.StopLoss, request.TakeProfit)
+                : 0;
+        }
+
+        private static void UpsertReviewNumber(JObject snapshot, string path, double value)
+        {
+            var parts = path.Split('.');
+            if (parts.Length == 0)
+                return;
+
+            JObject node = snapshot;
+            for (int i = 0; i < parts.Length - 1; i++)
+            {
+                if (node[parts[i]] is not JObject child)
+                {
+                    child = new JObject();
+                    node[parts[i]] = child;
+                }
+                node = child;
+            }
+
+            node[parts[^1]] = Math.Round(value, 4);
+        }
+
         private void AddReviewGroup(
             FlowLayoutPanel parent,
             List<(string Path, Label Value, string Format)> bindings,
             string title,
             IReadOnlyList<(string Label, string Path, string Format)> metrics)
         {
-            const int rowH    = 27;
-            const int maxRows = 7;
+            bool isBarrierGroup = title == "Trade Barriers";
+            int rowH            = isBarrierGroup ? 30 : 27;
+            int maxRows         = isBarrierGroup ? 9 : 7;
             const int headerH = 24;
             const int padV    = 10;
 
@@ -2806,7 +3501,7 @@ SAFETY RULES:
             var group = new GroupBox
             {
                 Text      = title,
-                Width     = 284,
+                Width     = isBarrierGroup ? 580 : 284,
                 Height    = groupH,
                 ForeColor = Color.FromArgb(160, 170, 200),
                 BackColor = bg,
@@ -2834,6 +3529,12 @@ SAFETY RULES:
             };
             grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 46));
             grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 54));
+            if (isBarrierGroup)
+            {
+                grid.ColumnStyles.Clear();
+                grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 28));
+                grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 72));
+            }
             scroll.Controls.Add(grid);
 
             for (int i = 0; i < metrics.Count; i++)
@@ -2859,9 +3560,9 @@ SAFETY RULES:
                     ForeColor = initFg,
                     BackColor = initBg,
                     Font      = new Font("Consolas", 8.5F, FontStyle.Bold),
-                    TextAlign = ContentAlignment.MiddleRight,
+                    TextAlign = isBarrierGroup ? ContentAlignment.MiddleLeft : ContentAlignment.MiddleRight,
                     AutoEllipsis = true,
-                    Padding   = new Padding(0, 2, 6, 2)
+                    Padding   = isBarrierGroup ? new Padding(6, 2, 6, 2) : new Padding(0, 2, 6, 2)
                 };
 
                 grid.Controls.Add(name, 0, i);
@@ -2895,7 +3596,15 @@ SAFETY RULES:
             {
                 var token = snapshot.SelectToken(binding.Path);
                 binding.Value.Text = FormatReviewValue(token, binding.Format);
-                var (fg, bg) = ReviewValueStyle(binding.Path, token);
+                string stylePath = binding.Path;
+                JToken? styleToken = token;
+                if (TryGetReviewStylePath(binding.Format, out string barrierPath))
+                {
+                    stylePath = barrierPath;
+                    styleToken = snapshot.SelectToken(barrierPath);
+                }
+
+                var (fg, bg) = ReviewValueStyle(stylePath, styleToken);
                 binding.Value.ForeColor = fg;
                 binding.Value.BackColor = bg;
             }
@@ -2905,6 +3614,9 @@ SAFETY RULES:
         {
             if (token == null || token.Type == JTokenType.Null)
                 return "--";
+
+            if (format.StartsWith("barrier:", StringComparison.OrdinalIgnoreCase))
+                return token.ToString(Formatting.None).Trim('"');
 
             if (format == "bool")
                 return token.Type == JTokenType.Boolean && token.Value<bool>() ? "Yes" : "No";
@@ -2928,6 +3640,48 @@ SAFETY RULES:
             };
         }
 
+        private static bool TryGetReviewStylePath(string format, out string path)
+        {
+            const string prefix = "barrier:";
+            if (format.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+            {
+                path = format[prefix.Length..];
+                return !string.IsNullOrWhiteSpace(path);
+            }
+
+            path = "";
+            return false;
+        }
+
+        private static List<string> GetFailedReviewBarrierMessages(JObject snapshot)
+        {
+            var barriers = new (string Label, string FlagPath, string DetailPath)[]
+            {
+                ("Signal Valid", "execution_barriers.signal_valid", "execution_barriers.signal_valid_detail"),
+                ("Signal Fresh", "execution_barriers.signal_fresh", "execution_barriers.signal_fresh_detail"),
+                ("Pair Allowed", "execution_barriers.pair_allowed", "execution_barriers.pair_allowed_detail"),
+                ("Daily Limit", "execution_barriers.daily_limit_ok", "execution_barriers.daily_limit_detail"),
+                ("MT5 Account", "execution_barriers.account_ok", "execution_barriers.account_detail"),
+                ("R:R Allowed", "execution_barriers.rr_ok", "execution_barriers.rr_detail"),
+                ("Free Margin", "execution_barriers.free_margin_ok", "execution_barriers.free_margin_detail"),
+                ("Portfolio Cap", "execution_barriers.portfolio_risk_ok", "execution_barriers.portfolio_risk_detail"),
+                ("Spread OK", "execution_barriers.spread_ok", "execution_barriers.spread_detail")
+            };
+
+            var failed = new List<string>();
+            foreach (var barrier in barriers)
+            {
+                bool ok = snapshot.SelectToken(barrier.FlagPath)?.Value<bool?>() == true;
+                if (ok)
+                    continue;
+
+                string detail = snapshot.SelectToken(barrier.DetailPath)?.ToString(Formatting.None).Trim('"') ?? "No detail available";
+                failed.Add($"{barrier.Label}: {detail}");
+            }
+
+            return failed;
+        }
+
         private static (Color Fg, Color Bg) ReviewValueStyle(string path, JToken? token)
         {
             var critFg = Color.FromArgb(255, 95,  95);  var critBg = Color.FromArgb(72,  16, 16);
@@ -2937,14 +3691,14 @@ SAFETY RULES:
             var normFg = Color.FromArgb(200, 210, 235); var normBg = Color.FromArgb(20,  24, 40);
             var dimFg  = Color.FromArgb(88,  96,  120); var dimBg  = Color.FromArgb(15,  17, 25);
 
-            // Ignorable — metadata / static config
+            // Ignorable - metadata / static config
             if (path is "symbol.digits" or "symbol.min_lot" or "symbol.max_lot" or "symbol.lot_step"
                      or "symbol.execution_mode" or "symbol.filling_mode"
                      or "last_order.ticket" or "news.source" or "levels.key_level_type"
                      or "account.daily_trades_taken" or "session.session_name")
                 return (dimFg, dimBg);
 
-            // Info-only — price levels, indicators, candle data
+            // Info-only - price levels, indicators, candle data
             if (path is "price.bid" or "price.ask" or "price.daily_open" or "price.daily_high"
                      or "price.daily_low" or "price.daily_range_pips" or "price.prev_day_high"
                      or "structure.swing_high" or "structure.swing_low"
@@ -2965,7 +3719,13 @@ SAFETY RULES:
             bool   boolVal = token.Type == JTokenType.Boolean && token.Value<bool>();
             bool   isNum   = double.TryParse(raw, NumberStyles.Any, CultureInfo.InvariantCulture, out double num);
 
-            // ── Boolean fields ────────────────────────────────────────
+            if (path.StartsWith("execution_barriers.", StringComparison.OrdinalIgnoreCase) &&
+                token.Type == JTokenType.Boolean)
+            {
+                return boolVal ? (goodFg, goodBg) : (critFg, critBg);
+            }
+
+            // â"€â"€ Boolean fields â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
             switch (path)
             {
                 case "session.terminal_connected":
@@ -3000,7 +3760,7 @@ SAFETY RULES:
                     return boolVal ? (goodFg, goodBg) : (normFg, normBg);
             }
 
-            // ── Numeric fields ────────────────────────────────────────
+            // â"€â"€ Numeric fields â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
             if (isNum)
             {
                 if (path.Contains("pnl", StringComparison.OrdinalIgnoreCase) ||
@@ -3052,7 +3812,7 @@ SAFETY RULES:
                     return num == 0 ? (dimFg, dimBg) : (normFg, normBg);
             }
 
-            // ── String fields ─────────────────────────────────────────
+            // â"€â"€ String fields â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
             if (path == "news.news_risk_level")
                 return raw.ToUpperInvariant() switch
                 {
@@ -3301,16 +4061,17 @@ SAFETY RULES:
                         foreach (var btn in card.Controls.OfType<Button>())
                             switch (btn.Tag?.ToString())
                             {
+                                case "json":
+                                    btn.Enabled = true;
+                                    break;
                                 case "delete":
                                     btn.Enabled = info.Status != SignalCardStatus.Executing;
                                     break;
                                 case "close":
-                                    btn.Visible = info.Status == SignalCardStatus.Executed && info.Ticket > 0;
-                                    btn.Enabled = true;
+                                    btn.Enabled = info.Status == SignalCardStatus.Executed && info.Ticket > 0;
                                     break;
                                 case "execute":
-                                    btn.Visible = CanExecuteSignal(info);
-                                    btn.Enabled = true;
+                                    btn.Enabled = CanExecuteSignal(info);
                                     break;
                             }
                 }
@@ -3347,7 +4108,7 @@ SAFETY RULES:
 
                 if (_bot == null)
                 {
-                    Log("[BOT] Click 'Start Monitoring' first so the app validates settings and loads the signal row.", C_YELLOW);
+                    Log("[BOT] Auto watcher is not ready yet. Connect MT5 and confirm the watch folder path.", C_YELLOW);
                     return;
                 }
 
@@ -3379,12 +4140,19 @@ SAFETY RULES:
                     return;
                 }
 
+                _cfg.Bot = ReadBotConfigFromUISafe();
+                _bot.UpdateConfig(_cfg.Bot);
+                await _settings.SaveAsync(_cfg).ConfigureAwait(false);
+
                 var review = await ShowTradeReviewDialogAsync(req, info).ConfigureAwait(false);
                 if (!review.Approved)
                 {
                     Log($"[BOT] Trade review cancelled for {info.FileName}.", C_YELLOW);
                     return;
                 }
+
+                if (review.LotSize > 0)
+                    req.LotSize = review.LotSize;
 
                 var executing = info with
                 {
@@ -3556,11 +4324,11 @@ SAFETY RULES:
         private static (string text, Color color) GetStatusDisplay(SignalCardInfo info) =>
             info.Status switch
             {
-                SignalCardStatus.Pending   => ("⏳  Pending",                            Color.FromArgb(250, 199, 117)),
-                SignalCardStatus.Executing => ("🔄  Executing...",                       Color.FromArgb(99,  179, 237)),
-                SignalCardStatus.Executed  => ($"✅  {info.StatusText}",                 Color.FromArgb(72,  199, 142)),
-                SignalCardStatus.Rejected  => ($"❌  {Truncate(info.StatusText, 40)}",   Color.FromArgb(252, 95,  95)),
-                SignalCardStatus.Error     => ($"⚠   {Truncate(info.StatusText, 40)}",   Color.FromArgb(250, 150, 50)),
+                SignalCardStatus.Pending   => ("Pending",                            Color.FromArgb(250, 199, 117)),
+                SignalCardStatus.Executing => ("Executing...",                       Color.FromArgb(99,  179, 237)),
+                SignalCardStatus.Executed  => ($"  {info.StatusText}",                 Color.FromArgb(72,  199, 142)),
+                SignalCardStatus.Rejected  => ($"[X]  {Truncate(info.StatusText, 40)}",   Color.FromArgb(252, 95,  95)),
+                SignalCardStatus.Error     => ($"[!]   {Truncate(info.StatusText, 40)}",   Color.FromArgb(250, 150, 50)),
                 _                          => (info.StatusText,                           Color.FromArgb(175, 175, 195))
             };
 
@@ -3593,19 +4361,64 @@ SAFETY RULES:
         }
 
         // ==========================================================
-        //  PAIR SELECTION — shared flow for manual & AI selection
+        //  PAIR SELECTION - shared flow for manual & AI selection
         // ==========================================================
 
         private async Task OnPairSelectionChangedAsync(string pair)
         {
-            var card = EnsureSignalFeedRowForPair(pair);
+            string watchFolder = _cfg.Bot.WatchFolder?.Trim() ?? "";
+            if (string.IsNullOrWhiteSpace(watchFolder))
+            {
+                Log($"[BOT] Pair selected: {pair}. Set a watch folder to generate a signal file.", C_YELLOW);
+                return;
+            }
 
-            bool aiReady = !string.IsNullOrWhiteSpace(_cfg.Claude?.ApiKey)
-                        && !_cfg.Claude.ApiKey.StartsWith("sk-ant-..")
-                        && _cfg.Claude.ApiKey.Length > 20;
+            try
+            {
+                SymbolInfo? sym  = null;
+                AccountInfo? acct = null;
+                if (_bridge?.IsConnected == true)
+                {
+                    try { sym  = await _bridge.GetSymbolInfoAsync(pair).ConfigureAwait(false); } catch { }
+                    try { acct = await _bridge.GetAccountInfoAsync().ConfigureAwait(false); }   catch { }
+                }
 
-            if (aiReady)
-                await RunDecisionAnalysisForPairAsync(pair, card).ConfigureAwait(false);
+                double ask    = sym?.Ask ?? 0;
+                double entry  = ask;
+                int    digits = sym?.Digits ?? 5;
+                double pip    = (digits == 3 || digits == 1) ? 0.01 : 0.0001;
+                double slPips = 20.0;
+                double sl     = entry > 0 ? Math.Round(entry - slPips * pip, digits) : 0;
+                double tp     = entry > 0 ? Math.Round(entry + slPips * 2 * pip, digits) : 0;
+
+                double equity = acct?.Equity ?? 0;
+                double lots   = 0.01;
+                if (entry > 0 && sl > 0 && equity > 0)
+                    lots = LotCalculator.Calculate(equity, _cfg.Bot.MaxRiskPercent, entry, sl, pair);
+
+                var signal = new TradeRequest
+                {
+                    Pair      = pair,
+                    TradeType = TradeType.BUY,
+                    EntryPrice = entry,
+                    StopLoss  = sl > 0 ? sl : Math.Round(entry * 0.999, digits),
+                    TakeProfit = tp > 0 ? tp : Math.Round(entry * 1.002, digits),
+                    LotSize   = Math.Max(0.01, lots),
+                    Comment   = $"PairSelect_{pair}",
+                    CreatedAt = DateTime.UtcNow
+                };
+
+                Directory.CreateDirectory(watchFolder);
+                string filename = $"Pair_{pair}_{DateTime.Now:yyyyMMdd_HHmmss}.json";
+                string filepath = Path.Combine(watchFolder, filename);
+                string json     = JsonConvert.SerializeObject(signal, Formatting.Indented);
+                await Task.Run(() => File.WriteAllText(filepath, json)).ConfigureAwait(false);
+                Log($"[BOT] Signal file written for {pair}: {filename}", C_ACCENT);
+            }
+            catch (Exception ex)
+            {
+                Log($"[BOT] Error creating signal for {pair}: {ex.Message}", C_RED);
+            }
         }
 
         private Panel EnsureSignalFeedRowForPair(string pair)
@@ -3661,20 +4474,20 @@ SAFETY RULES:
                 Tag       = info
             };
 
-            // Left purple stripe — distinguishes pair analysis rows from file-based signal cards
+            // Left purple stripe - distinguishes pair analysis rows from file-based signal cards
             card.Controls.Add(new Panel { Width = 5, Dock = DockStyle.Left, BackColor = Color.FromArgb(130, 100, 255) });
 
             card.Controls.Add(new Label
             {
                 Name      = "lblPairHeader",
-                Text      = $"📊  {info.Pair}",
+                Text      = $"  {info.Pair}",
                 Font      = new Font("Segoe UI Semibold", 10.5F, FontStyle.Bold),
                 ForeColor = Color.FromArgb(180, 160, 255),
                 Location  = new Point(14, 8),
                 AutoSize  = true
             });
 
-            var btnRemove = MakeCardButton("✕", Color.FromArgb(80, 30, 30), Color.FromArgb(252, 95, 95), "Remove this row");
+            var btnRemove = MakeCardButton("X", Color.FromArgb(80, 30, 30), Color.FromArgb(252, 95, 95), "Remove this row");
             btnRemove.Anchor   = AnchorStyles.Top | AnchorStyles.Right;
             btnRemove.Location = new Point(w - 28, 8);
             btnRemove.Click   += (_, _) =>
@@ -3737,7 +4550,7 @@ SAFETY RULES:
                 switch (c.Name)
                 {
                     case "lblPairHeader":
-                        string icon = info.Direction switch { "BUY" => "▲", "SELL" => "▼", _ => "📊" };
+                        string icon = info.Direction switch { "BUY" => "BUY", "SELL" => "SELL", _ => "" };
                         c.Text      = $"{icon}  {info.Pair}";
                         c.ForeColor = info.Direction switch
                         {
@@ -3785,7 +4598,7 @@ SAFETY RULES:
         private string? FindDropdownPair(string aiPair)
         {
             if (string.IsNullOrWhiteSpace(aiPair)) return null;
-            var items = _clbAllowedPairs.Items.Cast<string>().ToList();
+            var items = _cmbAllowedPair.Items.Cast<string>().ToList();
 
             // 1. Exact match (case-insensitive)
             var exact = items.FirstOrDefault(i => string.Equals(i, aiPair, StringComparison.OrdinalIgnoreCase));
@@ -3801,13 +4614,13 @@ SAFETY RULES:
                 aiPair.StartsWith(i, StringComparison.OrdinalIgnoreCase));
         }
 
-        private void ProgrammaticallyCheckPair(string pair)
+        private void ProgrammaticallySelectPair(string pair)
         {
-            for (int i = 0; i < _clbAllowedPairs.Items.Count; i++)
+            for (int i = 0; i < _cmbAllowedPair.Items.Count; i++)
             {
-                if (string.Equals(_clbAllowedPairs.Items[i]?.ToString(), pair, StringComparison.OrdinalIgnoreCase))
+                if (string.Equals(_cmbAllowedPair.Items[i]?.ToString(), pair, StringComparison.OrdinalIgnoreCase))
                 {
-                    _clbAllowedPairs.SetItemChecked(i, true);
+                    _cmbAllowedPair.SelectedIndex = i;
                     break;
                 }
             }
@@ -3906,7 +4719,7 @@ SAFETY RULES:
                 }
 
                 var sb = new System.Text.StringBuilder();
-                sb.AppendLine($"=== SINGLE PAIR ANALYSIS — {pair} — {DateTime.UtcNow:yyyy-MM-dd HH:mm:ss} UTC ===");
+                sb.AppendLine($"=== SINGLE PAIR ANALYSIS - {pair} - {DateTime.UtcNow:yyyy-MM-dd HH:mm:ss} UTC ===");
                 sb.AppendLine($"Account: Balance=${account.Balance:F2}  Equity=${account.Equity:F2}  Free Margin=${account.FreeMargin:F2}");
                 sb.AppendLine($"Symbol:  Ask={symInfo.Ask:F5}  Bid={symInfo.Bid:F5}  Spread={symInfo.SpreadPips:F1} pips");
                 sb.AppendLine($"Open Positions: {positions.Count}");
@@ -4010,7 +4823,7 @@ SAFETY RULES:
         private const string AiPairSelectionSystemPrompt = """
             You are an FX pair selector. Given live spread and score data for multiple symbols, select
             the single best pair to trade right now. Only pick from pairs where available = true.
-            Return ONLY a valid JSON object — no markdown, no explanatory text outside the JSON.
+            Return ONLY a valid JSON object - no markdown, no explanatory text outside the JSON.
 
             Output format:
             {
@@ -4042,7 +4855,7 @@ SAFETY RULES:
             - selected_pair must exactly match one entry from the available_pairs list
             """;
 
-        // ── Inner data classes ────────────────────────────────────────────
+        // â"€â"€ Inner data classes â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
 
         internal sealed class PairAnalysisInfo
         {
@@ -4056,6 +4869,16 @@ SAFETY RULES:
             public string   Status      { get; set; } = "Waiting for Analysis";
             public DateTime LastUpdated { get; set; } = DateTime.Now;
             public string   ShortReason { get; set; } = "Pair selected";
+        }
+
+        private sealed class LotSizeOption(string name, double size, string units, string pipValue)
+        {
+            public string Name     { get; } = name;
+            public double Size     { get; } = size;
+            public string Units    { get; } = units;
+            public string PipValue { get; } = pipValue;
+
+            public override string ToString() => $"{Name}  {Size:F2}  |  {Units}  |  {PipValue}";
         }
 
         internal sealed class AiPairSelectionResult
