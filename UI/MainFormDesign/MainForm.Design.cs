@@ -25,7 +25,6 @@ namespace MT5TradingBot.UI
 
             ConfigureRootLayout();
             ConfigureHeaderLayout();
-            ConfigureTradeTabLayout();
             ConfigureGridTabLayout(_tabPositions, "_positionsLayout", _gridPos, _btnClosePos, _btnCloseAllPos, _btnRefreshPos);
             ConfigureGridTabLayout(_tabHistory, "_historyLayout", _gridHistory, _btnImportHistory, _btnClearHistory);
             ConfigureBotTabLayout();
@@ -226,11 +225,14 @@ namespace MT5TradingBot.UI
             _lblBotBadge.TextAlign = ContentAlignment.MiddleLeft;
 
             // ── Row 1: buttons ───────────────────────────────────
+            _btnStopScalping.Text     = "Stop Scalping";
+            _btnStopScalping.Enabled  = false;
+            _btnStopScalping.Size     = new Size(138, 38);
             _btnBotSettings.Size    = new Size(130, 38);
             _btnBotInstructions.Size = new Size(150, 38);
             _btnAnalyzePairs.Size   = new Size(150, 38);
             var botButtons = CreateButtonRow("_botButtons",
-                _btnAnalyzePairs, _btnBotSettings, _btnBotInstructions);
+                _btnAnalyzePairs, _btnStopScalping, _btnBotSettings, _btnBotInstructions);
 
             // ── Row 2: Watch Folder ──────────────────────────────
             var pnlFolder = new Panel
@@ -632,6 +634,7 @@ namespace MT5TradingBot.UI
             StylePrimaryButton(_btnSell, C_RED);
             StylePrimaryButton(_btnStartBot, C_GREEN);
             StylePrimaryButton(_btnStopBot, C_RED);
+            StylePrimaryButton(_btnStopScalping, C_RED);
             StylePrimaryButton(_btnBotSettings, C_ACCENT);
             StylePrimaryButton(_btnAnalyzePairs, C_ACCENT);
             StylePrimaryButton(_btnStartClaude, C_GREEN);

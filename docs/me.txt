@@ -1,0 +1,5 @@
+
+Read the file docs/audit/AUDIT_PROMPT.md and follow every
+instruction in it. Read all .cs files in the solution first,
+then generate both output documents exactly as specified.
+Save AUDIT_REPORT.md and FEATURE_BACKLOG.md to docs/audit/

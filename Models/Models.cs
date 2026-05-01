@@ -25,6 +25,11 @@ namespace MT5TradingBot.Models
 
     public enum SignalCardStatus { Pending, Executing, Executed, Rejected, Error }
 
+    // Monitor=0  ManualApproval=1  FullAuto=2  (index order must not change — ReviewTradeForm uses cast)
+    public enum BotMode { Monitor, ManualApproval, FullAuto }
+
+    public enum ScalpingDirectionMode { Auto, SignalDirection, BuyOnly, SellOnly }
+
     public sealed record class SignalCardInfo
     {
         public string          SignalId    { get; init; } = "";
@@ -77,6 +82,9 @@ namespace MT5TradingBot.Models
 
         [JsonProperty("lot_size")]
         public double LotSize { get; set; } = 0.01;
+
+        [JsonProperty("max_spread_pips")]
+        public double MaxSpreadPips { get; set; } = 0;
 
         [JsonProperty("comment")]
         public string Comment { get; set; } = "MT5Bot";
@@ -228,6 +236,13 @@ namespace MT5TradingBot.Models
         [JsonProperty("max_trades_per_day")]
         public int MaxTradesPerDay { get; set; } = 5;
 
+        /// <summary>
+        /// Maximum number of simultaneously open positions managed by this bot
+        /// (matched by MagicNumber). 0 = disabled (no cap).
+        /// </summary>
+        [JsonProperty("max_concurrent_positions")]
+        public int MaxConcurrentPositions { get; set; } = 3;
+
         [JsonProperty("allowed_pairs")]
         public List<string> AllowedPairs { get; set; } = [];
 
@@ -273,12 +288,99 @@ namespace MT5TradingBot.Models
         public double MaxSlippagePips { get; set; } = 3.0;
 
         /// <summary>
+        /// Price must move this fraction of the TP distance before SL is moved to breakeven.
+        /// 0.6 = 60% of the way to TP. Range: 0.1 to 1.0.
+        /// </summary>
+        [JsonProperty("sl_to_be_trigger_pct")]
+        public double SlToBeTrigerPct { get; set; } = 0.6;
+
+        /// <summary>
         /// Broker symbol suffix appended to pair names before sending to MT5 (e.g. "m" → GBPUSDm).
         /// Leave empty for brokers that use plain names (GBPUSD). The EA also resolves suffixes
         /// automatically, but setting this avoids a round-trip failure on GetSymbolInfo.
         /// </summary>
         [JsonProperty("symbol_suffix")]
         public string SymbolSuffix { get; set; } = "";
+
+        /// <summary>
+        /// When true, blocks a new trade if a correlated pair is already open.
+        /// Example: blocks GBPUSD if EURUSD is already open (both are USD-quoted majors).
+        /// </summary>
+        [JsonProperty("correlation_check_enabled")]
+        public bool CorrelationCheckEnabled { get; set; } = true;
+
+        [JsonProperty("edge_monitor_enabled")]
+        public bool EdgeMonitorEnabled { get; set; } = true;
+
+        [JsonProperty("edge_window_trades")]
+        public int EdgeWindowTrades { get; set; } = 20;
+
+        [JsonProperty("min_win_rate_pct")]
+        public double MinWinRatePct { get; set; } = 40.0;
+
+        [JsonProperty("max_consecutive_losses")]
+        public int MaxConsecutiveLosses { get; set; } = 5;
+
+        [JsonProperty("operating_mode")]
+        public BotMode OperatingMode { get; set; } = BotMode.ManualApproval;
+
+        /// <summary>
+        /// When true all validation runs normally but trades are NOT sent to MT5.
+        /// Simulated fills are tracked in memory; SL/TP auto-close is detected in the heartbeat.
+        /// </summary>
+        [JsonProperty("paper_trading")]
+        public bool PaperTrading { get; set; } = false;
+
+        [JsonProperty("scalping")]
+        public ScalpingConfig Scalping { get; set; } = new();
+
+        [JsonProperty("scalping_by_pair")]
+        public Dictionary<string, ScalpingConfig> ScalpingByPair { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+    }
+
+    public sealed class ScalpingConfig
+    {
+        [JsonProperty("max_trades")]
+        public int MaxTrades { get; set; } = 3;
+
+        [JsonProperty("max_minutes")]
+        public int MaxMinutes { get; set; } = 15;
+
+        [JsonProperty("max_session_loss_usd")]
+        public double MaxSessionLossUsd { get; set; } = 20;
+
+        [JsonProperty("profit_target_usd")]
+        public double ProfitTargetUsd { get; set; } = 20;
+
+        [JsonProperty("sl_pips")]
+        public double StopLossPips { get; set; } = 10;
+
+        [JsonProperty("tp_pips")]
+        public double TakeProfitPips { get; set; } = 6;
+
+        [JsonProperty("max_spread_pips")]
+        public double MaxSpreadPips { get; set; } = 3;
+
+        [JsonProperty("poll_interval_ms")]
+        public int PollIntervalMs { get; set; } = 2000;
+
+        [JsonProperty("cooldown_seconds")]
+        public int CooldownSeconds { get; set; } = 20;
+
+        [JsonProperty("direction_mode")]
+        public ScalpingDirectionMode DirectionMode { get; set; } = ScalpingDirectionMode.Auto;
+
+        [JsonProperty("allow_pyramiding")]
+        public bool AllowPyramiding { get; set; } = false;
+
+        [JsonProperty("require_snapshot_confirmation")]
+        public bool RequireSnapshotConfirmation { get; set; } = true;
+
+        [JsonProperty("min_decision_score")]
+        public int MinDecisionScore { get; set; } = 4;
+
+        [JsonProperty("use_ai_confirmation")]
+        public bool UseAiConfirmation { get; set; } = false;
     }
 
     public sealed class PairTradingSettings
@@ -529,6 +631,21 @@ namespace MT5TradingBot.Models
 
         [JsonProperty("system_prompt")]
         public string SystemPrompt { get; set; } = DefaultPrompt;
+
+        /// <summary>
+        /// How long (minutes) a cached AI regime decision is considered fresh.
+        /// A new signal contradicting the cached direction within this window
+        /// is blocked. 0 = context manager disabled.
+        /// </summary>
+        [JsonProperty("ai_context_max_age_minutes")]
+        public int AiContextMaxAgeMinutes { get; set; } = 5;
+
+        /// <summary>
+        /// When true, a TRADE signal whose direction contradicts the cached
+        /// regime within AiContextMaxAgeMinutes is blocked with a log warning.
+        /// </summary>
+        [JsonProperty("ai_context_block_conflicts")]
+        public bool AiContextBlockConflicts { get; set; } = true;
 
         public static readonly string DefaultPrompt =
             "You are a professional FX trading analyst. Analyze the live market data and decide whether to trade.\n\n" +

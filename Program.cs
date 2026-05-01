@@ -1,4 +1,7 @@
 using Microsoft.Extensions.DependencyInjection;
+using MT5TradingBot.Data;
+using MT5TradingBot.Modules.NewsFilter;
+using MT5TradingBot.Modules.RiskManagement;
 using MT5TradingBot.Services;
 using MT5TradingBot.UI;
 using Serilog;
@@ -49,8 +52,24 @@ namespace MT5TradingBot
 
             // ── DI container ─────────────────────────────────────
             var services = new ServiceCollection();
+
+            // Singletons that have no runtime-config dependency
             services.AddSingleton<SettingsManager>();
-            var provider = services.BuildServiceProvider();
+            services.AddSingleton<INewsCalendarService, FmpNewsCalendarService>();
+            services.AddSingleton<IRiskManager, RiskManager>();
+            services.AddSingleton<IAiContextManager, AiContextManager>();
+            services.AddSingleton<ITradeRepository>(_ =>
+            {
+                string dbPath = Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+                    "MT5TradingBot", "trades.db");
+                return new SqliteTradeRepository(dbPath);
+            });
+
+            // MainForm itself - resolved so its constructor receives IServiceProvider
+            services.AddSingleton<MainForm>();
+
+            using ServiceProvider provider = services.BuildServiceProvider();
 
             // ── Splash / startup checks ───────────────────────────
             using var splash = new SplashScreen();
@@ -58,7 +77,7 @@ namespace MT5TradingBot
             if (!splash.ShouldProceed) return;
 
             // ── Run ───────────────────────────────────────────────
-            Application.Run(new MainForm());
+            Application.Run(provider.GetRequiredService<MainForm>());
 
             Log.Information("=== MT5TradingBot shutdown ===");
             Log.CloseAndFlush();

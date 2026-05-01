@@ -1,212 +1,101 @@
 # ForexBot Development Status
 
-## Completed Tasks
-- [x] Project structure reviewed
-- [x] Existing MT5 bridge identified
-- [x] Existing IPC/named pipe logic identified
-- [x] Existing UI flow identified
-- [x] Existing trade execution logic identified
-- [x] Existing risk logic identified
-- [x] Existing logging identified
-- [x] Core models created
-- [x] Core interfaces created
-- [x] Risk engine created
-- [x] Market data module created
-- [x] Pair scanner created
-- [x] Strategy engine created
-- [x] AI module skeleton created
-- [x] Signal decision module created
-- [x] User approval flow created
-- [x] Trade execution module created
-- [x] Trade monitoring worker created
-- [x] News filter created
-- [x] Backtesting module created
-- [x] Logging/audit module completed
-- [ ] Demo testing completed
+## Current Phase
+
+Phase 7 — Demo Testing
 
 ## Current Task
-Phase 7: Demo testing pending external MT5 demo-account validation
+
+Run MT5 demo-account validation.
+
+## Last Completed Task
+
+Performance tab added: SQLite closed trades can now be viewed as an equity
+curve with Last 20, Last 100, and All Time periods plus win rate, net P&L,
+max drawdown, and Sharpe stats.
+Verified with:
+
+```bash
+dotnet build "d:\Projects\MT5\MT5TradingBot.csproj" -v quiet
+```
+
+Telegram notification wrappers wired: AutoBotService now calls
+NotifyTradeOpenedAsync for successful opens and NotifyRiskBlockedAsync for
+risk-manager blocks, with the legacy trade-open log-helper notification removed
+to avoid duplicate alerts.
+Verified with:
+
+```bash
+dotnet build "d:\Projects\MT5\MT5TradingBot.csproj" -v quiet
+```
+
+Max concurrent position runtime guard added: AutoBotService now returns
+MAX_CONCURRENT_POSITIONS before risk validation or broker execution when the
+bot already has the configured number of open positions.
+Verified with:
+
+```bash
+dotnet build "d:\Projects\MT5\MT5TradingBot.csproj" -v quiet
+```
+
+Extreme slippage protection added: fills above 2x configured max slippage are
+closed immediately and Telegram alerts are sent for high/extreme slippage.
+Verified with:
+
+```bash
+dotnet build "d:\Projects\MT5\MT5TradingBot.csproj" -v quiet
+```
+
+Settings hot-reload added: SettingsManager watches settings.json for external
+changes and MainForm pushes reloaded Bot/Claude config to running services.
+Verified with:
+
+```bash
+dotnet build "d:\Projects\MT5\MT5TradingBot.csproj" -v quiet
+```
+
+Claude signal analysis now runs configured watch symbols in parallel from the
+same account and positions snapshot. Verified with:
+
+```bash
+dotnet build "d:\Projects\MT5\MT5TradingBot.csproj" -v quiet
+```
 
 ## Next Task
-Run demo testing checklist on an MT5 demo account
 
-## Notes
-Project review summary:
-- MT5 bridge: Modules/BrokerIntegration/MT5Bridge.cs
-- IPC/named pipe: currently inside Modules/BrokerIntegration/MT5Bridge.cs
-- UI: UI/MainForm.cs, UI/SplashScreen.cs, designer files
-- Trade execution: currently mixed across Services/AutoBotService.cs, UI/MainForm.cs, and MT5Bridge.OpenTradeAsync
-- Risk logic: currently inside Services/AutoBotService.cs with Core/LotCalculator.cs support
-- Logging: Serilog setup in Program.cs, direct logging in services, bridge, and UI
-- Core workflow models added: Models/WorkflowModels.cs
-- Core interface placeholders added under Modules/Ipc, Modules/MarketData, Modules/RiskManagement, Modules/SignalDecision, Modules/TradeExecution, Modules/UserApproval, and Modules/LoggingDiagnostics.
-- Risk engine added: Modules/RiskManagement/RiskManager.cs. It is not wired into runtime execution yet, so existing MT5 bridge behavior remains unchanged.
-- Market data module added: Modules/MarketData/MarketDataService.cs. It wraps read-only MT5Bridge calls and is not wired into runtime execution yet.
-- Pair scanner added: Modules/PairScanner/PairScanner.cs. It ranks configured pairs by data availability and spread only, and is not wired into runtime execution yet.
-- Strategy engine added: Modules/StrategyEngine/StrategyEngine.cs. It creates conservative HOLD initial signals only and is not wired into runtime execution yet.
-- AI analysis skeleton added: Modules/AIAnalysis/AiAnalysisService.cs. It always returns HOLD analysis and is not wired into runtime execution yet.
-- Signal decision module added: Modules/SignalDecision/SignalDecisionService.cs. It combines strategy, AI, and risk outputs for user review only, and is not wired into runtime execution yet.
-- User approval flow added: Modules/UserApproval/UserApprovalService.cs. It denies by default and only supports explicit demo auto-approval; it is not wired into runtime execution yet.
-- Trade execution module added: Modules/TradeExecution/TradeExecutionService.cs. It refuses execution unless risk validation and user approval both pass, and is not wired into runtime execution yet.
-- Trade monitoring worker added: Modules/TradeMonitoring/TradeMonitoringService.cs. It captures read-only position snapshots and is not wired into runtime execution yet.
-- News filter added: Modules/NewsFilter/NewsFilterService.cs. It checks supplied high-impact events against a blackout window and is not wired into runtime execution yet.
-- Backtesting module added: Modules/Backtesting/BacktestingService.cs. It evaluates supplied historical trades offline only and is not wired into runtime execution yet.
-- Logging/audit module added: Modules/LoggingDiagnostics/TradeAuditLogger.cs. It writes structured audit entries through Serilog and is not wired into runtime execution yet.
-- Demo testing checklist added: docs/DEMO_TESTING_CHECKLIST.md.
-- Demo testing is not marked complete because it requires live validation on an MT5 demo account.
-- UI clipping fix added for scaled/shorter Windows desktops: trade, positions, history, bot, Claude, and log tabs now support safer scrolling/anchoring, and account labels avoid overlap.
-- Account refresh diagnostic added: if MT5 returns account/server identity but Balance/Equity/Free Margin are all 0.00, the UI highlights the values and logs a demo-account funding/login hint.
-- WinForms designer compatibility fix added: MainForm.Designer.cs no longer uses implicit array creation or target-typed new expressions that Visual Studio CodeDOM failed to process at line 260.
-- Build verification completed: `dotnet build MT5TradingBot.csproj --no-restore -o .\bin\VerifyBuild` succeeds with 0 warnings and 0 errors after restoring the full designer layout.
-- Visual Studio designer compatibility pass added: MainForm.Designer.cs now instantiates controls directly instead of assigning controls from custom factory methods, removes runtime-only text generation from InitializeComponent, and builds cleanly.
-- Full factory-helper removal completed: MainForm.Designer.cs no longer contains Mk*, Setup*, or ConfigureAccountLabel helper calls; bot help/prompt runtime text is initialized in MainForm.cs after InitializeComponent.
-- Designer visibility fix added: MainForm constructor now skips runtime wiring/loading while hosted by Visual Studio designer, MainForm.Designer.cs no longer references runtime theme constants, and tab drawing stays normal at design time.
-- Root responsive layout added: MainForm now uses a top-level TableLayoutPanel with fixed header/connection/account rows and a fill row for tabs, replacing direct form-level dock stacking.
-- UI stabilization pass added: MainForm now normalizes Trade, Positions, History, Bot, Claude, and Log tabs into TableLayoutPanel/FlowLayoutPanel containers at startup so Visual Studio placeholder sizes do not mix or overlap the runtime UI.
-- Build verification completed after UI stabilization: `dotnet build MT5TradingBot.csproj --no-restore -o .\bin\VerifyBuild` succeeds with 0 warnings and 0 errors.
-- UI/UX polish pass added: MainForm now applies centralized fonts, colors, label alignment, input/button sizing, account/connection bar positions, trade ticket layout, bot settings layout, Claude settings layout, data-grid styling, margins, and padding across all tabs.
-- Build verification completed after UI/UX polish: `dotnet build MT5TradingBot.csproj --no-restore -o .\bin\VerifyBuild` succeeds with 0 warnings and 0 errors.
-- Tab header clipping fix added: MainForm now uses a taller fixed tab item size and vertically centered TextRenderer drawing so tab captions are not cut at the bottom.
-- Build verification completed after tab header fix: `dotnet build MT5TradingBot.csproj --no-restore -o .\bin\VerifyBuild` succeeds with 0 warnings and 0 errors.
-- UI design separation completed: MainForm layout/theme/drawing helpers moved into UI/MainFormDesign/MainForm.Design.cs as a partial class, leaving MainForm.cs focused on constructor flow, event wiring, and runtime behavior.
-- Build verification completed after design separation: `dotnet build MT5TradingBot.csproj --no-restore -o .\bin\VerifyBuild` succeeds with 0 warnings and 0 errors.
-- Mojibake cleanup completed: corrupted encoding text in MainForm.cs and AGENTS.md was replaced with readable ASCII comments, labels, log prefixes, and help text.
-- Build verification completed after mojibake cleanup: `dotnet build MT5TradingBot.csproj --no-restore -o .\bin\VerifyBuild` succeeds with 0 warnings and 0 errors.
-- Auto Bot signal diagnostics added: Start Bot now logs the watch folder, pending JSON files, MT5 account summary, and current open-position count before starting the watcher.
-- Auto Bot execution progress added: signal detection/read/parse/execution/archive steps are logged, and the UI refreshes MT5 account/position status after each accepted or rejected bot trade.
-- MT5 trade payload compatibility fixed: signal files can keep snake_case JSON fields, while MT5Bridge now sends PascalCase fields required by TradingBotEA.mq5.
-- Demo signal check completed: `C:\MT5Bot\signals\est_signal_001.json` was not pending; it had been moved to `C:\MT5Bot\signals\rejected`, and `trade_history.csv` showed `INVALID_PAIR: Pair is empty`.
-- Build verification completed after Auto Bot diagnostics/payload fix: `dotnet build MT5TradingBot.csproj --no-restore -o .\bin\VerifyBuild` succeeds with 0 warnings and 0 errors.
-- Auto Bot start feedback improved: pressing Start Bot now immediately updates the Bot tab badge, logs the button press, reports missing MT5 connection/watch-folder issues on the badge, and catches start failures with a visible error log.
-- Bot tab checkbox visibility fixed: Auto Lot, Enforce R:R, Drawdown Protection, and Auto Start checkbox captions are now assigned in the designer and styled with explicit readable colors at runtime.
-- Demo signal location rechecked: `C:\MT5Bot\signals\est_signal_001.json` still does not exist in the watch folder, so there is currently no pending signal file for Auto Bot to execute.
-- Build verification completed after Auto Bot UI feedback fixes: `dotnet build MT5TradingBot.csproj --no-restore -o .\bin\VerifyBuild` succeeds with 0 warnings and 0 errors.
-- MT5 OPEN_TRADE IPC payload fix completed: MT5Bridge now sends the PascalCase trade payload as a JSON string for `OPEN_TRADE`, matching TradingBotEA.mq5's existing `JsonStr(json, "data")` parsing behavior and preventing the EA from truncating nested trade data before `Pair`.
-- Build verification completed after OPEN_TRADE IPC payload fix: `dotnet build MT5TradingBot.csproj --no-restore -o .\bin\VerifyBuild` succeeds with 0 warnings and 0 errors.
-- MT5 EA broker-symbol resolver added: TradingBotEA.mq5 now resolves generic pairs such as `GBPUSD` to broker-specific symbols that start with that pair, such as `GBPUSDm`, `GBPUSDc`, or `GBPUSD.pro`, and applies the same resolver to `GET_SYMBOL_INFO`.
-- C# build verification completed after EA symbol-resolver change: `dotnet build MT5TradingBot.csproj --no-restore -o .\bin\VerifyBuild` succeeds with 0 warnings and 0 errors. MQL5 compile was not run from the shell because `metaeditor.exe`/`metaeditor64.exe` was not available on PATH.
-- MT5 EA deployment helper added: `scripts/Deploy-MT5EA.ps1` can list MT5 terminal data folders, copy `MT5_EA/TradingBotEA.mq5` into `MQL5\Experts`, and compile it with MetaEditor.
-- EA automated deploy verified: helper detected `C:\Users\A\AppData\Roaming\MetaQuotes\Terminal\D0E8209F77C8CF37AD8BF550E51FF075`, copied the EA, and compiled `TradingBotEA.ex5` with `0 errors, 0 warnings`.
-- Deprecated MQL5 account constant replaced: `ACCOUNT_FREEMARGIN` was updated to `ACCOUNT_MARGIN_FREE`.
-- C# build verification completed after deployment helper: `dotnet build MT5TradingBot.csproj --no-restore -o .\bin\VerifyBuild` succeeds with 0 warnings and 0 errors.
-- EA deploy status notification added: `scripts/Deploy-MT5EA.ps1` now writes `%APPDATA%\MT5TradingBot\ea_deploy_status.json`, and MainForm reads it on startup/connect to log that TradingBotEA compiled successfully and must be reloaded in MT5.
-- EA deploy status verified: deploy helper wrote the status file after compiling with `0 errors, 0 warnings`.
-- Build verification completed after EA deploy notification: `dotnet build MT5TradingBot.csproj --no-restore -o .\bin\VerifyBuild` succeeds with 0 warnings and 0 errors.
-- App icon added: generated `Assets/AppIcon.ico` and `Assets/AppIcon.png` with a trading chart/candlestick motif, set `Assets/AppIcon.ico` as the executable icon, and applied it to MainForm and SplashScreen through `UI/AppIcon.cs`.
-- Build verification completed after app icon update: `dotnet build MT5TradingBot.csproj --no-restore -o .\bin\VerifyBuild` succeeds with 0 warnings and 0 errors.
-- Auto Bot signal-card Execute button fixed: play button now uses a guarded execution path that logs click/start/result, resolves stale signal file paths across watch/rejected/error/executed folders, updates card status safely from background continuations, archives the signal after execution, and shows visible card errors instead of failing silently.
-- Build verification completed after signal-card Execute fix: `dotnet build MT5TradingBot.csproj --no-restore -o .\bin\VerifyBuild` succeeds with 0 warnings and 0 errors.
-- Auto Bot manual execution requirement enforced: Start Monitoring now only validates settings, watches the signal folder, and creates/updates signal rows; trade placement is explicitly started from the signal-row Play button.
-- AutoBotService now defaults to manual-execute-only mode so monitoring cannot auto-place trades if a caller forgets to set the flag.
-- Build verification completed after manual Play-button enforcement: `dotnet build MT5TradingBot.csproj --no-restore -o .\bin\VerifyBuild` succeeds with 0 warnings and 0 errors.
-- Auto Bot duplicate execution fix added: signal-row Play clicks are now guarded per signal ID, and TP2 no longer splits one approval into two MT5 orders; one Play click opens one trade using the main take-profit.
-- Build verification completed after duplicate execution fix: `dotnet build MT5TradingBot.csproj --no-restore -o .\bin\VerifyBuild` succeeds with 0 warnings and 0 errors.
-- Auto Bot trade row controls added: Play is shown only for executable pending signal rows, status colors are neutral, running trade P/L is displayed prominently in green/red, and each executed row now has Auto close, pip target, and calculated money target controls.
-- Auto close behavior added for running signal-card trades: when enabled, target pips of 0 closes as soon as the trade is profitable; positive target pips closes after that pip profit is reached.
-- Build verification completed after trade row P/L and auto-close controls: `dotnet build MT5TradingBot.csproj --no-restore -o .\bin\VerifyBuild` succeeds with 0 warnings and 0 errors.
-- Auto Bot trade row completion pass added: auto-close controls are disabled until a row has an MT5 ticket, checking Auto close or editing pips triggers an immediate position refresh/check, and routine card refreshes no longer cause repeated auto-close refresh loops.
-- Build verification completed after trade row completion pass: `dotnet build MT5TradingBot.csproj --no-restore -o .\bin\VerifyBuild` succeeds with 0 warnings and 0 errors.
-- Auto Bot row visibility/control fix added: Auto close checkbox styling is now high contrast, pips and money targets use NumericUpDown controls, money and pips stay synchronized, money target drives auto-close, and executed rows can recover a missing ticket by matching the current MT5 position by pair/direction.
-- Build verification completed after auto-close visibility and target controls: `dotnet build MT5TradingBot.csproj --no-restore -o .\bin\VerifyBuild` succeeds with 0 warnings and 0 errors.
-- Auto Bot row P/L clipping fix added: P/L now has a full-width row with a wider performance indicator and the auto-close controls were moved lower to prevent overlap.
-- Build verification completed after Auto Bot row P/L layout fix: `dotnet build MT5TradingBot.csproj --no-restore -o .\bin\VerifyBuild` succeeds with 0 warnings and 0 errors.
-- AI API configuration tab update added: the Claude AI tab is now labeled AI API Config, copy/buttons describe AI API monitoring/configuration, bot startup performs a no-token AI API configuration check, and the splash checklist includes AI API Configuration.
-- Build verification completed after AI API config/status update: `dotnet build MT5TradingBot.csproj --no-restore -o .\bin\VerifyBuild` succeeds with 0 warnings and 0 errors.
-- Auto Bot Play review window added: signal-row Play now opens a live MT5 trade review dialog with account, session, symbol, price, positions, and risk JSON before execution; the dialog includes Auto close, pips target, money target, and a final Play / Start Trade button.
-- Review dialog auto-close targets are applied back to the signal row after a successful MT5 ticket, so the existing row auto-close monitor can close by money or pips.
-- Current review dialog marks candles, indicators, structure, levels, history, and news as unavailable because the current EA exposes account/symbol/positions only; a future EA snapshot command is needed for those live fields.
-- Build verification completed after Auto Bot Play review dialog: `dotnet build MT5TradingBot.csproj --no-restore -o .\bin\VerifyBuild` succeeds with 0 warnings and 0 errors.
-- MT5 EA market snapshot command added: `GET_MARKET_SNAPSHOT` now returns MT5-sourced account, session, symbol, price, candle, indicator, structure, level, position, history, and risk fields for the Auto Bot Play review window.
-- Desktop bridge integration added: `MT5Bridge.GetMarketSnapshotAsync` sends the trade/risk context to the EA as a JSON string, and MainForm uses the EA snapshot before falling back to the older local review snapshot.
-- EA automated deploy verified after snapshot update: `scripts/Deploy-MT5EA.ps1` copied and compiled `TradingBotEA.ex5` with 0 errors and 0 warnings. MT5 still needs the EA reloaded/reattached on the chart to use the new command.
-- Build verification completed after EA snapshot integration: `dotnet build MT5TradingBot.csproj --no-restore -o .\bin\VerifyBuild` succeeds with 0 warnings and 0 errors.
-- Auto Bot Play review UI updated: the raw JSON view was replaced with grouped live labels for account, price, trade risk, symbol, session, indicators, candles, structure, levels, positions, and news while keeping the latest JSON snapshot in the dialog backend.
-- Review dialog live refresh added: while the review window is open it refreshes `GET_MARKET_SNAPSHOT` every 2.5 seconds and updates the visible labels with the latest MT5 values.
-- Build verification completed after grouped review UI: `dotnet build MT5TradingBot.csproj --no-restore -o .\bin\VerifyBuild` succeeds with 0 warnings and 0 errors.
-- Auto Bot tab action row updated: Stop Bot was removed from the visible Auto Bot controls, Start Monitoring, Analysys pairs, Open Folder, and How It Works now sit in a top button row, and the settings/signal areas remain scrollable below.
-- Analysys pairs action added: the button uses the existing read-only market data and pair scanner modules to rank configured pairs and log spread/score/availability without placing trades.
-- Build verification completed after Auto Bot button/layout update: `dotnet build MT5TradingBot.csproj -p:UseAppHost=false -o obj\verify-build` succeeds with 0 warnings and 0 errors.
-- AI API Config tab expanded into a multi-service configuration panel: Claude/OpenAI provider settings, news/calendar API settings, Telegram notification settings, behavior controls, and per-service configuration checks are now visible and persisted.
-- External API settings model added through `ApiIntegrationConfig`; these settings are configuration-only for now except the existing Claude monitor/test path, so no new AI provider, news, or notification service can execute trades.
-- Build verification completed after AI API Config expansion: `dotnet build MT5TradingBot.csproj -p:UseAppHost=false -o obj\verify-build` succeeds with 0 warnings and 0 errors.
-- Auto Bot settings layout updated: Allowed Pairs was moved to the top of the Bot Configuration panel, with watch folder/risk/retry/drawdown settings shifted below it.
-- Build verification completed after Allowed Pairs layout update: `dotnet build MT5TradingBot.csproj --no-restore -o .\bin\VerifyBuild` succeeds with 0 warnings and 0 errors.
-- Auto Bot allowed pair selector changed from a checked list to a single-select dropdown; the previous checked-item behavior now runs from `SelectedIndexChanged`, and selected pair is saved as the allowed pair list for existing risk/execution modules.
-- Build verification completed after allowed pair dropdown conversion: `dotnet build MT5TradingBot.csproj --no-restore -o .\bin\VerifyBuild` succeeds with 0 warnings and 0 errors.
-- Auto Bot watch-folder selector updated: the folder button was removed from the top action row, placed beside the Watch Folder textbox, renamed to Select Folder, and now opens a folder picker that updates the textbox value.
-- Build verification completed after watch-folder selector update: `dotnet build MT5TradingBot.csproj --no-restore -o .\bin\VerifyBuild` succeeds with 0 warnings and 0 errors.
-- Auto Bot monitoring made automatic: the manual Start Monitoring button was removed from the visible action row, the main form starts/restarts folder watching on load, MT5 connect, and watch-folder changes, and signal rows update continuously from FileSystemWatcher plus polling.
-- Splash startup checks now include the signal watch folder: the folder is created/validated and pending JSON count is shown before the main form opens.
-- Build verification completed after automatic watcher update: `dotnet build MT5TradingBot.csproj --no-restore -o .\bin\VerifyBuild` succeeds with 0 warnings and 0 errors.
-- MT5 connection controls moved from the top form bar into the AI API Config tab as an MT5 Connection Settings panel, leaving the top area focused on connection status/account information.
-- AI API Config prompt editor removed from the visible UI; AI analysis now uses the built-in default prompt instead of a large editable system-prompt textbox.
-- Build verification completed after moving connection settings/removing prompt editor: `dotnet build MT5TradingBot.csproj --no-restore -o .\bin\VerifyBuild` succeeds with 0 warnings and 0 errors.
-- Review Trade input prompt added: the Input Prompt button now opens the same popup viewer with the full forex analyst prompt filled from the current live market snapshot JSON, while View JSON remains the raw backend snapshot.
-- Ask AI now sends the same filled prompt that the Input Prompt popup displays, and the response parser accepts the new `action: TRADE/NO_TRADE` JSON format.
-- Build verification completed after Review Trade prompt update: `dotnet build MT5TradingBot.csproj --no-restore -o .\bin\VerifyBuild` succeeds with 0 warnings and 0 errors.
-- Review Trade prompt overrides fixed: Input Prompt and Ask AI now use the current lot size NumericUpDown value for `risk.calculated_lot` and the selected leverage dropdown value for `account.leverage`, instead of only using the original MT5 snapshot values.
-- Build verification completed after prompt override fix: `dotnet build MT5TradingBot.csproj --no-restore -o .\bin\VerifyBuild` succeeds with 0 warnings and 0 errors.
-- Review Trade lot-size selector changed from a numeric input to a predefined dropdown: Micro Lot 0.01 / 1,000 units, Mini Lot 0.10 / 10,000 units, and Standard Lot 1.00 / 100,000 units. Prompt generation, AI analysis, trade approval, and auto-close money/pip conversion now use the selected dropdown value.
-- Build verification completed after lot-size dropdown update: `dotnet build MT5TradingBot.csproj --no-restore -o .\bin\VerifyBuild` succeeds with 0 warnings and 0 errors.
-- Review Trade AI prompt output schema simplified: the prompt now requires the exact signal-file JSON shape (`pair`, `trade_type`, `order_type`, `entry_price`, `stop_loss`, `take_profit`, `take_profit_2`, `lot_size`, `comment`, `magic_number`, `move_sl_to_be_after_tp1`) with no extra fields.
-- AI response approval parsing updated so `trade_type: BUY` or `SELL` is accepted as the trade decision, while `trade_type: NO_TRADE` still blocks execution.
-- Build verification completed after AI output schema update: `dotnet build MT5TradingBot.csproj --no-restore -o .\bin\VerifyBuild` succeeds with 0 warnings and 0 errors.
-- Review Trade execution barriers added: the Play / Start Trade dialog now shows a top Trade Barriers group with green/red checks for signal validity, signal expiry, allowed pair, daily limit, MT5 account data, R:R, free margin, portfolio risk cap, and spread before execution.
-- Review Trade risk preview now recalculates calculated lot, dollar risk, TP profit, R:R, and portfolio cap when the selected lot changes, and the AI Input Prompt receives the same updated snapshot values.
-- Build verification completed after Review Trade barrier checklist: `dotnet build MT5TradingBot.csproj --no-restore -o .\bin\VerifyBuild` succeeds with 0 warnings and 0 errors.
-- Review Trade barrier rows now show current value vs base threshold/requirement inside the same green/red Trade Barriers group.
-- Build verification completed after barrier value display update: `dotnet build MT5TradingBot.csproj --no-restore -o .\bin\VerifyBuild` succeeds with 0 warnings and 0 errors.
-- Allowed pair sync fixed: changing the Trading Pair dropdown now immediately refreshes saved bot config and the running AutoBotService config, and the Detail/Play review path refreshes it again before building Trade Barriers.
-- Build verification completed after allowed-pair sync fix: `dotnet build MT5TradingBot.csproj --no-restore -o .\bin\VerifyBuild` succeeds with 0 warnings and 0 errors.
-- Review Trade Start warning added: pressing Play / Start Trade now lists every failed Trade Barrier rule and asks whether to continue, while leaving the backend execution validator as the final hard safety gate.
-- Build verification completed after Start Trade warning prompt: `dotnet build MT5TradingBot.csproj --no-restore -o .\bin\VerifyBuild` succeeds with 0 warnings and 0 errors.
-- Detail/Play cross-thread fix added: the execution path now reads Bot Configuration controls through a UI-thread-safe helper after background file loading, preventing cross-thread access errors when opening the review dialog.
-- Build verification completed after Detail/Play cross-thread fix: `dotnet build MT5TradingBot.csproj --no-restore -o .\bin\VerifyBuild` succeeds with 0 warnings and 0 errors.
-- Review Trade hard-rule prompt corrected: failed Trade Barriers now show a blocking safety message instead of offering Proceed Anyway, preventing the misleading popup-close-then-row-rejected flow while preserving backend risk validation.
-- Build verification completed after hard-rule prompt correction: `dotnet build MT5TradingBot.csproj --no-restore -o .\bin\VerifyBuild` succeeds with 0 warnings and 0 errors.
-- Pair Settings module added: pair-specific trading settings are persisted under `pair_settings`, can be imported from the requested JSON shape, and are exposed through `Modules/PairSettings/IPairSettingsService.cs` and `PairSettingsService.cs`.
-- MainForm Pair Settings tab added: configured pairs are shown in a grid, with Add Pair, Edit Pair, Delete Pair, and Import JSON actions plus a separate Add/Edit dialog for all pair rule fields.
-- Pair-specific rules are now consumed by AutoBotService and RiskManager for max spread, minimum R:R, min/max SL pips, and min TP pips while preserving existing global safety checks, user approval flow, and final execution validation.
-- Review Trade snapshots/barriers now show pair-specific pip size, spread threshold, and R:R threshold when settings exist for the selected pair.
-- Build verification completed after Pair Settings feature: `dotnet build MT5TradingBot.csproj -p:UseAppHost=false -o obj\verify-build` succeeds with 0 warnings and 0 errors.
-- Pair lists centralized through Pair Settings: default Bot allowed pairs and Claude watch symbols are now empty, designer dropdown pair lists were removed, and MainForm syncs manual trade, bot trading pair, and AI watch-symbol controls from saved Pair Settings only.
-- Build verification completed after pair-list centralization: `dotnet build MT5TradingBot.csproj -p:UseAppHost=false -o obj\verify-build` succeeds with 0 warnings and 0 errors.
-- Pair Settings expanded to the full XAUUSD rule schema: acceptable spread, ATR M5/M15 min/max, spread-vs-TP percentage, key-level distance, break-even pips, trailing start/step, max slippage, recommended sessions, and avoided sessions are now persisted, imported from JSON, displayed in the grid, and editable in the Add/Edit Pair dialog.
-- Pair-specific `max_slippage_pips` and `avoid_trade_if_spread_above_percent_of_tp` are now used by AutoBotService/RiskManager where live execution validation already has the required inputs; ATR, key-level, and session fields are stored for future indicator/session-aware modules.
-- Build verification completed after expanded Pair Settings schema: `dotnet build MT5TradingBot.csproj -p:UseAppHost=false -o obj\verify-build` succeeds with 0 warnings and 0 errors.
-- Pair Settings Edit JSON save flow added: the Add/Edit Pair JSON popup now shows a Save JSON button, validates edited JSON before closing, applies it back to the pair form, and commits through the existing pair-settings save path.
-- Build verification completed after Pair Settings JSON save update: `dotnet build MT5TradingBot.csproj -p:UseAppHost=false -o obj\verify-build` succeeds with 0 warnings and 0 errors.
-- Pair Settings JSON pair-name bug fixed: Edit JSON now preserves the `pair` value even though the runtime model ignores it during normal serialization, preventing false "Pair name is required" errors for valid JSON.
-- Pair Settings session fields are now selectable in the Add/Edit Pair window: recommended and avoided sessions use checkable lists, and JSON edits select matching session values while preserving custom session names.
-- Build verification completed after Pair Settings JSON/session selector fix: `dotnet build MT5TradingBot.csproj -p:UseAppHost=false -o obj\verify-build` succeeds with 0 warnings and 0 errors.
-- Pair Settings Add/Edit labels simplified: visible field labels now use plain trading terms such as Maximum spread, Minimum stop loss, Preferred risk/reward, and Best trading sessions instead of raw JSON property names.
-- Pair Settings minimum stop-loss rule restored: `min_sl_pips` is now persisted on the model, validated in pair settings, and enforced by AutoBotService/RiskManager alongside the existing max SL and min TP rules.
-- Build verification completed after Pair Settings label/min-SL update: `dotnet build MT5TradingBot.csproj -p:UseAppHost=false -o obj\verify-build` succeeds with 0 warnings and 0 errors.
-- Review Trade labels/tooltips updated: dashboard group names and field labels now use clearer trader-facing text, each row has a hover tooltip explaining meaning and units, and the failed safety-rule popup uses the same readable rule names.
-- Build verification completed after Review Trade label/tooltip update: `dotnet build MT5TradingBot.csproj -p:UseAppHost=false -o obj\verify-build` succeeds with 0 warnings and 0 errors.
-- Review Trade readability/responsiveness polish added: remaining jargon-heavy labels were simplified, dashboard rows now have visible separators and alternating label backgrounds, hoverable rows use help cursors, and dashboard cards resize into 1-4 columns based on window width.
-- Build verification completed after Review Trade responsive row polish: `dotnet build MT5TradingBot.csproj -p:UseAppHost=false -o obj\verify-build` succeeds with 0 warnings and 0 errors.
-- Review Trade tooltips expanded: each row tooltip now explains what the value means, where the value comes from, whether it is live MT5 data, configuration, signal JSON, or calculated review data, why its color is green/yellow/red/blue/dim, and which unit/format is shown.
-- Build verification completed after Review Trade tooltip detail update: `dotnet build MT5TradingBot.csproj -p:UseAppHost=false -o obj\verify-build` succeeds with 0 warnings and 0 errors.
-- Auto Bot duplicate startup row fix added: changing or restoring the Trading Pair dropdown no longer writes a new timestamped signal JSON file, so app restart no longer creates an extra pending signal row for the selected pair.
-- Build verification completed after duplicate startup row fix: `dotnet build MT5TradingBot.csproj -p:UseAppHost=false -o obj\verify-build` succeeds with 0 warnings and 0 errors.
-- Review Trade refresh lanes added: live account/price/positions/risk safety data now refreshes every 1 second, market context refreshes every 5 seconds, slower symbol/news/history data refreshes every 60 seconds, and the sync label shows each lane's latest update age.
-- Review Trade partial snapshot merge added: fast/context/slow refreshes update only their relevant snapshot sections, then recalculate Pre-Trade Safety Checks and refresh visible labels without closing/reopening the dialog.
-- Build verification completed after Review Trade refresh-lane refactor: `dotnet build MT5TradingBot.csproj -p:UseAppHost=false -o obj\verify-build` succeeds with 0 warnings and 0 errors.
-- Financial Modeling Prep news calendar integration added: `FmpNewsCalendarService` fetches/caches economic calendar events, filters them by pair currency, impact level, and configured blackout minutes, and returns a structured `NewsRiskSnapshot`.
-- Review Trade now refreshes live/cached news risk in the slow refresh lane, shows source/reason/next event/blackout status in the News Risk group, and includes a News blackout clear row in Pre-Trade Safety Checks.
-- AutoBotService now runs the news blackout check before sending a trade to MT5; high-impact blackout blocks by default, while unavailable news data warns unless `block_trades_when_news_unavailable` is enabled.
-- Build verification completed after FMP news integration: `dotnet build MT5TradingBot.csproj -p:UseAppHost=false -o obj\verify-build` succeeds with 0 warnings and 0 errors.
-- Review Trade initial snapshot now fills the news section before the dialog opens, so View JSON and Input Prompt include FMP news data immediately instead of waiting for the slow refresh timer.
-- AI Input Prompt news fields were renamed to clearer analyst-facing names, and the prompt now includes the same Pre-Trade Safety Checks shown in the review UI.
-- Build verification completed after news prompt/snapshot update: `dotnet build MT5TradingBot.csproj -p:UseAppHost=false -o obj\verify-build` succeeds with 0 warnings and 0 errors.
-- AI Input Prompt now includes the full upcoming relevant news-event JSON and active blackout-event JSON, not only the summarized news risk/count fields.
-- Build verification completed after adding event-level news data to the prompt: `dotnet build MT5TradingBot.csproj -p:UseAppHost=false -o obj\verify-build` succeeds with 0 warnings and 0 errors.
-- Review Trade AI-completion flow added: when AI is configured, missing/zero SL or TP and an expired source signal can be sent to AI for completion from the current market snapshot, but the AI response must return valid SL/TP and pass local `TradeRequest.Validate()` before execution can continue.
-- AI-completed trade requests are now carried back from the review dialog and used for final AutoBotService validation/execution instead of executing the original incomplete signal; broker-suffix pairs such as `XAUUSDm` are normalized back to the original configured pair where applicable.
-- AI prompt rules now explicitly allow completing missing SL/TP from structure/ATR/support/resistance while still forbidding BUY/SELL responses with zero SL/TP.
-- Build verification completed after AI SL/TP completion flow: `dotnet build MT5TradingBot.csproj -p:UseAppHost=false -o obj\verify-build` succeeds with 0 warnings and 0 errors.
+Validate the full demo trading flow:
 
-Status file note:
-- AGENTS.md expects this file at docs/DEVELOPMENT_STATUS.md.
-- The repository also had a root DEVELOPMENT_STATUS.md; keep this docs file as the canonical status location going forward.
+- MT5 connection
+- EA reload/attach confirmation
+- Signal file detection
+- Play-button manual execution
+- Trade opening
+- Risk validation
+- Auto-close by pips/money
+- Review Trade live snapshot refresh
+- Logging and trade history
+
+## Active Modules
+
+- MT5 Bridge
+- TradingBotEA
+- Auto Bot
+- Signal File Watcher
+- Review Trade Window
+- AI API Config
+- Risk Manager
+- Trade Execution
+- Trade Monitoring
+- Logging/Audit
+
+## Known Issues / Pending Checks
+
+- Demo testing is still pending on a live MT5 demo account.
+- MT5 EA must be reloaded/reattached after deployment.
+- MQL5 compile should be verified through `scripts/Deploy-MT5EA.ps1`.
+- Live market snapshot depends on updated EA command `GET_MARKET_SNAPSHOT`.
+
+## Last Verified Build
+
+```bash
+dotnet build MT5TradingBot.csproj --no-restore -o .\bin\VerifyBuild

@@ -47,7 +47,7 @@ namespace MT5TradingBot.Core
         public static double GetPipSize(string sym)
         {
             if (sym.Contains("JPY")) return 0.01;
-            if (sym.Contains("XAU") || sym.Contains("GOLD")) return 0.1;   // Gold: $0.1 pip
+            if (sym.Contains("XAU") || sym.Contains("GOLD")) return 0.01;  // Gold: $0.01 pip on common MT5 XAUUSD symbols
             if (sym.Contains("XAG")) return 0.01;                           // Silver
             if (sym.Contains("BTC") || sym.Contains("ETH")) return 1.0;
             return 0.0001; // standard 4-decimal pairs
@@ -56,6 +56,15 @@ namespace MT5TradingBot.Core
         /// <summary>Returns pip value in USD per 1 standard lot</summary>
         public static double GetPipValuePerLot(string sym, double currentPrice = 1.0)
         {
+            // Metals must be checked before xxxUSD because XAUUSD/XAGUSD also end with USD.
+            // Gold: 1 pip = $0.01 price move x 100 oz = $1/lot on common MT5 symbols.
+            if (sym.Contains("XAU") || sym.Contains("GOLD"))
+                return 1.0;
+
+            // Silver: 1 pip = $0.01 x 5000 oz = $50/lot (broker contract sizes may vary)
+            if (sym.Contains("XAG"))
+                return 50.0;
+
             // USD quote currency (EURUSD, GBPUSD, AUDUSD, NZDUSD) = $10/pip/lot
             if (sym.EndsWith("USD"))
                 return 10.0;
@@ -63,14 +72,6 @@ namespace MT5TradingBot.Core
             // USD base (USDJPY, USDCAD, USDCHF) = 10 / current price
             if (sym.StartsWith("USD"))
                 return currentPrice > 0 ? 10.0 / currentPrice : 10.0;
-
-            // Gold: 1 pip = $0.1 price move × 100 oz = $10/lot
-            if (sym.Contains("XAU"))
-                return 10.0;
-
-            // Silver: 1 pip = $0.01 × 5000 oz = $50/lot (but Exness uses mini)
-            if (sym.Contains("XAG"))
-                return 50.0;
 
             // JPY crosses (GBPJPY, EURJPY etc.) ≈ $9.30/pip (approximate at 150 USDJPY)
             if (sym.Contains("JPY"))

@@ -625,10 +625,9 @@ namespace MT5TradingBot.UI
             // 
             // _tabControl
             // 
-            _tabControl.Controls.Add(_tabTrade);
+            _tabControl.Controls.Add(_tabBot);
             _tabControl.Controls.Add(_tabPositions);
             _tabControl.Controls.Add(_tabHistory);
-            _tabControl.Controls.Add(_tabBot);
             _tabControl.Controls.Add(_tabClaude);
             _tabControl.Controls.Add(_tabLog);
             _tabControl.Location = new Point(3, 133);

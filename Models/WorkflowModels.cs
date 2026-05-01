@@ -147,13 +147,23 @@ namespace MT5TradingBot.Models
         public DateTime ClosedAt { get; set; }
     }
 
+    // Shared by backtest and performance chart — one point on the equity curve.
+    public sealed record EquityPoint(DateTime At, double CumulativePnl, bool IsWin);
+
     public sealed class BacktestResult
     {
         public int TotalTrades { get; set; }
         public int WinningTrades { get; set; }
         public int LosingTrades { get; set; }
         public double NetProfitPips { get; set; }
+        public double NetProfitUsd { get; set; }
         public double WinRatePercent { get; set; }
+        public double MaxDrawdownPct { get; set; }
+        public double SharpeRatio { get; set; }
+        public double ProfitFactor { get; set; }
+        public double AvgWinUsd { get; set; }
+        public double AvgLossUsd { get; set; }
+        public IReadOnlyList<EquityPoint> EquityCurve { get; set; } = [];
         public IReadOnlyList<string> Notes { get; set; } = [];
     }
 }

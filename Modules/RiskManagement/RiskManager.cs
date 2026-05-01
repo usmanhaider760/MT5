@@ -45,6 +45,20 @@ namespace MT5TradingBot.Modules.RiskManagement
                     $"Pair {request.Pair} is not in allowed list: [{string.Join(", ", config.AllowedPairs)}].",
                     warnings));
 
+            // Max concurrent open positions cap
+            if (config.MaxConcurrentPositions > 0)
+            {
+                int botPositions = openPositions.Count(
+                    p => p.MagicNumber == config.MagicNumber);
+
+                if (botPositions >= config.MaxConcurrentPositions)
+                    return Task.FromResult(Blocked(
+                        $"Already have {botPositions} open position(s) " +
+                        $"(max {config.MaxConcurrentPositions}). " +
+                        $"Close an existing position before opening a new one.",
+                        warnings));
+            }
+
             if (account.Equity <= 0)
                 return Task.FromResult(Blocked("Account equity must be greater than zero.", warnings));
 
@@ -157,7 +171,11 @@ namespace MT5TradingBot.Modules.RiskManagement
             }
 
             double spreadPips = symbolInfo?.SpreadPips ?? 0;
-            double maxSpreadPips = pairRules?.MaxSpreadPips > 0 ? pairRules.MaxSpreadPips : config.MaxSpreadPips;
+            double maxSpreadPips = request.MaxSpreadPips > 0
+                ? request.MaxSpreadPips
+                : pairRules?.MaxSpreadPips > 0
+                    ? pairRules.MaxSpreadPips
+                    : config.MaxSpreadPips;
             if (maxSpreadPips > 0)
             {
                 if (symbolInfo == null)

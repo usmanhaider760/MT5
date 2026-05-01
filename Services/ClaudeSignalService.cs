@@ -3,6 +3,7 @@ using Anthropic.Models.Messages;
 using MT5TradingBot.Models;
 using MT5TradingBot.Modules.BrokerIntegration;
 using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
 using System.Text;
 
 namespace MT5TradingBot.Services
@@ -17,8 +18,10 @@ namespace MT5TradingBot.Services
         // ── Dependencies ──────────────────────────────────────────
         private readonly MT5Bridge _bridge;
         private ClaudeConfig _cfg;
+        private BotConfig _botConfig;
         private readonly Func<TradeRequest, Task<TradeResult>> _execute;
         private AnthropicClient? _client;
+        private readonly IAiContextManager _contextManager;
 
         // ── Concurrency ───────────────────────────────────────────
         private readonly CancellationTokenSource _cts = new();
@@ -36,13 +39,24 @@ namespace MT5TradingBot.Services
             MT5Bridge bridge,
             ClaudeConfig cfg,
             Func<TradeRequest, Task<TradeResult>> execute)
+            : this(bridge, cfg, null, execute) { }
+
+        public ClaudeSignalService(
+            MT5Bridge bridge,
+            ClaudeConfig cfg,
+            BotConfig? botConfig,
+            Func<TradeRequest, Task<TradeResult>> execute,
+            IAiContextManager? contextManager = null)
         {
-            _bridge  = bridge;
-            _cfg     = cfg;
-            _execute = execute;
+            _bridge         = bridge;
+            _cfg            = cfg;
+            _botConfig      = botConfig ?? new BotConfig();
+            _execute        = execute;
+            _contextManager = contextManager ?? new AiContextManager();
         }
 
         public void UpdateConfig(ClaudeConfig cfg) => _cfg = cfg;
+        public void UpdateBotConfig(BotConfig cfg) => _botConfig = cfg;
 
         // ══════════════════════════════════════════════════════════
         //  START / STOP
@@ -143,41 +157,120 @@ namespace MT5TradingBot.Services
                 return;
             }
 
-            // Gather market data from MT5
             var account = await _bridge.GetAccountInfoAsync().ConfigureAwait(false);
             if (account == null) { Log("⚠ Cannot fetch account info"); return; }
 
-            var symbolPrices = new List<(string Symbol, SymbolInfo? Info)>();
-            foreach (var sym in _cfg.WatchSymbols)
-                symbolPrices.Add((sym, await _bridge.GetSymbolInfoAsync(sym).ConfigureAwait(false)));
-
             var positions = await _bridge.GetPositionsAsync().ConfigureAwait(false);
 
-            string marketData = BuildMarketDataPrompt(account, symbolPrices, positions);
-            Log($"🔍 Analyzing {_cfg.WatchSymbols.Count} symbol(s) via Claude ({_cfg.Model})...");
+            var ct = _cts.Token;
+            ct.ThrowIfCancellationRequested();
 
-            // ── Call Claude API ─────────────────────────────────────
-            // System prompt is cached (stable); market data is volatile (not cached).
-            var response = await _client!.Messages.Create(new MessageCreateParams
-            {
-                Model     = _cfg.Model,
-                MaxTokens = 16000,
-                Thinking  = new ThinkingConfigAdaptive(),
-                System = new List<TextBlockParam>
+            var tasks = _cfg.WatchSymbols
+                .Select(sym => Task.Run(async () =>
                 {
-                    new()
+                    try
                     {
-                        Text         = _cfg.SystemPrompt,
-                        CacheControl = new CacheControlEphemeral(),
+                        await AnalyzeSymbolAsync(sym, account, positions)
+                            .ConfigureAwait(false);
                     }
-                },
-                Messages =
-                [
-                    new() { Role = Role.User, Content = marketData }
-                ]
-            }).ConfigureAwait(false);
+                    catch (Exception ex) when (ex is not OperationCanceledException)
+                    {
+                        Log($"[ERROR] Analysis failed for {sym}: {ex.Message}");
+                    }
+                }, ct))
+                .ToList();
 
-            // ── Extract text block ──────────────────────────────────
+            await Task.WhenAll(tasks).ConfigureAwait(false);
+        }
+
+        private async Task AnalyzeSymbolAsync(
+            string symbol,
+            AccountInfo account,
+            List<LivePosition> positions)
+        {
+            Log($"🔍 Analyzing {symbol} via Claude ({_cfg.Model})...");
+
+            string userMessage;
+            bool usingRichPrompt = false;
+
+            try
+            {
+                // Attempt rich snapshot: provides candles, indicators,
+                // market structure, S/R levels, session, news.
+                var snapshotReq = new TradeRequest { Pair = symbol };
+                JObject? snapshot = await _bridge.GetMarketSnapshotAsync(
+                    snapshotReq, _botConfig).ConfigureAwait(false);
+
+                if (snapshot != null)
+                {
+                    userMessage = AiPrompts.BuildFilledAiInputPrompt(
+                        snapshot.ToString(Newtonsoft.Json.Formatting.None));
+                    usingRichPrompt = true;
+                }
+                else
+                {
+                    // EA does not support GET_MARKET_SNAPSHOT — fall back.
+                    var info = await _bridge.GetSymbolInfoAsync(symbol)
+                        .ConfigureAwait(false);
+                    userMessage = BuildMarketDataPrompt(
+                        account, [(symbol, info)], positions);
+                    Log($"⚠ Snapshot unavailable for {symbol} — using minimal prompt");
+                }
+            }
+            catch (Exception ex)
+            {
+                Log($"⚠ Snapshot error for {symbol}: {ex.Message} — using minimal prompt");
+                var info = await _bridge.GetSymbolInfoAsync(symbol)
+                    .ConfigureAwait(false);
+                userMessage = BuildMarketDataPrompt(
+                    account, [(symbol, info)], positions);
+            }
+
+            MessageCreateParams requestParams;
+
+            if (usingRichPrompt)
+            {
+                // Rich path: AiInputPromptTemplate is the system prompt (cached).
+                // Market snapshot data is the user message.
+                requestParams = new MessageCreateParams
+                {
+                    Model     = _cfg.Model,
+                    MaxTokens = 16000,
+                    Thinking  = new ThinkingConfigAdaptive(),
+                    System = new List<TextBlockParam>
+                    {
+                        new()
+                        {
+                            Text         = AiPrompts.AiInputPromptTemplate,
+                            CacheControl = new CacheControlEphemeral(),
+                        }
+                    },
+                    Messages = [new() { Role = Role.User, Content = userMessage }]
+                };
+            }
+            else
+            {
+                // Minimal fallback path: original system prompt (cached).
+                requestParams = new MessageCreateParams
+                {
+                    Model     = _cfg.Model,
+                    MaxTokens = 16000,
+                    Thinking  = new ThinkingConfigAdaptive(),
+                    System = new List<TextBlockParam>
+                    {
+                        new()
+                        {
+                            Text         = _cfg.SystemPrompt,
+                            CacheControl = new CacheControlEphemeral(),
+                        }
+                    },
+                    Messages = [new() { Role = Role.User, Content = userMessage }]
+                };
+            }
+
+            var response = await _client!.Messages.Create(requestParams)
+                .ConfigureAwait(false);
+
             string? responseText = null;
             foreach (var block in response.Content)
             {
@@ -186,24 +279,24 @@ namespace MT5TradingBot.Services
             }
 
             if (string.IsNullOrWhiteSpace(responseText))
-            { Log("⚠ Claude returned no text"); return; }
+            { Log($"⚠ Claude returned no text for {symbol}"); return; }
 
-            Log($"🤖 Claude: {responseText[..Math.Min(300, responseText.Length)]}");
+            Log($"🤖 Claude ({symbol}): " +
+                $"{responseText[..Math.Min(300, responseText.Length)]}");
 
-            // Cache stats (informational)
             if (response.Usage.CacheCreationInputTokens > 0)
                 Log($"💾 Cache created: {response.Usage.CacheCreationInputTokens} tokens");
             else if (response.Usage.CacheReadInputTokens > 0)
                 Log($"⚡ Cache hit: {response.Usage.CacheReadInputTokens} tokens saved");
 
-            await ParseAndExecuteAsync(responseText).ConfigureAwait(false);
+            await ParseAndExecuteAsync(responseText, symbol).ConfigureAwait(false);
         }
 
         // ══════════════════════════════════════════════════════════
         //  PARSE CLAUDE JSON → TRADE REQUEST → EXECUTE
         // ══════════════════════════════════════════════════════════
 
-        private async Task ParseAndExecuteAsync(string text)
+        private async Task ParseAndExecuteAsync(string text, string symbol = "")
         {
             string json = ExtractJson(text);
             if (string.IsNullOrEmpty(json)) { Log("⚠ No JSON found in response"); return; }
@@ -214,11 +307,21 @@ namespace MT5TradingBot.Services
 
             if (sig == null) { Log("⚠ Could not parse signal"); return; }
 
-            string action = sig.Action?.ToUpperInvariant() ?? "";
+            string action = sig.Action?.Trim().ToUpperInvariant() ?? "";
+            string tradeTypeText = sig.TradeType?.Trim().ToUpperInvariant() ?? "";
+            string reasonText = !string.IsNullOrWhiteSpace(sig.Reason)
+                ? sig.Reason!
+                : sig.Comment ?? "";
+            if (string.IsNullOrWhiteSpace(action) && tradeTypeText == "NO_TRADE")
+                action = "NO_TRADE";
 
             if (action == "NO_TRADE")
             {
-                Log($"💤 No trade: {sig.Reason}");
+                Log($"💤 No trade: {reasonText}");
+                // Update regime so a previous BUY/SELL bias is cleared.
+                string noTradePair = !string.IsNullOrWhiteSpace(sig.Pair) ? sig.Pair : symbol;
+                if (!string.IsNullOrWhiteSpace(noTradePair))
+                    _contextManager.Update(noTradePair, "NO_TRADE", reasonText);
                 return;
             }
 
@@ -230,14 +333,32 @@ namespace MT5TradingBot.Services
 
             if (sig.StopLoss == 0)
             {
-                Log("⚠ Signal rejected: stop_loss is 0 or missing — update the system prompt to always include a valid SL price level");
+                Log("⚠ Signal rejected: stop_loss is 0 or missing - update the system prompt to always include a valid SL price level");
                 return;
             }
 
             if (sig.TakeProfit == 0)
             {
-                Log("⚠ Signal rejected: take_profit is 0 or missing — update the system prompt to always include a valid TP price level");
+                Log("⚠ Signal rejected: take_profit is 0 or missing - update the system prompt to always include a valid TP price level");
                 return;
+            }
+
+            // Context conflict guard
+            if (_cfg.AiContextMaxAgeMinutes > 0 && _cfg.AiContextBlockConflicts)
+            {
+                string checkPair = !string.IsNullOrWhiteSpace(sig.Pair) ? sig.Pair : symbol;
+                string newDirection = (sig.TradeType ?? "").Trim().ToUpperInvariant();
+                var maxAge = TimeSpan.FromMinutes(_cfg.AiContextMaxAgeMinutes);
+
+                if (_contextManager.HasConflict(checkPair, newDirection, maxAge))
+                {
+                    var cached = _contextManager.GetCurrent(checkPair, maxAge);
+                    Log($"⚠ Regime conflict blocked: new={newDirection} " +
+                        $"conflicts cached={cached?.Direction} " +
+                        $"({(DateTime.UtcNow - (cached?.CapturedAt ?? DateTime.UtcNow)).TotalMinutes:F1} min ago). " +
+                        $"Skipping until cache expires or direction aligns.");
+                    return;
+                }
             }
 
             var req = new TradeRequest
@@ -263,8 +384,16 @@ namespace MT5TradingBot.Services
             Log(result.IsSuccess
                 ? $"✅ Trade executed: {result}"
                 : $"❌ Rejected: [{result.ErrorCode}] {result.ErrorMessage}");
-        }
 
+            // Update regime cache after every execution attempt
+            string tradePair = !string.IsNullOrWhiteSpace(req.Pair) ? req.Pair : symbol;
+            if (!string.IsNullOrWhiteSpace(tradePair))
+            {
+                string executedDirection = req.TradeType.ToString().ToUpperInvariant();
+                _contextManager.Update(tradePair, executedDirection,
+                    result.IsSuccess ? $"Executed #{result.Ticket}" : result.ErrorMessage);
+            }
+        }
         // ══════════════════════════════════════════════════════════
         //  MARKET DATA PROMPT BUILDER
         // ══════════════════════════════════════════════════════════

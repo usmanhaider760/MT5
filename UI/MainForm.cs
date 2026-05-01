@@ -1,10 +1,14 @@
+using Microsoft.Extensions.DependencyInjection;
 using MT5TradingBot.Core;
+using MT5TradingBot.Data;
 using MT5TradingBot.Models;
 using MT5TradingBot.Modules.BrokerIntegration;
 using MT5TradingBot.Modules.MarketData;
 using MT5TradingBot.Modules.PairScanner;
 using MT5TradingBot.Modules.PairSettings;
 using MT5TradingBot.Modules.NewsFilter;
+using MT5TradingBot.Modules.RiskManagement;
+using MT5TradingBot.Modules.Scalping;
 using MT5TradingBot.Services;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
@@ -21,9 +25,11 @@ namespace MT5TradingBot.UI
         private MT5Bridge? _bridge;
         private AutoBotService? _bot;
         private ClaudeSignalService? _claude;
-        private readonly SettingsManager _settings = new();
+        private readonly IServiceProvider _services;
+        private readonly SettingsManager _settings;
         private PairSettingsService? _pairSettings;
-        private readonly INewsCalendarService _newsCalendar = new FmpNewsCalendarService();
+        private readonly INewsCalendarService _newsCalendar;
+        private readonly ITradeRepository? _tradeDb;
         private AppSettings _cfg = new();
         private bool _warnedZeroAccountValues;
         private bool _shownEaDeployNotice;
@@ -33,6 +39,8 @@ namespace MT5TradingBot.UI
         private readonly Dictionary<long, AutoCloseTarget> _autoCloseTargets = [];
         private readonly HashSet<long> _autoCloseInProgress = [];
         private bool _syncingAutoCloseValues;
+        private IScalpingSessionService? _scalping;
+        private readonly Button _btnStopScalping = new();
 
         // -- Pair analysis feed ------------------------------------
         private readonly Dictionary<string, Panel> _pairAnalysisCards = new(StringComparer.OrdinalIgnoreCase);
@@ -67,11 +75,22 @@ namespace MT5TradingBot.UI
             double TargetMoney,
             double LotSize   = 0,
             int    Leverage  = 100,
-            TradeRequest? FinalRequest = null);
+            TradeRequest? FinalRequest = null,
+            bool AutoScalpingEnabled = false,
+            ScalpingConfig? ScalpingConfig = null);
 
         // ==========================================================
-        public MainForm()
+        // Keep for WinForms designer compatibility
+        public MainForm() : this(BuildFallbackProvider()) { }
+
+        // Primary constructor used at runtime via DI
+        public MainForm(IServiceProvider services)
         {
+            _services = services;
+            _settings = services.GetRequiredService<SettingsManager>();
+            _newsCalendar = services.GetRequiredService<INewsCalendarService>();
+            _tradeDb = services.GetRequiredService<ITradeRepository>();
+
             InitializeComponent();
             AppIcon.ApplyTo(this);
             ApplyStableLayout();
@@ -81,11 +100,32 @@ namespace MT5TradingBot.UI
                 _tabControl.DrawMode = TabDrawMode.OwnerDrawFixed;
                 _txtClaudePrompt.Text = ClaudeConfig.DefaultPrompt;
                 EnsurePairSettingsTab();
+                EnsureBacktestTab();
+                EnsurePerformanceTab();
                 WireEvents();
-                _txtJson.Text = DefaultJsonSample();
+                _settings.StartWatching();
+                _settings.SettingsReloaded += OnSettingsHotReloaded;
                 _clockTimer.Start();
                 _ = InitAsync();
             }
+        }
+
+        // Fallback: builds a minimal provider for design-time / unit-test use
+        private static IServiceProvider BuildFallbackProvider()
+        {
+            var sc = new ServiceCollection();
+            sc.AddSingleton<SettingsManager>();
+            sc.AddSingleton<INewsCalendarService, FmpNewsCalendarService>();
+            sc.AddSingleton<IRiskManager, RiskManager>();
+            sc.AddSingleton<IAiContextManager, AiContextManager>();
+            sc.AddSingleton<ITradeRepository>(_ =>
+            {
+                string dbPath = Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+                    "MT5TradingBot", "trades.db");
+                return new SqliteTradeRepository(dbPath);
+            });
+            return sc.BuildServiceProvider();
         }
 
         private bool IsDesignerHosted() =>
@@ -109,6 +149,63 @@ namespace MT5TradingBot.UI
             await EnsureAutoWatcherAsync("form load");
         }
 
+        private AutoBotService CreateBot()
+        {
+            var bridge = _bridge ?? throw new InvalidOperationException("MT5 bridge is not connected.");
+            var bot = new AutoBotService(
+                bridge,
+                _cfg.Bot,
+                _pairSettings,
+                _newsCalendar,
+                _cfg.ApiIntegrations,
+                riskManager:     new RiskManager(_pairSettings),
+                tradeRepository: _tradeDb);
+
+            bot.OnLog += msg => Log(msg);
+            bot.OnTradeExecuted += r =>
+            {
+                Log(r.IsSuccess ? $"[BOT] Trade: {r}" : $"[BOT] Rejected: {r.ErrorMessage}",
+                    r.IsSuccess ? C_GREEN : C_RED);
+                _ = RefreshBotTradeStatusAsync(r);
+            };
+            bot.OnBotStatusChanged += on => UpdateBotBadge(on);
+            bot.OnModeChanged += mode => UIThread(() => UpdateModeLabel(mode));
+            bot.OnEdgeStatusChanged += status => UIThread(() =>
+            {
+                if (_bot?.IsRunning != true) return;
+                _lblBotBadge.Text = status.IsDegraded
+                    ? $"BOT PAUSED (EDGE) - WR {status.WinRatePct:F1}%"
+                    : $"BOT MONITORING - WR {status.WinRatePct:F1}%";
+                _lblBotBadge.ForeColor = status.IsDegraded ? Color.Orange : C_ACCENT;
+            });
+            bot.OnSignalUpdate += info => AddOrUpdateSignalCard(info);
+
+            return bot;
+        }
+
+        private ClaudeSignalService CreateClaude()
+        {
+            var bridge = _bridge ?? throw new InvalidOperationException("MT5 bridge is not connected.");
+            var svc = new ClaudeSignalService(
+                bridge,
+                _cfg.Claude,
+                _cfg.Bot,
+                req => _bot != null
+                    ? _bot.ExecuteTradeWithValidationAsync(req)
+                    : bridge.OpenTradeAsync(req),
+                contextManager: _services.GetRequiredService<IAiContextManager>());
+
+            svc.OnLog += msg => Log($"[AI] {msg}");
+            svc.OnSignalGenerated += req =>
+            {
+                Log($"[AI] Signal: {req}", C_ACCENT);
+                _reviewSignalPush?.Invoke(req);
+            };
+            svc.OnStatusChanged += on => UpdateClaudeBadge(on);
+
+            return svc;
+        }
+
         // ==========================================================
         //  WIRE EVENTS - named handlers only, no lambdas
         // ==========================================================
@@ -119,28 +216,11 @@ namespace MT5TradingBot.UI
             _signalFeedPollTimer.Tick += SignalFeedPollTimer_Tick;
             this.FormClosing    += OnFormClosingAsync;
             _tabControl.DrawItem += DrawTabItem;
+            _tabControl.SelectedIndexChanged += TabControl_SelectedIndexChanged;
 
             _btnConnect.Click           += BtnConnect_Click;
             _btnDisconnect.Click        += BtnDisconnect_Click;
             _chkAutoConn.CheckedChanged += ChkAutoConn_CheckedChanged;
-
-            _cmbPair.SelectedIndexChanged      += CmbPair_SelectedIndexChanged;
-            _cmbDir.SelectedIndexChanged       += CmbDir_SelectedIndexChanged;
-            _cmbOrderType.SelectedIndexChanged += CmbOrderType_SelectedIndexChanged;
-            _txtEntry.TextChanged              += TxtEntry_TextChanged;
-            _txtSL.TextChanged                 += TxtSL_TextChanged;
-            _txtTP.TextChanged                 += TxtTP_TextChanged;
-            _chkAutoLot.CheckedChanged         += ChkAutoLot_CheckedChanged;
-            _txtLot.TextChanged                += TxtLot_TextChanged;
-            _btnBuy.Click                      += BtnBuy_Click;
-            _btnSell.Click                     += BtnSell_Click;
-
-            _txtJson.DragEnter   += TxtJson_DragEnter;
-            _txtJson.DragDrop    += TxtJson_DragDrop;
-            _btnJsonLoad.Click   += BtnJsonLoad_Click;
-            _btnJsonExec.Click   += BtnJsonExec_Click;
-            _btnJsonFmt.Click    += BtnJsonFmt_Click;
-            _btnJsonSample.Click += BtnJsonSample_Click;
 
             _btnClosePos.Click    += BtnClosePos_Click;
             _btnCloseAllPos.Click += BtnCloseAllPos_Click;
@@ -152,6 +232,7 @@ namespace MT5TradingBot.UI
             _cmbAllowedPair.SelectedIndexChanged += CmbAllowedPair_SelectedIndexChanged;
 
             _btnStopBot.Click         += BtnStopBot_Click;
+            _btnStopScalping.Click    += BtnStopScalping_Click;
             _btnBotSettings.Click     += BtnBotSettings_Click;
             _btnAnalyzePairs.Click    += BtnAnalyzePairs_Click;
             _btnOpenFolder.Click      += BtnOpenFolder_Click;
@@ -351,16 +432,7 @@ namespace MT5TradingBot.UI
                 }
 
                 await (_bot?.DisposeAsync() ?? ValueTask.CompletedTask);
-                _bot = new AutoBotService(_bridge, _cfg.Bot, _pairSettings, _newsCalendar, _cfg.ApiIntegrations) { ManualExecuteOnly = true };
-                _bot.OnLog += msg => Log(msg);
-                _bot.OnTradeExecuted += r =>
-                {
-                    Log(r.IsSuccess ? $"[BOT] Trade: {r}" : $"[BOT] Rejected: {r.ErrorMessage}",
-                        r.IsSuccess ? C_GREEN : C_RED);
-                    _ = RefreshBotTradeStatusAsync(r);
-                };
-                _bot.OnBotStatusChanged += on => UpdateBotBadge(on);
-                _bot.OnSignalUpdate += info => AddOrUpdateSignalCard(info);
+                _bot = CreateBot();
 
                 await _bot.StartAsync();
                 _activeWatchFolder = watchFolder;
@@ -453,16 +525,7 @@ namespace MT5TradingBot.UI
                 await _settings.SaveAsync(_cfg);
                 await (_bot?.DisposeAsync() ?? ValueTask.CompletedTask);
 
-                _bot = new AutoBotService(_bridge, _cfg.Bot, _pairSettings, _newsCalendar, _cfg.ApiIntegrations) { ManualExecuteOnly = true };
-                _bot.OnLog += msg => Log(msg);
-                _bot.OnTradeExecuted += r =>
-                {
-                    Log(r.IsSuccess ? $"[BOT] Trade: {r}" : $"[BOT] Rejected: {r.ErrorMessage}",
-                        r.IsSuccess ? C_GREEN : C_RED);
-                    _ = RefreshBotTradeStatusAsync(r);
-                };
-                _bot.OnBotStatusChanged += on => UpdateBotBadge(on);
-                _bot.OnSignalUpdate += info => AddOrUpdateSignalCard(info);
+                _bot = CreateBot();
 
                 await _bot.StartAsync();
                 Log("[BOT] Monitoring started - new signal files will appear in the feed below.", C_GREEN);
@@ -496,11 +559,38 @@ namespace MT5TradingBot.UI
 
         private async Task StopBotAsync()
         {
+            if (_scalping != null)
+            {
+                await _scalping.StopAsync();
+                _scalping = null;
+                UIThread(() => _btnStopScalping.Enabled = false);
+            }
             if (_bot == null) return;
             await _bot.DisposeAsync();
             _bot = null;
             _activeWatchFolder = "";
             UpdateBotBadge(false);
+        }
+
+        private async Task StopScalpingAsync()
+        {
+            if (_scalping?.IsRunning != true)
+            {
+                Log("[SCALP] No scalping session is running.", C_YELLOW);
+                UIThread(() => _btnStopScalping.Enabled = false);
+                return;
+            }
+
+            await _scalping.StopAsync().ConfigureAwait(false);
+            _scalping = null;
+            UIThread(() =>
+            {
+                _btnStopScalping.Enabled = false;
+                if (_bot?.IsRunning == true)
+                    UpdateBotBadge(true);
+                else
+                    SetBotBadge("SCALPING STOPPED", C_YELLOW);
+            });
         }
 
         private async Task AnalyzePairsAsync()
@@ -653,21 +743,7 @@ namespace MT5TradingBot.UI
 
             if (_claude != null) { await _claude.DisposeAsync(); _claude = null; }
 
-            var bridge = _bridge;
-            _claude = new ClaudeSignalService(
-                bridge,
-                _cfg.Claude,
-                req => _bot != null
-                    ? _bot.ExecuteTradeWithValidationAsync(req)
-                    : bridge.OpenTradeAsync(req));
-
-            _claude.OnLog            += msg => Log($"[AI] {msg}");
-            _claude.OnSignalGenerated += req =>
-            {
-                Log($"[AI] Signal: {req}", C_ACCENT);
-                _reviewSignalPush?.Invoke(req);
-            };
-            _claude.OnStatusChanged  += on => UpdateClaudeBadge(on);
+            _claude = CreateClaude();
 
             try { await _claude.StartAsync(); }
             catch (Exception ex)
@@ -790,19 +866,42 @@ namespace MT5TradingBot.UI
 
         private async Task TestTelegramConfigAsync()
         {
-            _cfg.ApiIntegrations = ReadApiIntegrationConfigFromUI();
-            _bot?.UpdateApiConfig(_cfg.ApiIntegrations);
-            await _settings.SaveAsync(_cfg);
+            string token  = _txtTelegramBotToken.Text.Trim();
+            string chatId = _txtTelegramChatId.Text.Trim();
 
-            bool configured = !string.IsNullOrWhiteSpace(_cfg.ApiIntegrations.TelegramBotToken)
-                && !string.IsNullOrWhiteSpace(_cfg.ApiIntegrations.TelegramChatId);
-            string message = configured
-                ? "Telegram configured; live send test not wired yet."
-                : "Enter Telegram bot token and chat ID.";
+            if (string.IsNullOrWhiteSpace(token) || string.IsNullOrWhiteSpace(chatId))
+            {
+                _lblTelegramTestStatus.Text      = "Enter bot token and chat ID first.";
+                _lblTelegramTestStatus.ForeColor = Color.OrangeRed;
+                return;
+            }
 
-            SetTelegramTestStatus(message, configured ? C_GREEN : C_YELLOW);
-            Log($"[AI] Notification config check: {message}", configured ? C_GREEN : C_YELLOW);
-            UpdateAiApiConfigStatus(_cfg.Claude);
+            _btnTestTelegram.Enabled         = false;
+            _lblTelegramTestStatus.Text      = "Sending...";
+            _lblTelegramTestStatus.ForeColor = Color.Gray;
+
+            var tempCfg = new ApiIntegrationConfig
+            {
+                TelegramBotToken = token,
+                TelegramChatId   = chatId
+            };
+
+            try
+            {
+                var svc = new MT5TradingBot.Services.TelegramService(tempCfg);
+                await svc.SendTestMessageAsync().ConfigureAwait(true);
+                _lblTelegramTestStatus.Text      = "Test message sent successfully.";
+                _lblTelegramTestStatus.ForeColor = Color.SeaGreen;
+            }
+            catch (Exception ex)
+            {
+                _lblTelegramTestStatus.Text      = $"Failed: {ex.Message}";
+                _lblTelegramTestStatus.ForeColor = Color.OrangeRed;
+            }
+            finally
+            {
+                _btnTestTelegram.Enabled = true;
+            }
         }
 
         private void SetNewsTestStatus(string text, Color color)
@@ -1297,10 +1396,32 @@ SAFETY RULES:
         {
             UIThread(() =>
             {
-                _lblBotBadge.Text      = running ? "BOT MONITORING" : "BOT STOPPED";
-                _lblBotBadge.ForeColor = running ? C_ACCENT : C_RED;
+                string paper = running && _bot?.IsPaperTrading == true ? " [PAPER]" : "";
+                _lblBotBadge.Text =
+                    running && _bot?.IsEdgePaused == true ? "BOT PAUSED (EDGE)" + paper :
+                    running                               ? "BOT MONITORING" + paper     :
+                                                            "BOT STOPPED";
+                _lblBotBadge.ForeColor =
+                    running && _bot?.IsEdgePaused == true ? Color.Orange :
+                    running && _bot?.IsPaperTrading == true ? Color.Gold  :
+                    running                               ? C_ACCENT      :
+                                                            C_RED;
                 _btnStopBot.Enabled    = running;
             });
+        }
+
+        private void UpdateModeLabel(BotMode mode)
+        {
+            if (_bot?.IsRunning != true) return;
+            string suffix = mode switch
+            {
+                BotMode.Monitor        => " [MONITOR]",
+                BotMode.ManualApproval => " [MANUAL]",
+                BotMode.FullAuto       => " [AUTO]",
+                _                      => ""
+            };
+            string baseText = _lblBotBadge.Text.Split('[')[0].TrimEnd();
+            _lblBotBadge.Text = baseText + suffix;
         }
 
         private void SetBotBadge(string text, Color color)
@@ -1427,18 +1548,14 @@ SAFETY RULES:
                 .OrderBy(p => p, StringComparer.OrdinalIgnoreCase)
                 .ToList() ?? [];
 
-            string currentManual = _cmbPair.SelectedItem?.ToString() ?? _cfg.Bot.AllowedPairs.FirstOrDefault() ?? "";
             string currentBot = _cmbAllowedPair.SelectedItem?.ToString() ?? _cfg.Bot.AllowedPairs.FirstOrDefault() ?? "";
 
-            _cmbPair.Items.Clear();
             _cmbAllowedPair.Items.Clear();
             foreach (string pair in pairs)
             {
-                _cmbPair.Items.Add(pair);
                 _cmbAllowedPair.Items.Add(pair);
             }
 
-            SelectComboPair(_cmbPair, currentManual);
             SelectComboPair(_cmbAllowedPair, currentBot);
 
             _cfg.Bot.AllowedPairs = SelectedAllowedPairList();
@@ -1527,7 +1644,9 @@ SAFETY RULES:
             _tabPairSettings.BackColor = C_BG;
             _tabPairSettings.Controls.Add(layout);
 
-            int insertAt = Math.Max(0, _tabControl.TabPages.IndexOf(_tabBot));
+            int insertAt = _tabControl.TabPages.IndexOf(_tabClaude);
+            if (insertAt < 0)
+                insertAt = _tabControl.TabPages.Count;
             _tabControl.TabPages.Insert(insertAt, _tabPairSettings);
         }
 
@@ -1797,7 +1916,12 @@ SAFETY RULES:
             RetryDelayMs              = 1000,
             AutoStartOnLaunch         = _cfg.Bot.AutoStartOnLaunch,
             MagicNumber               = 999001,
-            SymbolSuffix              = _cfg.Bot.SymbolSuffix
+            SymbolSuffix              = _cfg.Bot.SymbolSuffix,
+            Scalping                  = CloneScalpingConfig(_cfg.Bot.Scalping),
+            ScalpingByPair            = new Dictionary<string, ScalpingConfig>(
+                (_cfg.Bot.ScalpingByPair ?? new Dictionary<string, ScalpingConfig>())
+                    .ToDictionary(kv => kv.Key, kv => CloneScalpingConfig(kv.Value)),
+                StringComparer.OrdinalIgnoreCase)
         };
 
         private BotConfig ReadBotConfigFromUISafe()
@@ -1848,10 +1972,22 @@ SAFETY RULES:
             _refreshTimer.Stop();
             _signalFeedPollTimer.Stop();
             _signalFeedWatcher?.Dispose();
+            _settings.StopWatching();
+            if (_scalping != null)
+                await _scalping.StopAsync();
             await StopClaudeAsync();
             await StopBotAsync();
             await _settings.SaveAsync(_cfg);
             _bridge?.Dispose();
+        }
+
+        private void OnSettingsHotReloaded(AppSettings s)
+        {
+            _cfg = s;
+            _bot?.UpdateConfig(s.Bot);
+            _bot?.SetMode(s.Bot.OperatingMode);
+            _claude?.UpdateConfig(s.Claude);
+            UIThread(() => Log("[CFG] Settings hot-reloaded from disk."));
         }
 
         [System.Runtime.InteropServices.DllImport("Gdi32.dll")]
@@ -1940,6 +2076,12 @@ SAFETY RULES:
         private async void BtnDisconnect_Click(object? sender, EventArgs e) => await DisconnectAsync();
         private void ChkAutoConn_CheckedChanged(object? sender, EventArgs e) => _cfg.AutoConnectOnLaunch = _chkAutoConn.Checked;
 
+        private void TabControl_SelectedIndexChanged(object? sender, EventArgs e)
+        {
+            if (_tabControl.SelectedTab == _tabPerformance)
+                _ = RefreshPerformanceAsync();
+        }
+
         private void CmbPair_SelectedIndexChanged(object? sender, EventArgs e)      => RecalcRR();
         private void CmbDir_SelectedIndexChanged(object? sender, EventArgs e)       { UpdateBuySellColors(); RecalcRR(); }
         private void CmbOrderType_SelectedIndexChanged(object? sender, EventArgs e) => _txtEntry.Enabled = _cmbOrderType.SelectedIndex != 0;
@@ -1975,6 +2117,7 @@ SAFETY RULES:
 
         private async void BtnStartBot_Click(object? sender, EventArgs e) => await StartBotAsync();
         private async void BtnStopBot_Click(object? sender, EventArgs e)    => await StopBotAsync();
+        private async void BtnStopScalping_Click(object? sender, EventArgs e) => await StopScalpingAsync();
 
         private void BtnBotSettings_Click(object? sender, EventArgs e)
         {
@@ -1983,6 +2126,8 @@ SAFETY RULES:
             {
                 _ = _settings.SaveAsync(_cfg);
                 Log("[BOT] Trade settings saved.", C_ACCENT);
+                if (_bot?.IsRunning == true)
+                    _bot.SetMode(_cfg.Bot.OperatingMode);
             }
         }
 
@@ -1994,6 +2139,7 @@ SAFETY RULES:
             string pair = _cmbAllowedPair.SelectedItem?.ToString() ?? "";
             if (!string.IsNullOrEmpty(pair))
             {
+                EnsureSignalFeedRowForPair(pair);
                 _cfg.Bot = ReadBotConfigFromUI();
                 _bot?.UpdateConfig(_cfg.Bot);
                 _bot?.UpdateApiConfig(_cfg.ApiIntegrations);
@@ -2807,10 +2953,18 @@ SAFETY RULES:
 
             try
             {
-                liveSnapshot = await _bridge.GetMarketSnapshotAsync(request, _cfg.Bot).ConfigureAwait(false);
-                account = await _bridge.GetAccountInfoAsync().ConfigureAwait(false);
-                symbol = await _bridge.GetSymbolInfoAsync(request.Pair).ConfigureAwait(false);
-                positions = await _bridge.GetPositionsAsync().ConfigureAwait(false);
+                liveSnapshot = await AwaitOrDefaultAsync(
+                    _bridge.GetMarketSnapshotAsync(request, _cfg.Bot),
+                    "market snapshot").ConfigureAwait(false);
+                account = await AwaitOrDefaultAsync(
+                    _bridge.GetAccountInfoAsync(),
+                    "account info").ConfigureAwait(false);
+                symbol = await AwaitOrDefaultAsync(
+                    _bridge.GetSymbolInfoAsync(request.Pair),
+                    "symbol info").ConfigureAwait(false);
+                positions = await AwaitOrDefaultAsync(
+                    _bridge.GetPositionsAsync(),
+                    "positions").ConfigureAwait(false) ?? [];
             }
             catch (Exception ex)
             {
@@ -2836,6 +2990,18 @@ SAFETY RULES:
                 return (TradeReviewDecision)Invoke(() => ShowTradeReviewDialog(request, info, snapshot, symbol, account, positions))!;
 
             return ShowTradeReviewDialog(request, info, snapshot, symbol, account, positions);
+
+            async Task<T?> AwaitOrDefaultAsync<T>(Task<T> task, string label, int timeoutMs = 2500)
+            {
+                var completed = await Task.WhenAny(task, Task.Delay(timeoutMs)).ConfigureAwait(false);
+                if (completed != task)
+                {
+                    Log($"[BOT] Review {label} timed out; opening detail with available data.", C_YELLOW);
+                    return default;
+                }
+
+                return await task.ConfigureAwait(false);
+            }
         }
 
         private TradeReviewDecision ShowTradeReviewDialog(
@@ -2869,7 +3035,7 @@ SAFETY RULES:
             };
             root.RowStyles.Add(new RowStyle(SizeType.Absolute, 58));
             root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-            root.RowStyles.Add(new RowStyle(SizeType.Absolute, 110));
+            root.RowStyles.Add(new RowStyle(SizeType.Absolute, 190));
             root.RowStyles.Add(new RowStyle(SizeType.Absolute, 78));
             form.Controls.Add(root);
 
@@ -3058,10 +3224,11 @@ SAFETY RULES:
             // â"€â"€ Row 2: two-row host (lot/leverage + auto-close) â"€â"€â"€â"€
             var row2Host = new TableLayoutPanel
             {
-                Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 2,
+                Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 3,
                 BackColor = form.BackColor, Padding = new Padding(0)
             };
             row2Host.RowStyles.Add(new RowStyle(SizeType.Absolute, 52));
+            row2Host.RowStyles.Add(new RowStyle(SizeType.Absolute, 48));
             row2Host.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
             root.Controls.Add(row2Host, 0, 2);
 
@@ -3074,17 +3241,12 @@ SAFETY RULES:
             };
             row2Host.Controls.Add(lotPanel, 0, 0);
 
-            var lotOptions = new[]
-            {
-                new LotSizeOption("Micro Lot",    0.01, "1,000 units",   "GBPUSD approx $0.10/pip"),
-                new LotSizeOption("Mini Lot",     0.10, "10,000 units",  "GBPUSD approx $1.00/pip"),
-                new LotSizeOption("Standard Lot", 1.00, "100,000 units", "GBPUSD approx $10.00/pip")
-            };
+            var lotOptions = BuildReviewLotOptions(symbol?.Symbol ?? request.Pair);
 
             var cmbLotSize = new ComboBox
             {
                 DropDownStyle = ComboBoxStyle.DropDownList,
-                Width = 250,
+                Width = 320,
                 Height = 28,
                 BackColor = Color.FromArgb(18, 20, 32),
                 ForeColor = Color.FromArgb(218, 218, 230),
@@ -3166,10 +3328,138 @@ SAFETY RULES:
             autoPanel.Controls.Add(nudMoney);
             autoPanel.Controls.Add(MakeInlineLabel("0 = close on any profit"));
 
+            var scalpPanel = new FlowLayoutPanel
+            {
+                Dock = DockStyle.Fill, FlowDirection = FlowDirection.LeftToRight,
+                WrapContents = true, Padding = new Padding(0, 4, 0, 0),
+                BackColor = form.BackColor
+            };
+            row2Host.Controls.Add(scalpPanel, 0, 2);
+
+            var chkAutoScalp = new CheckBox
+            {
+                Text = "Auto scalping",
+                AutoSize = false,
+                Size = new Size(112, 28),
+                ForeColor = Color.Gold,
+                BackColor = Color.FromArgb(50, 42, 20),
+                FlatStyle = FlatStyle.Flat,
+                Font = new Font("Segoe UI Semibold", 9F, FontStyle.Bold)
+            };
+            var cmbScalpMode = new ComboBox
+            {
+                DropDownStyle = ComboBoxStyle.DropDownList,
+                Width = 104,
+                Height = 28,
+                BackColor = Color.FromArgb(18, 20, 32),
+                ForeColor = Color.FromArgb(218, 218, 230),
+                FlatStyle = FlatStyle.Flat,
+                Font = new Font("Segoe UI", 8.5F),
+                Margin = new Padding(6, 4, 0, 0)
+            };
+            cmbScalpMode.Items.AddRange(new object[] { "Auto", "Signal", "Buy only", "Sell only" });
+            cmbScalpMode.SelectedIndex = _cfg.Bot.Scalping.DirectionMode switch
+            {
+                ScalpingDirectionMode.SignalDirection => 1,
+                ScalpingDirectionMode.BuyOnly => 2,
+                ScalpingDirectionMode.SellOnly => 3,
+                _ => 0
+            };
+            var nudScalpTrades = MakeReviewNumber(1, 50, 1, 0, 52);
+            var nudScalpMinutes = MakeReviewNumber(1, 240, 1, 0, 52);
+            var nudScalpSl = MakeReviewNumber(1, 500, 0.5M, 1, 58);
+            var nudScalpTp = MakeReviewNumber(1, 500, 0.5M, 1, 58);
+            var nudScalpSlMoney = MakeReviewNumber(0, 100000, 0.10M, 2, 78);
+            var nudScalpTpMoney = MakeReviewNumber(0, 100000, 0.10M, 2, 78);
+            var nudScalpSpread = MakeReviewNumber(0.1M, 100, 0.1M, 1, 58);
+            var btnScalpReset = new Button
+            {
+                Text = "Reset",
+                AutoSize = false,
+                Size = new Size(58, 24),
+                BackColor = Color.FromArgb(34, 46, 58),
+                ForeColor = Color.FromArgb(140, 210, 255),
+                FlatStyle = FlatStyle.Flat,
+                Font = new Font("Segoe UI Semibold", 8F, FontStyle.Bold),
+                Cursor = Cursors.Hand,
+                Margin = new Padding(4, 5, 10, 0)
+            };
+            btnScalpReset.FlatAppearance.BorderSize = 0;
+            _cardTooltip.SetToolTip(btnScalpReset, "Reset scalping values to bot suggestions for this pair.");
+            var chkScalpAi = new CheckBox
+            {
+                Text = "AI confirm",
+                AutoSize = false,
+                Size = new Size(92, 28),
+                ForeColor = Color.FromArgb(210, 150, 255),
+                BackColor = form.BackColor,
+                FlatStyle = FlatStyle.Flat,
+                Font = new Font("Segoe UI", 8.5F)
+            };
+            decimal Clamp(NumericUpDown nud, decimal value) =>
+                Math.Min(nud.Maximum, Math.Max(nud.Minimum, value));
+
+            void ApplyScalpingConfigToControls(ScalpingConfig config)
+            {
+                cmbScalpMode.SelectedIndex = config.DirectionMode switch
+                {
+                    ScalpingDirectionMode.SignalDirection => 1,
+                    ScalpingDirectionMode.BuyOnly => 2,
+                    ScalpingDirectionMode.SellOnly => 3,
+                    _ => 0
+                };
+                nudScalpTrades.Value = Clamp(nudScalpTrades, config.MaxTrades);
+                nudScalpMinutes.Value = Clamp(nudScalpMinutes, config.MaxMinutes);
+                nudScalpSl.Value = Clamp(nudScalpSl, (decimal)config.StopLossPips);
+                nudScalpTp.Value = Clamp(nudScalpTp, (decimal)config.TakeProfitPips);
+                nudScalpSpread.Value = Clamp(nudScalpSpread, (decimal)config.MaxSpreadPips);
+                chkScalpAi.Checked = config.UseAiConfirmation;
+            }
+
+            var savedScalping = GetSavedScalpingConfigForPair(request.Pair);
+            var initialScalping = savedScalping ?? BuildSuggestedScalpingConfigForPair(request.Pair, symbol);
+            ApplyScalpingConfigToControls(initialScalping);
+            if (savedScalping == null)
+            {
+                Log(
+                    $"[SCALP] Bot suggested values for {NormalizePairKey(request.Pair)}: " +
+                    $"SL {initialScalping.StopLossPips:F1} pips, TP {initialScalping.TakeProfitPips:F1} pips, " +
+                    $"max spread {initialScalping.MaxSpreadPips:F1} pips.",
+                    C_ACCENT);
+            }
+
+            scalpPanel.Controls.Add(chkAutoScalp);
+            scalpPanel.Controls.Add(MakeInlineLabel("Mode"));
+            scalpPanel.Controls.Add(cmbScalpMode);
+            scalpPanel.Controls.Add(MakeInlineLabel("Max trades"));
+            scalpPanel.Controls.Add(nudScalpTrades);
+            scalpPanel.Controls.Add(MakeInlineLabel("Minutes"));
+            scalpPanel.Controls.Add(nudScalpMinutes);
+            scalpPanel.Controls.Add(MakeInlineLabel("SL pips"));
+            scalpPanel.Controls.Add(nudScalpSl);
+            scalpPanel.Controls.Add(MakeInlineLabel("SL $"));
+            scalpPanel.Controls.Add(nudScalpSlMoney);
+            scalpPanel.Controls.Add(MakeInlineLabel("TP pips"));
+            scalpPanel.Controls.Add(nudScalpTp);
+            scalpPanel.Controls.Add(MakeInlineLabel("TP $"));
+            scalpPanel.Controls.Add(nudScalpTpMoney);
+            scalpPanel.Controls.Add(MakeInlineLabel("Max spread pips"));
+            scalpPanel.Controls.Add(nudScalpSpread);
+            scalpPanel.Controls.Add(btnScalpReset);
+            scalpPanel.Controls.Add(chkScalpAi);
+
             bool syncing = false;
+            bool scalpSyncing = false;
             double price = symbol?.Ask > 0 ? symbol.Ask : 1.0;
             string sym = symbol?.Symbol ?? request.Pair;
             double PipValue() => Math.Max(0.0001, GetSelectedReviewLotSize() * LotCalculator.GetPipValuePerLot(sym.ToUpperInvariant(), price));
+
+            void SyncScalpMoneyFromPips()
+            {
+                decimal pipValue = (decimal)PipValue();
+                nudScalpSlMoney.Value = Math.Min(nudScalpSlMoney.Maximum, Math.Round(nudScalpSl.Value * pipValue, 2));
+                nudScalpTpMoney.Value = Math.Min(nudScalpTpMoney.Maximum, Math.Round(nudScalpTp.Value * pipValue, 2));
+            }
 
             nudPips.ValueChanged += (_, _) =>
             {
@@ -3191,11 +3481,64 @@ SAFETY RULES:
                 syncing = true;
                 nudMoney.Value = Math.Min(nudMoney.Maximum, Math.Round(nudPips.Value * (decimal)PipValue(), 2));
                 syncing = false;
+                if (!scalpSyncing)
+                {
+                    scalpSyncing = true;
+                    SyncScalpMoneyFromPips();
+                    scalpSyncing = false;
+                }
                 UpdateReviewExecutionBarrierSnapshot(currentSnapshot, activeRequest, GetSelectedReviewLotSize(), latestPositions);
                 latestSnapshotJson = currentSnapshot.ToString(Formatting.Indented);
                 form.Tag = latestSnapshotJson;
                 RefreshReviewDashboard(currentSnapshot, bindings);
             };
+
+            nudScalpSl.ValueChanged += (_, _) =>
+            {
+                if (scalpSyncing) return;
+                scalpSyncing = true;
+                nudScalpSlMoney.Value = Math.Min(nudScalpSlMoney.Maximum, Math.Round(nudScalpSl.Value * (decimal)PipValue(), 2));
+                scalpSyncing = false;
+            };
+            nudScalpTp.ValueChanged += (_, _) =>
+            {
+                if (scalpSyncing) return;
+                scalpSyncing = true;
+                nudScalpTpMoney.Value = Math.Min(nudScalpTpMoney.Maximum, Math.Round(nudScalpTp.Value * (decimal)PipValue(), 2));
+                scalpSyncing = false;
+            };
+            nudScalpSlMoney.ValueChanged += (_, _) =>
+            {
+                if (scalpSyncing) return;
+                scalpSyncing = true;
+                decimal pipValue = (decimal)PipValue();
+                if (pipValue > 0)
+                    nudScalpSl.Value = Math.Min(nudScalpSl.Maximum, Math.Max(nudScalpSl.Minimum, Math.Round(nudScalpSlMoney.Value / pipValue, 1)));
+                scalpSyncing = false;
+            };
+            nudScalpTpMoney.ValueChanged += (_, _) =>
+            {
+                if (scalpSyncing) return;
+                scalpSyncing = true;
+                decimal pipValue = (decimal)PipValue();
+                if (pipValue > 0)
+                    nudScalpTp.Value = Math.Min(nudScalpTp.Maximum, Math.Max(nudScalpTp.Minimum, Math.Round(nudScalpTpMoney.Value / pipValue, 1)));
+                scalpSyncing = false;
+            };
+            btnScalpReset.Click += (_, _) =>
+            {
+                scalpSyncing = true;
+                var suggested = BuildSuggestedScalpingConfigForPair(activeRequest.Pair, symbol);
+                ApplyScalpingConfigToControls(suggested);
+                scalpSyncing = false;
+                SyncScalpMoneyFromPips();
+                Log(
+                    $"[SCALP] Reset review values to bot suggestion for {NormalizePairKey(activeRequest.Pair)}: " +
+                    $"SL {suggested.StopLossPips:F1} pips, TP {suggested.TakeProfitPips:F1} pips, " +
+                    $"max spread {suggested.MaxSpreadPips:F1} pips.",
+                    C_ACCENT);
+            };
+            SyncScalpMoneyFromPips();
 
             double GetSelectedReviewLotSize() =>
                 cmbLotSize.SelectedItem is LotSizeOption selected ? selected.Size : Math.Max(0.01, activeRequest.LotSize);
@@ -3489,10 +3832,34 @@ SAFETY RULES:
                 bool aiEnabled = !string.IsNullOrWhiteSpace(_cfg.Claude.ApiKey)
                               && !_cfg.Claude.ApiKey.StartsWith("sk-ant-..")
                               && _cfg.Claude.ApiKey.Length > 20;
+                bool autoScalpingRequested = chkAutoScalp.Checked;
+                var scalpingConfig = BuildScalpingConfigFromReview(
+                    cmbScalpMode,
+                    nudScalpTrades,
+                    nudScalpMinutes,
+                    nudScalpSl,
+                    nudScalpTp,
+                    nudScalpSpread,
+                    chkScalpAi);
 
-                var failedRules = GetFailedReviewBarrierMessages(currentSnapshot, allowAiCompletion: aiEnabled);
+                await SaveScalpingConfigForPairAsync(activeRequest.Pair, scalpingConfig);
+
+                var failedRules = GetFailedReviewBarrierMessages(
+                    currentSnapshot,
+                    allowAiCompletion: aiEnabled,
+                    allowAutoScalping: autoScalpingRequested);
                 if (failedRules.Count > 0)
                 {
+                    if (!autoScalpingRequested &&
+                        failedRules.Any(rule =>
+                            rule.Contains("StopLoss cannot be 0", StringComparison.OrdinalIgnoreCase) ||
+                            rule.Contains("TakeProfit cannot be 0", StringComparison.OrdinalIgnoreCase)))
+                    {
+                        failedRules.Insert(
+                            0,
+                            "Auto scalping is not selected. Tick Auto scalping to use SL/TP pips, or enter normal SL/TP price levels for a one-shot trade.");
+                    }
+
                     string message =
                         "These required trade rules are not fulfilled:\n\n" +
                         string.Join("\n", failedRules.Select(rule => "- " + rule)) +
@@ -3514,7 +3881,12 @@ SAFETY RULES:
 
                 string aiInputPrompt = BuildCurrentAiInputPrompt();
 
-                if (aiEnabled)
+                if (autoScalpingRequested)
+                {
+                    Log("[SCALP] Auto scalping selected - skipping one-shot signal AI/SL/TP validation.", C_ACCENT);
+                    SetPlayStatus("Starting auto scalping session...", Color.Gold);
+                }
+                else if (aiEnabled)
                 {
                     try
                     {
@@ -3588,7 +3960,9 @@ SAFETY RULES:
                     (double)nudMoney.Value,
                     GetSelectedReviewLotSize(),
                     GetSelectedReviewLeverage(),
-                    aiCompletedRequest);
+                    aiCompletedRequest,
+                    chkAutoScalp.Checked,
+                    scalpingConfig);
                 form.DialogResult = DialogResult.OK;
                 form.Close();
             };
@@ -3986,6 +4360,7 @@ SAFETY RULES:
             TakeProfit = request.TakeProfit,
             TakeProfit2 = request.TakeProfit2,
             LotSize = request.LotSize,
+            MaxSpreadPips = request.MaxSpreadPips,
             Comment = request.Comment,
             MagicNumber = request.MagicNumber,
             ExpiryMinutes = request.ExpiryMinutes,
@@ -4530,7 +4905,10 @@ SAFETY RULES:
             return false;
         }
 
-        private static List<string> GetFailedReviewBarrierMessages(JObject snapshot, bool allowAiCompletion = false)
+        private static List<string> GetFailedReviewBarrierMessages(
+            JObject snapshot,
+            bool allowAiCompletion = false,
+            bool allowAutoScalping = false)
         {
             var barriers = new (string Label, string FlagPath, string DetailPath)[]
             {
@@ -4554,6 +4932,8 @@ SAFETY RULES:
                     continue;
 
                 string detail = snapshot.SelectToken(barrier.DetailPath)?.ToString(Formatting.None).Trim('"') ?? "No detail available";
+                if (allowAutoScalping && IsAutoScalpingCompletableReviewBarrier(barrier.FlagPath))
+                    continue;
                 if (allowAiCompletion && IsAiCompletableReviewBarrier(barrier.FlagPath, detail))
                     continue;
 
@@ -4574,6 +4954,11 @@ SAFETY RULES:
             return detail.Contains("StopLoss cannot be 0", StringComparison.OrdinalIgnoreCase)
                 || detail.Contains("TakeProfit cannot be 0", StringComparison.OrdinalIgnoreCase);
         }
+
+        private static bool IsAutoScalpingCompletableReviewBarrier(string flagPath) =>
+            flagPath is "execution_barriers.signal_valid"
+                     or "execution_barriers.signal_fresh"
+                     or "execution_barriers.rr_ok";
 
         private static (Color Fg, Color Bg) ReviewValueStyle(string path, JToken? token)
         {
@@ -5099,9 +5484,91 @@ SAFETY RULES:
                                     btn.Enabled = CanExecuteSignal(info);
                                     break;
                             }
+                    else if (card.Tag is PairAnalysisInfo)
+                        foreach (var btn in card.Controls.OfType<Button>())
+                            btn.Enabled = true;
                 }
             }
             if (card.InvokeRequired) card.Invoke(Apply); else Apply();
+        }
+
+        private async Task<bool> StartAutoScalpingFromReviewAsync(TradeRequest req, TradeReviewDecision review)
+        {
+            if (!review.AutoScalpingEnabled || review.ScalpingConfig == null)
+                return false;
+
+            if (_bridge?.IsConnected != true)
+            {
+                Log("[SCALP] Cannot start: MT5 is not connected.", C_RED);
+                return true;
+            }
+
+            bool approved = _cfg.Bot.PaperTrading || (InvokeRequired
+                ? (bool)Invoke(() => Confirm(
+                    "Start LIVE auto scalping for this pair?\n\nThe bot will place multiple trades inside the configured session limits and existing risk controls."))
+                : Confirm("Start LIVE auto scalping for this pair?\n\nThe bot will place multiple trades inside the configured session limits and existing risk controls."));
+            if (!approved)
+            {
+                Log("[SCALP] User cancelled auto scalping start.", C_YELLOW);
+                return true;
+            }
+
+            await SaveScalpingConfigForPairAsync(req.Pair, review.ScalpingConfig).ConfigureAwait(false);
+            _cfg.Bot.Scalping = review.ScalpingConfig;
+            _bot ??= CreateBot();
+            _bot.UpdateConfig(_cfg.Bot);
+            _bot.UpdateApiConfig(_cfg.ApiIntegrations);
+
+            if (_scalping?.IsRunning == true)
+                await _scalping.StopAsync().ConfigureAwait(false);
+
+            _scalping = new ScalpingSessionService(_bridge, _newsCalendar, _cfg.ApiIntegrations);
+            _scalping.OnLog += msg => Log(msg, msg.Contains("Blocked", StringComparison.OrdinalIgnoreCase) ? C_YELLOW : C_ACCENT);
+            _scalping.OnStatusChanged += status => UIThread(() =>
+            {
+                bool running = string.Equals(status, "Running", StringComparison.OrdinalIgnoreCase);
+                _btnStopScalping.Enabled = running;
+                SetBotBadge($"SCALPING {status.ToUpperInvariant()}", running ? Color.Gold : C_ACCENT);
+            });
+
+            var startReq = new ScalpingSessionRequest(
+                req.Pair,
+                req.TradeType,
+                review.LotSize > 0 ? review.LotSize : req.LotSize,
+                _cfg.Bot.MagicNumber,
+                review.ScalpingConfig,
+                r => _bot.ExecuteTradeWithValidationAsync(r),
+                async fromUtc =>
+                {
+                    if (_tradeDb == null) return 0;
+                    var closed = await _tradeDb.GetByDateRangeAsync(fromUtc, DateTime.UtcNow).ConfigureAwait(false);
+                    return closed
+                        .Where(t => t.Comment.Contains("AutoScalp", StringComparison.OrdinalIgnoreCase))
+                        .Sum(t => t.ProfitUsd);
+                },
+                review.ScalpingConfig.UseAiConfirmation
+                    ? async (snapshot, direction) =>
+                    {
+                        string prompt =
+                            "You are confirming an already rule-filtered auto-scalping opportunity. " +
+                            "Return JSON only: {\"approved\":true|false,\"reason\":\"short reason\"}.\n\n" +
+                            $"Direction: {direction}\nSnapshot:\n{snapshot.ToString(Formatting.None)}";
+                        var (json, allowed, decision, error) = await RunAiTradeDecisionAsync(prompt).ConfigureAwait(false);
+                        if (!string.IsNullOrWhiteSpace(error))
+                            return new ScalpingAiConfirmation(false, error);
+                        var jo = JObject.Parse(string.IsNullOrWhiteSpace(json) ? "{}" : json);
+                        bool approved = jo.Value<bool?>("approved") == true ||
+                                        allowed ||
+                                        string.Equals(decision, direction.ToString(), StringComparison.OrdinalIgnoreCase);
+                        string reason = jo.Value<string>("reason") ?? decision;
+                        return new ScalpingAiConfirmation(approved, reason);
+                    }
+                    : null);
+
+            await _scalping.StartAsync(startReq).ConfigureAwait(false);
+            await _settings.SaveAsync(_cfg).ConfigureAwait(false);
+            Log($"[SCALP] Auto scalping session armed for {req.Pair}.", C_GREEN);
+            return true;
         }
 
         private async Task ExecuteSignalFromCardSafeAsync(Panel card)
@@ -5182,6 +5649,17 @@ SAFETY RULES:
                     req.LotSize = review.LotSize;
                 if (review.FinalRequest != null)
                     req = review.FinalRequest;
+
+                if (await StartAutoScalpingFromReviewAsync(req, review).ConfigureAwait(false))
+                {
+                    UpdateCardStatusSafe(card, info with
+                    {
+                        Status = SignalCardStatus.Executing,
+                        StatusText = "Auto scalping",
+                        Time = DateTime.Now
+                    });
+                    return;
+                }
 
                 var executing = info with
                 {
@@ -5417,9 +5895,9 @@ SAFETY RULES:
                 Pair        = pair,
                 Direction   = "NONE",
                 Confidence  = "-",
-                Status      = "Waiting for Analysis",
+                Status      = "Selected",
                 LastUpdated = DateTime.Now,
-                ShortReason = "Pair selected"
+                ShortReason = "Manual pair selected"
             };
 
             var card = BuildPairAnalysisCard(newInfo);
@@ -5449,6 +5927,18 @@ SAFETY RULES:
             // Left purple stripe - distinguishes pair analysis rows from file-based signal cards
             card.Controls.Add(new Panel { Width = 5, Dock = DockStyle.Left, BackColor = Color.FromArgb(130, 100, 255) });
 
+            card.Controls.Add(new ProgressBar
+            {
+                Style                 = ProgressBarStyle.Marquee,
+                MarqueeAnimationSpeed = 30,
+                Height                = 3,
+                Location              = new Point(5, 0),
+                Width                 = w - 5,
+                Anchor                = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right,
+                Visible               = false,
+                Tag                   = "spinner"
+            });
+
             card.Controls.Add(new Label
             {
                 Name      = "lblPairHeader",
@@ -5468,6 +5958,24 @@ SAFETY RULES:
                 _flpSignals.Controls.Remove(card);
             };
             card.Controls.Add(btnRemove);
+
+            var btnDetail = MakeCardButton("Detail", Color.FromArgb(20, 50, 30), Color.FromArgb(72, 199, 142),
+                "Review - open trade details after analysis creates BUY/SELL levels");
+            btnDetail.Size     = new Size(52, 22);
+            btnDetail.Anchor   = AnchorStyles.Top | AnchorStyles.Right;
+            btnDetail.Location = new Point(w - 84, 8);
+            btnDetail.Tag      = "detail";
+            btnDetail.Click   += (_, _) => _ = OpenPairAnalysisDetailAsync(card);
+            card.Controls.Add(btnDetail);
+
+            var btnJson = MakeCardButton("JSON", Color.FromArgb(20, 30, 55), Color.FromArgb(130, 170, 255),
+                "Open JSON - view the generated signal data for this row");
+            btnJson.Size     = new Size(38, 22);
+            btnJson.Anchor   = AnchorStyles.Top | AnchorStyles.Right;
+            btnJson.Location = new Point(w - 130, 8);
+            btnJson.Tag      = "json";
+            btnJson.Click   += (_, _) => ShowPairAnalysisJson(card);
+            card.Controls.Add(btnJson);
 
             card.Controls.Add(new Label
             {
@@ -5559,6 +6067,10 @@ SAFETY RULES:
             "Selected"             => Color.FromArgb(130, 100, 255),
             "AI Selected"          => Color.FromArgb(100, 180, 255),
             "Analyzing"            => Color.FromArgb(80,  160, 255),
+            "Executing"            => Color.FromArgb(99,  179, 237),
+            "Scalping"             => Color.Gold,
+            "Executed"             => Color.FromArgb(72,  199, 142),
+            "Rejected"             => Color.FromArgb(252, 95,  95),
             "BUY"                  => Color.FromArgb(72,  199, 142),
             "SELL"                 => Color.FromArgb(214, 164, 255),
             "WAIT"                 => Color.FromArgb(200, 180,  80),
@@ -5566,6 +6078,175 @@ SAFETY RULES:
             "Analysis Error" or "No suitable pair found" => Color.FromArgb(220, 80, 80),
             _                      => Color.FromArgb(150, 155, 185)
         };
+
+        private void ShowPairAnalysisJson(Panel card)
+        {
+            if (card.Tag is not PairAnalysisInfo info) return;
+
+            var payload = new
+            {
+                pair = info.Pair,
+                trade_type = info.Direction,
+                order_type = OrderType.MARKET.ToString(),
+                entry_price = info.Entry,
+                stop_loss = info.StopLoss,
+                take_profit = info.TakeProfit,
+                lot_size = 0.01,
+                comment = "PairAnalysis",
+                magic_number = _cfg.Bot.MagicNumber,
+                status = info.Status,
+                confidence = info.Confidence,
+                reason = info.ShortReason,
+                rr = info.RR,
+                generated_at = info.LastUpdated.ToString("O")
+            };
+
+            string json = JsonConvert.SerializeObject(payload, Formatting.Indented);
+            using var dlg = new JsonViewForm($"{info.Pair}-pair-analysis.json", json);
+            dlg.ShowDialog(this);
+        }
+
+        private async Task OpenPairAnalysisDetailAsync(Panel card)
+        {
+            if (card.Tag is not PairAnalysisInfo info) return;
+
+            SetCardBusy(card, true);
+            try
+            {
+                Log($"[BOT] Opening detail review for {info.Pair}...", C_ACCENT);
+
+                if (_bridge?.IsConnected != true)
+                {
+                    Log("[WARN] Connect to MT5 before opening trade details.", C_YELLOW);
+                    return;
+                }
+
+                bool rowHasTrade = Enum.TryParse<TradeType>(info.Direction, true, out var tradeType) &&
+                    info.StopLoss > 0 &&
+                    info.TakeProfit > 0;
+
+                if (!rowHasTrade)
+                {
+                    tradeType = string.Equals(_cmbDir.SelectedItem?.ToString(), "SELL", StringComparison.OrdinalIgnoreCase)
+                        ? TradeType.SELL
+                        : TradeType.BUY;
+                }
+
+                double entry = rowHasTrade ? info.Entry : 0;
+                double sl = rowHasTrade ? info.StopLoss : 0;
+                double tp = rowHasTrade ? info.TakeProfit : 0;
+                double tp2 = 0;
+
+                if (!rowHasTrade)
+                {
+                    double.TryParse(_txtEntry.Text, NumberStyles.Any, CultureInfo.InvariantCulture, out entry);
+                    double.TryParse(_txtSL.Text, NumberStyles.Any, CultureInfo.InvariantCulture, out sl);
+                    double.TryParse(_txtTP.Text, NumberStyles.Any, CultureInfo.InvariantCulture, out tp);
+                    double.TryParse(_txtTP2.Text, NumberStyles.Any, CultureInfo.InvariantCulture, out tp2);
+                }
+
+                if (sl <= 0 || tp <= 0)
+                    Log($"[BOT] Opening detail for {info.Pair} without final SL/TP. Enter or adjust levels in the review window before approving.", C_YELLOW);
+
+                double lot = 0.01;
+                if (!_chkAutoLot.Checked &&
+                    double.TryParse(_txtLot.Text, NumberStyles.Any, CultureInfo.InvariantCulture, out var uiLot) &&
+                    uiLot >= 0.01)
+                {
+                    lot = uiLot;
+                }
+
+                var req = new TradeRequest
+                {
+                    Pair       = info.Pair,
+                    TradeType  = tradeType,
+                    OrderType  = _cmbOrderType.SelectedIndex switch
+                    { 1 => OrderType.LIMIT, 2 => OrderType.STOP, _ => OrderType.MARKET },
+                    EntryPrice = entry,
+                    StopLoss   = sl,
+                    TakeProfit = tp,
+                    TakeProfit2 = tp2,
+                    LotSize    = lot,
+                    Comment    = rowHasTrade ? "PairAnalysis" : "ManualPairReview",
+                    MagicNumber = _cfg.Bot.MagicNumber,
+                    CreatedAt  = DateTime.UtcNow
+                };
+
+                var signalInfo = new SignalCardInfo
+                {
+                    SignalId   = req.Id,
+                    FileName   = $"{info.Pair}-pair-analysis",
+                    Pair       = info.Pair,
+                    TradeType  = tradeType.ToString(),
+                    StopLoss   = sl,
+                    TakeProfit = tp,
+                    LotSize    = lot,
+                    Status     = SignalCardStatus.Pending,
+                    StatusText = "Pair analysis",
+                    CreatedAt  = DateTime.UtcNow,
+                    Time       = DateTime.Now
+                };
+
+                _cfg.Bot = ReadBotConfigFromUISafe();
+                _cfg.ApiIntegrations = ReadApiIntegrationConfigFromUI();
+                _bot?.UpdateConfig(_cfg.Bot);
+                _bot?.UpdateApiConfig(_cfg.ApiIntegrations);
+                await _settings.SaveAsync(_cfg).ConfigureAwait(false);
+
+                var review = await ShowTradeReviewDialogAsync(req, signalInfo).ConfigureAwait(false);
+                if (!review.Approved)
+                {
+                    Log($"[BOT] Trade review cancelled for {info.Pair}.", C_YELLOW);
+                    return;
+                }
+
+                if (review.LotSize > 0)
+                    req.LotSize = review.LotSize;
+                if (review.FinalRequest != null)
+                    req = review.FinalRequest;
+
+                if (await StartAutoScalpingFromReviewAsync(req, review).ConfigureAwait(false))
+                {
+                    info.Status = "Scalping";
+                    info.ShortReason = "Auto scalping running";
+                    info.LastUpdated = DateTime.Now;
+                    UpdatePairAnalysisCard(card, info);
+                    return;
+                }
+
+                info.Status = "Executing";
+                info.ShortReason = "Sending to MT5";
+                info.LastUpdated = DateTime.Now;
+                UpdatePairAnalysisCard(card, info);
+
+                _bot ??= CreateBot();
+                _bot.UpdateConfig(_cfg.Bot);
+                _bot.UpdateApiConfig(_cfg.ApiIntegrations);
+
+                var result = await _bot.ExecuteTradeWithValidationAsync(req).ConfigureAwait(false);
+
+                info.Status = result.IsSuccess ? "Executed" : "Rejected";
+                info.ShortReason = result.IsSuccess ? $"Ticket #{result.Ticket}" : result.ErrorMessage;
+                info.LastUpdated = DateTime.Now;
+                UpdatePairAnalysisCard(card, info);
+
+                Log(result.IsSuccess
+                        ? $"[OK] Trade placed from pair row: {req.Pair} ticket #{result.Ticket}"
+                        : $"[ERROR] Pair row execute failed: {result.ErrorMessage}",
+                    result.IsSuccess ? C_GREEN : C_RED);
+
+                if (result.IsSuccess)
+                    await RefreshPositionsAsync().ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                Log($"[ERROR] Detail button failed for {info.Pair}: {ex.Message}", C_RED);
+            }
+            finally
+            {
+                SetCardBusy(card, false);
+            }
+        }
 
         private string? FindDropdownPair(string aiPair)
         {
@@ -5740,13 +6421,19 @@ SAFETY RULES:
                 }
 
                 var jo     = JObject.Parse(text[s..(e + 1)]);
-                string action = (jo["action"]?.ToString() ?? "").ToUpperInvariant();
+                string action = (jo["action"]?.ToString() ?? "").Trim().ToUpperInvariant();
+                string tradeTypeText = (jo["trade_type"]?.ToString() ?? "").Trim().ToUpperInvariant();
+                string reasonText = jo["reason"]?.ToString()
+                    ?? jo["comment"]?.ToString()
+                    ?? "AI: no trade";
+                if (string.IsNullOrWhiteSpace(action) && tradeTypeText == "NO_TRADE")
+                    action = "NO_TRADE";
 
                 if (action == "NO_TRADE")
                 {
                     info.Direction   = "NONE";
                     info.Status      = "No Trade";
-                    info.ShortReason = jo["reason"]?.ToString() ?? "AI: no trade";
+                    info.ShortReason = reasonText;
                     info.LastUpdated = DateTime.Now;
                 }
                 else if (action == "TRADE")
@@ -5852,6 +6539,177 @@ SAFETY RULES:
 
             public override string ToString() => $"{Name}  {Size:F2}  |  {Units}  |  {PipValue}";
         }
+
+        private static LotSizeOption[] BuildReviewLotOptions(string symbol)
+        {
+            string sym = symbol.ToUpperInvariant().Replace("/", "").Replace("_", "");
+            double standardPipValue = LotCalculator.GetPipValuePerLot(sym);
+
+            if (sym.Contains("XAU") || sym.Contains("GOLD"))
+            {
+                return
+                [
+                    new LotSizeOption("Micro Lot",    0.01, "1 oz",   $"{symbol} approx ${standardPipValue * 0.01:0.00}/pip"),
+                    new LotSizeOption("Mini Lot",     0.10, "10 oz",  $"{symbol} approx ${standardPipValue * 0.10:0.00}/pip"),
+                    new LotSizeOption("Standard Lot", 1.00, "100 oz", $"{symbol} approx ${standardPipValue:0.00}/pip")
+                ];
+            }
+
+            if (sym.Contains("XAG"))
+            {
+                return
+                [
+                    new LotSizeOption("Micro Lot",    0.01, "50 oz",    $"{symbol} approx ${standardPipValue * 0.01:0.00}/pip"),
+                    new LotSizeOption("Mini Lot",     0.10, "500 oz",   $"{symbol} approx ${standardPipValue * 0.10:0.00}/pip"),
+                    new LotSizeOption("Standard Lot", 1.00, "5,000 oz", $"{symbol} approx ${standardPipValue:0.00}/pip")
+                ];
+            }
+
+            return
+            [
+                new LotSizeOption("Micro Lot",    0.01, "1,000 units",   $"{symbol} approx ${standardPipValue * 0.01:0.00}/pip"),
+                new LotSizeOption("Mini Lot",     0.10, "10,000 units",  $"{symbol} approx ${standardPipValue * 0.10:0.00}/pip"),
+                new LotSizeOption("Standard Lot", 1.00, "100,000 units", $"{symbol} approx ${standardPipValue:0.00}/pip")
+            ];
+        }
+
+        private ScalpingConfig? GetSavedScalpingConfigForPair(string pair)
+        {
+            string key = NormalizePairKey(pair);
+            _cfg.Bot.ScalpingByPair ??= new Dictionary<string, ScalpingConfig>(StringComparer.OrdinalIgnoreCase);
+            if (!string.IsNullOrWhiteSpace(key) &&
+                _cfg.Bot.ScalpingByPair.TryGetValue(key, out var saved))
+            {
+                Log($"[SCALP] Loaded saved scalping settings for {key}.", C_ACCENT);
+                return CloneScalpingConfig(saved);
+            }
+
+            Log($"[SCALP] No saved scalping settings for {key}; using bot suggested scalping values.", C_ACCENT);
+            return null;
+        }
+
+        private async Task SaveScalpingConfigForPairAsync(string pair, ScalpingConfig config)
+        {
+            string key = NormalizePairKey(pair);
+            if (string.IsNullOrWhiteSpace(key))
+                return;
+
+            _cfg.Bot.Scalping = CloneScalpingConfig(config);
+            _cfg.Bot.ScalpingByPair ??= new Dictionary<string, ScalpingConfig>(StringComparer.OrdinalIgnoreCase);
+            _cfg.Bot.ScalpingByPair[key] = CloneScalpingConfig(config);
+            await _settings.SaveAsync(_cfg).ConfigureAwait(false);
+            Log($"[SCALP] Saved scalping settings for {key}.", C_ACCENT);
+        }
+
+        private ScalpingConfig BuildSuggestedScalpingConfigForPair(string pair, SymbolInfo? symbol)
+        {
+            var pairRules = _pairSettings?.GetForPair(pair);
+            double liveSpread = symbol?.SpreadPips > 0 ? symbol.SpreadPips : 0;
+            double configuredMaxSpread = pairRules?.MaxSpreadPips > 0
+                ? pairRules.MaxSpreadPips
+                : _cfg.Bot.MaxSpreadPips > 0
+                    ? _cfg.Bot.MaxSpreadPips
+                    : 3;
+            double goodSpread = pairRules?.GoodSpreadPips > 0
+                ? pairRules.GoodSpreadPips
+                : configuredMaxSpread * 0.5;
+            double acceptableSpread = pairRules?.AcceptableSpreadPips > 0
+                ? pairRules.AcceptableSpreadPips
+                : configuredMaxSpread * 0.75;
+            double spreadForCalc = liveSpread > 0
+                ? liveSpread
+                : Math.Max(goodSpread, acceptableSpread);
+
+            double minSl = pairRules?.MinSlPips > 0 ? pairRules.MinSlPips : 8;
+            double maxSl = pairRules?.MaxSlPips > minSl ? pairRules.MaxSlPips : 500;
+            double minTp = pairRules?.MinTpPips > 0 ? pairRules.MinTpPips : minSl;
+            double minRr = pairRules?.ScalpingMinRR > 0 ? pairRules.ScalpingMinRR : Math.Max(1.0, _cfg.Bot.MinRRRatio);
+            double preferredRr = pairRules?.PreferredRR > 0 ? pairRules.PreferredRR : Math.Max(1.2, minRr);
+            double atrFloor = pairRules?.MinAtrPipsM5 > 0
+                ? pairRules.MinAtrPipsM5 * Math.Max(1.0, pairRules.AtrMultiplierSl)
+                : 0;
+
+            double slPips = RoundHalfPip(Math.Clamp(
+                Math.Max(minSl, Math.Max(spreadForCalc * 2.0, atrFloor)),
+                minSl,
+                maxSl));
+            double tpPips = RoundHalfPip(Math.Max(
+                minTp,
+                Math.Min(500, Math.Max(slPips * preferredRr, spreadForCalc * 4.0))));
+            double maxSpreadPips = RoundHalfPip(Math.Clamp(
+                Math.Max(goodSpread, liveSpread > 0 ? liveSpread * 1.15 : acceptableSpread),
+                0.1,
+                Math.Min(100, Math.Max(0.1, configuredMaxSpread))));
+
+            return new ScalpingConfig
+            {
+                MaxTrades = 3,
+                MaxMinutes = 15,
+                MaxSessionLossUsd = Math.Max(20, _cfg.Bot.Scalping.MaxSessionLossUsd),
+                ProfitTargetUsd = Math.Max(20, _cfg.Bot.Scalping.ProfitTargetUsd),
+                StopLossPips = slPips,
+                TakeProfitPips = tpPips,
+                MaxSpreadPips = maxSpreadPips,
+                PollIntervalMs = _cfg.Bot.Scalping.PollIntervalMs,
+                CooldownSeconds = _cfg.Bot.Scalping.CooldownSeconds,
+                DirectionMode = ScalpingDirectionMode.Auto,
+                AllowPyramiding = false,
+                RequireSnapshotConfirmation = true,
+                MinDecisionScore = Math.Max(4, _cfg.Bot.Scalping.MinDecisionScore),
+                UseAiConfirmation = false
+            };
+        }
+
+        private ScalpingConfig BuildScalpingConfigFromReview(
+            ComboBox mode,
+            NumericUpDown trades,
+            NumericUpDown minutes,
+            NumericUpDown sl,
+            NumericUpDown tp,
+            NumericUpDown spread,
+            CheckBox aiConfirm)
+        {
+            var cfg = CloneScalpingConfig(_cfg.Bot.Scalping);
+            cfg.MaxTrades = (int)trades.Value;
+            cfg.MaxMinutes = (int)minutes.Value;
+            cfg.StopLossPips = (double)sl.Value;
+            cfg.TakeProfitPips = (double)tp.Value;
+            cfg.MaxSpreadPips = (double)spread.Value;
+            cfg.RequireSnapshotConfirmation = true;
+            cfg.UseAiConfirmation = aiConfirm.Checked;
+            cfg.DirectionMode = mode.SelectedIndex switch
+            {
+                1 => ScalpingDirectionMode.SignalDirection,
+                2 => ScalpingDirectionMode.BuyOnly,
+                3 => ScalpingDirectionMode.SellOnly,
+                _ => ScalpingDirectionMode.Auto
+            };
+            return cfg;
+        }
+
+        private static ScalpingConfig CloneScalpingConfig(ScalpingConfig config) => new()
+        {
+            MaxTrades = config.MaxTrades,
+            MaxMinutes = config.MaxMinutes,
+            MaxSessionLossUsd = config.MaxSessionLossUsd,
+            ProfitTargetUsd = config.ProfitTargetUsd,
+            StopLossPips = config.StopLossPips,
+            TakeProfitPips = config.TakeProfitPips,
+            MaxSpreadPips = config.MaxSpreadPips,
+            PollIntervalMs = config.PollIntervalMs,
+            CooldownSeconds = config.CooldownSeconds,
+            DirectionMode = config.DirectionMode,
+            AllowPyramiding = config.AllowPyramiding,
+            RequireSnapshotConfirmation = config.RequireSnapshotConfirmation,
+            MinDecisionScore = config.MinDecisionScore,
+            UseAiConfirmation = config.UseAiConfirmation
+        };
+
+        private static string NormalizePairKey(string pair) =>
+            (pair ?? "").Trim().ToUpperInvariant().Replace("/", "").Replace("_", "");
+
+        private static double RoundHalfPip(double value) =>
+            Math.Round(value * 2.0, MidpointRounding.AwayFromZero) / 2.0;
 
         internal sealed class AiPairSelectionResult
         {

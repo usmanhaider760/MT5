@@ -1,10 +1,13 @@
 using MT5TradingBot.Core;
+using MT5TradingBot.Data;
 using MT5TradingBot.Models;
 using MT5TradingBot.Modules.BrokerIntegration;
 using MT5TradingBot.Modules.NewsFilter;
 using MT5TradingBot.Modules.PairSettings;
+using MT5TradingBot.Modules.RiskManagement;
 using Newtonsoft.Json;
 using Serilog;
+using Core = MT5TradingBot.Core;
 
 namespace MT5TradingBot.Services
 {
@@ -30,6 +33,9 @@ namespace MT5TradingBot.Services
         private readonly INewsCalendarService? _newsCalendar;
         private BotConfig _cfg;
         private ApiIntegrationConfig _apiConfig;
+        private readonly IRiskManager _riskManager;
+        private readonly ITelegramService _telegram;
+        private readonly ITradeRepository? _tradeDb;
 
         // ── Concurrency ───────────────────────────────────────────
         private readonly SemaphoreSlim _tradeLock = new(1, 1);
@@ -40,30 +46,59 @@ namespace MT5TradingBot.Services
         private FileSystemWatcher? _watcher;
         private Task? _heartbeatTask;
 
+        // ── Paper trading ─────────────────────────────────────────
+        private readonly List<LivePosition> _paperPositions = [];
+        private long _paperTicketCounter = 90_000_000; // high range avoids collision with real tickets
+
         // ── State ─────────────────────────────────────────────────
         private readonly HashSet<string> _processing = [];   // files currently being handled
         private readonly HashSet<string> _shownPaths = [];  // files queued in manual-execute mode
         private readonly HashSet<long> _slMovedTickets = []; // tickets where SL was already moved to BE
+        private readonly HashSet<long> _trailingActiveTickets = [];
         private readonly Dictionary<long, LivePosition> _knownPositions = []; // for close detection
         private volatile bool _running;
         private int _tradesToday;
         private DateTime _dayReset = DateTime.Today;
         private double _startOfDayEquity;
         private bool _emergencyStopFired;
+        private bool _edgePaused;
+        private EdgeHealthMonitor? _edgeMonitor;
 
         // ── Events ────────────────────────────────────────────────
         public event Action<string>?         OnLog;
         public event Action<TradeResult>?    OnTradeExecuted;
         public event Action<bool>?           OnBotStatusChanged;
+        public event Action<EdgeStatus>?     OnEdgeStatusChanged;
         public event Action<SignalCardInfo>? OnSignalUpdate;
 
         public bool IsRunning => _running;
+        public bool IsEdgePaused => _edgePaused;
+        public bool IsPaperTrading => _cfg.PaperTrading;
 
-        /// <summary>
-        /// When true the bot detects signal files and fires OnSignalUpdate (Pending card)
-        /// but does NOT auto-execute them. Trades are placed manually via the Play button.
-        /// </summary>
-        public bool ManualExecuteOnly { get; set; } = true;
+        private BotMode _currentMode = BotMode.ManualApproval;
+        public BotMode CurrentMode => _currentMode;
+
+        // Derived read-only for backward compatibility with card logic that reads this.
+        public bool ManualExecuteOnly => _currentMode == BotMode.ManualApproval;
+
+        public event Action<BotMode>? OnModeChanged;
+
+        public void SetMode(BotMode newMode)
+        {
+            if (newMode == _currentMode) return;
+
+            if (newMode == BotMode.FullAuto && (_edgePaused || _emergencyStopFired))
+            {
+                Log($"[Mode] Cannot switch to FullAuto — " +
+                    (_edgePaused ? "edge paused" : "emergency stop active") + ".");
+                return;
+            }
+
+            BotMode previous = _currentMode;
+            _currentMode = newMode;
+            Log($"[Mode] {previous} → {newMode}");
+            OnModeChanged?.Invoke(newMode);
+        }
 
         // ── Paths ─────────────────────────────────────────────────
         private string ExecutedDir    => Path.Combine(_cfg.WatchFolder, "executed");
@@ -82,13 +117,21 @@ namespace MT5TradingBot.Services
             BotConfig cfg,
             IPairSettingsService? pairSettings = null,
             INewsCalendarService? newsCalendar = null,
-            ApiIntegrationConfig? apiConfig = null)
+            ApiIntegrationConfig? apiConfig = null,
+            IRiskManager? riskManager = null,
+            ITradeRepository? tradeRepository = null)
         {
             _bridge = bridge;
             _cfg = cfg;
             _pairSettings = pairSettings;
             _newsCalendar = newsCalendar;
             _apiConfig = apiConfig ?? new ApiIntegrationConfig();
+            _riskManager = riskManager ?? new RiskManager(_pairSettings);
+            _tradeDb = tradeRepository;
+            _telegram = (!string.IsNullOrWhiteSpace(_apiConfig.TelegramBotToken) &&
+                         !string.IsNullOrWhiteSpace(_apiConfig.TelegramChatId))
+                ? new TelegramService(_apiConfig)
+                : NullTelegramService.Instance;
         }
 
         // ══════════════════════════════════════════════════════════
@@ -98,8 +141,27 @@ namespace MT5TradingBot.Services
         public async Task StartAsync()
         {
             if (_running) return;
+            _currentMode = _cfg.OperatingMode;
             _running = true;
             _emergencyStopFired = false;
+            _edgePaused = false;
+            _edgeMonitor = null;
+
+            if (_cfg.EdgeMonitorEnabled && _tradeDb != null)
+            {
+                _edgeMonitor = new EdgeHealthMonitor(
+                    _cfg.EdgeWindowTrades,
+                    _cfg.MinWinRatePct,
+                    _cfg.MaxConsecutiveLosses);
+
+                var history = await _tradeDb.GetRecentClosedAsync(_cfg.EdgeWindowTrades)
+                    .ConfigureAwait(false);
+                _edgeMonitor.Seed(history.Reverse().Select(r => r.ProfitUsd));
+                var status = _edgeMonitor.GetStatus();
+                Log($"[EdgeMonitor] Seeded with {history.Count} closed trades. " +
+                    $"Win rate: {status.WinRatePct:F1}%");
+                OnEdgeStatusChanged?.Invoke(status);
+            }
 
             EnsureFolders();
             EnsureTradeLogHeader();
@@ -147,6 +209,166 @@ namespace MT5TradingBot.Services
         }
 
         // ══════════════════════════════════════════════════════════
+        //  PAPER TRADING — SIMULATE OPEN + HEARTBEAT CLOSE DETECTION
+        // ══════════════════════════════════════════════════════════
+
+        private TradeResult SimulatePaperTrade(TradeRequest req, double livePrice)
+        {
+            long ticket = Interlocked.Increment(ref _paperTicketCounter);
+            double fillPrice = livePrice > 0 ? livePrice : req.EntryPrice;
+
+            var pos = new LivePosition
+            {
+                Ticket       = ticket,
+                Symbol       = req.Pair,
+                Type         = req.TradeType,
+                Lots         = req.LotSize,
+                OpenPrice    = fillPrice,
+                CurrentPrice = fillPrice,
+                StopLoss     = req.StopLoss,
+                TakeProfit   = req.TakeProfit,
+                Profit       = 0,
+                MagicNumber  = req.MagicNumber,
+                Comment      = "[PAPER] " + req.Comment,
+                OpenTime     = DateTime.UtcNow
+            };
+
+            lock (_paperPositions)
+                _paperPositions.Add(pos);
+
+            Log($"[PAPER] Simulated {req.TradeType} {req.Pair} lot={req.LotSize:F2} " +
+                $"@ {fillPrice:F5}  SL={req.StopLoss:F5}  TP={req.TakeProfit:F5}  ticket=#{ticket}");
+
+            return new TradeResult
+            {
+                RequestId     = req.Id,
+                Status        = TradeStatus.Filled,
+                Ticket        = ticket,
+                ExecutedPrice = fillPrice,
+                ExecutedLots  = req.LotSize,
+                ExecutedAt    = DateTime.UtcNow
+            };
+        }
+
+        private async Task CheckPaperPositionsAsync()
+        {
+            if (!_cfg.PaperTrading) return;
+
+            List<LivePosition> snapshot;
+            lock (_paperPositions)
+            {
+                if (_paperPositions.Count == 0) return;
+                snapshot = [.. _paperPositions];
+            }
+
+            // Fetch live prices for every unique symbol
+            var symbols = snapshot.Select(p => p.Symbol).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+            var prices  = new Dictionary<string, (double Bid, double Ask)>(StringComparer.OrdinalIgnoreCase);
+            foreach (var sym in symbols)
+            {
+                var info = await _bridge.GetSymbolInfoAsync(sym).ConfigureAwait(false);
+                if (info != null) prices[sym] = (info.Bid, info.Ask);
+            }
+
+            var toClose = new List<(LivePosition Pos, double ClosePrice, string Reason)>();
+
+            lock (_paperPositions)
+            {
+                foreach (var pos in _paperPositions)
+                {
+                    if (!prices.TryGetValue(pos.Symbol, out var px)) continue;
+
+                    double closePrice = pos.Type == TradeType.BUY ? px.Bid : px.Ask;
+                    double pipSize    = Core.LotCalculator.GetPipSize(pos.Symbol.ToUpperInvariant());
+                    double pipValue   = Core.LotCalculator.GetPipValuePerLot(pos.Symbol.ToUpperInvariant());
+                    double priceDiff  = pos.Type == TradeType.BUY
+                        ? closePrice - pos.OpenPrice
+                        : pos.OpenPrice - closePrice;
+
+                    pos.CurrentPrice = closePrice;
+                    pos.Profit       = pipSize > 0 ? priceDiff / pipSize * pipValue * pos.Lots : 0;
+
+                    // SL → Breakeven for paper positions
+                    if (!_slMovedTickets.Contains(pos.Ticket) && pos.TakeProfit > 0)
+                    {
+                        double tpDist  = Math.Abs(pos.TakeProfit - pos.OpenPrice);
+                        double moved   = pos.Type == TradeType.BUY
+                            ? closePrice - pos.OpenPrice
+                            : pos.OpenPrice - closePrice;
+                        double bePct   = _cfg.SlToBeTrigerPct > 0 && _cfg.SlToBeTrigerPct <= 1.0
+                            ? _cfg.SlToBeTrigerPct : 0.6;
+
+                        if (tpDist > 0 && moved >= tpDist * bePct)
+                        {
+                            pos.StopLoss = pos.OpenPrice;
+                            _slMovedTickets.Add(pos.Ticket);
+                            Log($"[PAPER] SL→BE #{pos.Ticket} {pos.Symbol} → {pos.OpenPrice:F5}");
+                        }
+                    }
+
+                    // SL hit?
+                    if (pos.StopLoss > 0)
+                    {
+                        bool slHit = pos.Type == TradeType.BUY
+                            ? closePrice <= pos.StopLoss
+                            : closePrice >= pos.StopLoss;
+                        if (slHit) { toClose.Add((pos, pos.StopLoss, "SL")); continue; }
+                    }
+
+                    // TP hit?
+                    if (pos.TakeProfit > 0)
+                    {
+                        bool tpHit = pos.Type == TradeType.BUY
+                            ? closePrice >= pos.TakeProfit
+                            : closePrice <= pos.TakeProfit;
+                        if (tpHit) { toClose.Add((pos, pos.TakeProfit, "TP")); }
+                    }
+                }
+
+                foreach (var (pos, _, _) in toClose)
+                    _paperPositions.Remove(pos);
+            }
+
+            foreach (var (pos, closePrice, reason) in toClose)
+            {
+                double pipSize   = Core.LotCalculator.GetPipSize(pos.Symbol.ToUpperInvariant());
+                double pipValue  = Core.LotCalculator.GetPipValuePerLot(pos.Symbol.ToUpperInvariant());
+                double priceDiff = pos.Type == TradeType.BUY
+                    ? closePrice - pos.OpenPrice
+                    : pos.OpenPrice - closePrice;
+                double profitUsd = pipSize > 0 ? priceDiff / pipSize * pipValue * pos.Lots : 0;
+
+                Log($"[PAPER] #{pos.Ticket} {pos.Symbol} {pos.Type} closed at {reason} " +
+                    $"{closePrice:F5} | P&L: {profitUsd:+0.00;-0.00} USD");
+                LogClose(pos);
+
+                if (_tradeDb != null)
+                    _ = _tradeDb.UpdateCloseAsync(pos.Ticket, profitUsd, DateTime.UtcNow);
+
+                _ = _telegram.SendTradeClosedAsync(pos.Symbol, profitUsd, pos.Ticket)
+                              .ConfigureAwait(false);
+
+                if (_edgeMonitor != null)
+                {
+                    var status = _edgeMonitor.Record(profitUsd);
+                    Log($"[EdgeMonitor] Win rate: {status.WinRatePct:F1}% " +
+                        $"({status.SampleSize} trades), consecutive losses: {status.ConsecutiveLosses}");
+                    OnEdgeStatusChanged?.Invoke(status);
+
+                    if (status.IsDegraded && !_edgePaused)
+                    {
+                        _edgePaused = true;
+                        Log("[EdgeMonitor] Edge degraded — auto-pausing.");
+                        _ = _telegram.SendRiskBlockedAsync("ALL",
+                            $"Edge degraded: {status.WinRatePct:F1}% win rate, " +
+                            $"{status.ConsecutiveLosses} consecutive losses. Bot paused.")
+                            .ConfigureAwait(false);
+                    }
+                }
+            }
+        }
+
+        // ══════════════════════════════════════════════════════════
         //  HEARTBEAT LOOP  (runs on background thread)
         // ══════════════════════════════════════════════════════════
 
@@ -185,8 +407,14 @@ namespace MT5TradingBot.Services
                     // SL → Breakeven
                     await CheckSLToBreakevenAsync().ConfigureAwait(false);
 
+                    // Trailing stop
+                    await CheckTrailingStopAsync().ConfigureAwait(false);
+
                     // Detect and log closed positions
                     await CheckClosedPositionsAsync().ConfigureAwait(false);
+
+                    // Simulate SL/TP closes for paper positions
+                    await CheckPaperPositionsAsync().ConfigureAwait(false);
 
                     // Poll for unprocessed files (watcher backup)
                     await PollFolderAsync().ConfigureAwait(false);
@@ -283,8 +511,15 @@ namespace MT5TradingBot.Services
 
         private async Task ProcessSignalFileAsync(string path)
         {
-            // In manual-execute mode, skip files already shown to the user
-            if (ManualExecuteOnly)
+            // Monitor mode: ignore signal files entirely — heartbeat still runs
+            if (_currentMode == BotMode.Monitor)
+            {
+                Log($"[BOT] Signal ignored in Monitor mode: {Path.GetFileName(path)}");
+                return;
+            }
+
+            // ManualApproval mode: skip files already shown to the user
+            if (_currentMode == BotMode.ManualApproval)
             {
                 await _fileLock.WaitAsync(_cts.Token).ConfigureAwait(false);
                 bool already = _shownPaths.Contains(path);
@@ -333,6 +568,9 @@ namespace MT5TradingBot.Services
                     _shownPaths.Add(path);
                     _fileLock.Release();
                     Log($"[BOT] Signal {request.Id} queued — click ▶ Execute on the card to place trade.");
+                    _ = _telegram.SendApprovalNeededAsync(
+                        request.Pair, request.TradeType.ToString(), request.LotSize)
+                        .ConfigureAwait(false);
                     return;
                 }
 
@@ -400,7 +638,8 @@ namespace MT5TradingBot.Services
                 if (result.IsSuccess) return result;
 
                 // Do not retry validation failures; they will not change.
-                if (result.ErrorCode is "VALIDATION" or "REJECTED_CONFIG" or "DAILY_LIMIT")
+                if (result.ErrorCode is "VALIDATION" or "REJECTED_CONFIG" or "DAILY_LIMIT"
+                                         or "RISK_BLOCKED" or "EDGE_PAUSED")
                     return result;
 
                 if (attempt < attempts)
@@ -419,6 +658,18 @@ namespace MT5TradingBot.Services
 
         public async Task<TradeResult> ExecuteTradeWithValidationAsync(TradeRequest request)
         {
+            if (_edgePaused)
+            {
+                return new TradeResult
+                {
+                    RequestId = request.Id,
+                    Status = TradeStatus.Rejected,
+                    ErrorCode = "EDGE_PAUSED",
+                    ErrorMessage = "Edge health monitor paused new trade execution.",
+                    ExecutedAt = DateTime.UtcNow
+                };
+            }
+
             if (_emergencyStopFired)
                 return Fail(request.Id, "EMERGENCY_STOP",
                     "Emergency stop active - max drawdown hit. Restart bot to resume.");
@@ -426,10 +677,6 @@ namespace MT5TradingBot.Services
             await _tradeLock.WaitAsync(_cts.Token).ConfigureAwait(false);
             try
             {
-                // ── 1. Basic model validation ──────────────────────
-                var (valid, validErr) = request.Validate();
-                if (!valid) return Fail(request.Id, "VALIDATION", validErr);
-
                 // ── 1b. Signal age check ───────────────────────────
                 if (request.ExpiryMinutes > 0)
                 {
@@ -464,7 +711,7 @@ namespace MT5TradingBot.Services
                     return Fail(request.Id, "NO_ACCOUNT", "Could not fetch account info from MT5");
 
                 // ── 5. Fetch live symbol info (price + spread) ─────
-                // Single call reused for auto-lot, R:R, portfolio risk, and spread check.
+                // Single call reused for risk validation and slippage checks.
                 var symbolInfo = await _bridge.GetSymbolInfoAsync(request.Pair).ConfigureAwait(false);
                 var pairRules = _pairSettings?.GetForPair(request.Pair);
                 if (pairRules != null)
@@ -475,104 +722,64 @@ namespace MT5TradingBot.Services
                     ? (request.TradeType == Models.TradeType.BUY ? symbolInfo.Ask : symbolInfo.Bid)
                     : 0;
 
-                double refEntry = request.EntryPrice > 0 ? request.EntryPrice
-                                : livePrice > 0          ? livePrice
-                                : EstimateMarketPrice(request); // last-resort fallback
+                // ── 6. Risk validation (delegated to RiskManager) ──
+                var openPositions = await _bridge.GetPositionsAsync().ConfigureAwait(false);
 
-                // ── 6. Auto lot calculation ────────────────────────
-                if (_cfg.AutoLotCalculation)
+                // Include simulated positions so risk and correlation checks see them
+                if (_cfg.PaperTrading && _paperPositions.Count > 0)
                 {
-                    request.LotSize = LotCalculator.Calculate(
-                        account.Equity, _cfg.MaxRiskPercent,
-                        refEntry, request.StopLoss, request.Pair);
-
-                    Log($"[BOT] Auto lot: {request.LotSize:F2} " +
-                        $"(${LotCalculator.DollarRisk(request.LotSize, refEntry, request.StopLoss, request.Pair):F2} risk)" +
-                        (livePrice > 0 ? $" @ live {(request.TradeType == Models.TradeType.BUY ? "Ask" : "Bid")} {livePrice:F5}" : " @ estimated price"));
+                    lock (_paperPositions)
+                        openPositions = [.. openPositions, .. _paperPositions];
                 }
 
-                // ── 7. R:R check ───────────────────────────────────
-                double rr = LotCalculator.RiskRewardRatio(refEntry, request.StopLoss, request.TakeProfit);
-                double minRr = pairRules?.ScalpingMinRR > 0 ? pairRules.ScalpingMinRR : _cfg.MinRRRatio;
-                if (_cfg.EnforceRR && rr < minRr)
-                    return Fail(request.Id, "REJECTED_CONFIG",
-                        $"R:R {rr:F2} is below minimum {minRr:F2}");
-
-                if (rr < minRr)
-                    Log($"[WARN] R:R {rr:F2} below minimum {minRr:F2} - proceeding (enforce_rr=false)");
-
-                if (pairRules != null && refEntry > 0)
+                // Max concurrent positions cap
+                if (_cfg.MaxConcurrentPositions > 0)
                 {
-                    double pipSize = pairRules.PipSize > 0 ? pairRules.PipSize : LotCalculator.GetPipSize(request.Pair);
-                    double slPips = Math.Abs(refEntry - request.StopLoss) / pipSize;
-                    double tpPips = Math.Abs(request.TakeProfit - refEntry) / pipSize;
-
-                    if (pairRules.MinSlPips > 0 && slPips < pairRules.MinSlPips)
-                        return Fail(request.Id, "PAIR_MIN_SL",
-                            $"{request.Pair} SL distance {slPips:F1} pips is below pair minimum {pairRules.MinSlPips:F1} pips");
-
-                    if (pairRules.MaxSlPips > 0 && slPips > pairRules.MaxSlPips)
-                        return Fail(request.Id, "PAIR_MAX_SL",
-                            $"{request.Pair} SL distance {slPips:F1} pips exceeds pair maximum {pairRules.MaxSlPips:F1} pips");
-
-                    if (pairRules.MinTpPips > 0 && tpPips < pairRules.MinTpPips)
-                        return Fail(request.Id, "PAIR_MIN_TP",
-                            $"{request.Pair} TP distance {tpPips:F1} pips is below pair minimum {pairRules.MinTpPips:F1} pips");
-
-                    Log($"[BOT] Pair rule distances: SL {slPips:F1} pips, TP {tpPips:F1} pips.");
+                    int botPositions = openPositions.Count(p => p.MagicNumber == _cfg.MagicNumber);
+                    if (botPositions >= _cfg.MaxConcurrentPositions)
+                        return Fail(request.Id, "MAX_CONCURRENT_POSITIONS",
+                            $"Already have {botPositions} open position(s) " +
+                            $"(max {_cfg.MaxConcurrentPositions}). Close one first.");
                 }
 
-                // ── 8. Margin check ────────────────────────────────
-                if (account.FreeMargin < account.Balance * 0.05)
-                    return Fail(request.Id, "LOW_MARGIN",
-                        $"Free margin ${account.FreeMargin:F2} is critically low");
+                var riskResult = await _riskManager.ValidateAsync(
+                    request, account, symbolInfo, openPositions, _cfg, _cts.Token)
+                    .ConfigureAwait(false);
 
-                // ── 9. Total portfolio risk cap ────────────────────
-                if (_cfg.MaxTotalRiskPercent > 0 && account.Equity > 0)
+                if (!riskResult.IsApproved)
                 {
-                    var openPositions = await _bridge.GetPositionsAsync().ConfigureAwait(false);
-                    double totalOpenRisk = openPositions
-                        .Where(p => p.StopLoss > 0)
-                        .Sum(p => LotCalculator.DollarRisk(p.Lots, p.OpenPrice, p.StopLoss, p.Symbol));
-
-                    double newTradeRisk = LotCalculator.DollarRisk(
-                        request.LotSize, refEntry, request.StopLoss, request.Pair);
-
-                    double totalRiskPct = (totalOpenRisk + newTradeRisk) / account.Equity * 100.0;
-
-                    if (totalRiskPct > _cfg.MaxTotalRiskPercent)
-                        return Fail(request.Id, "PORTFOLIO_RISK_CAP",
-                            $"Total risk would be {totalRiskPct:F1}% (${totalOpenRisk + newTradeRisk:F0}) - cap is {_cfg.MaxTotalRiskPercent:F1}%");
-
-                    Log($"[BOT] Portfolio risk: {totalRiskPct:F1}% / {_cfg.MaxTotalRiskPercent:F1}% cap");
+                    Log($"[RISK BLOCKED] {riskResult.Reason}");
+                    await _telegram.NotifyRiskBlockedAsync(request, riskResult.Reason)
+                        .ConfigureAwait(false);
+                    return Fail(request.Id, "RISK_BLOCKED", riskResult.Reason);
                 }
 
-                // ── 10. Spread check ───────────────────────────────
-                double maxSpreadPips = pairRules?.MaxSpreadPips > 0 ? pairRules.MaxSpreadPips : _cfg.MaxSpreadPips;
-                if (maxSpreadPips > 0)
+                // Apply validated lot size from RiskManager
+                request.LotSize = riskResult.ValidatedLotSize >= 0.01
+                    ? riskResult.ValidatedLotSize
+                    : request.LotSize;
+
+                Log($"[BOT] Risk OK: lot={request.LotSize:F2} " +
+                    $"risk={riskResult.RiskPercent:F1}% (${riskResult.DollarRisk:F2}) " +
+                    $"R:R={riskResult.RiskRewardRatio:F2} spread={riskResult.SpreadPips:F1}pips");
+
+                foreach (var warning in riskResult.Warnings)
+                    Log($"[WARN] {warning}");
+
+                // ── 9b. Correlation check ──────────────────────────────
+                if (_cfg.CorrelationCheckEnabled)
                 {
-                    if (symbolInfo != null)
-                    {
-                        if (symbolInfo.SpreadPips > maxSpreadPips)
-                            return Fail(request.Id, "HIGH_SPREAD",
-                                $"{request.Pair} spread {symbolInfo.SpreadPips:F1} pips exceeds max {maxSpreadPips:F1} pips");
+                    var openSymbols = openPositions
+                        .Where(p => p.MagicNumber == _cfg.MagicNumber)
+                        .Select(p => p.Symbol);
 
-                        if (pairRules?.AvoidTradeIfSpreadAbovePercentOfTp > 0 && refEntry > 0)
-                        {
-                            double pipSize = pairRules.PipSize > 0 ? pairRules.PipSize : LotCalculator.GetPipSize(request.Pair);
-                            double tpPips = Math.Abs(request.TakeProfit - refEntry) / pipSize;
-                            double spreadPercentOfTp = tpPips > 0 ? symbolInfo.SpreadPips / tpPips * 100.0 : 0;
-                            if (tpPips > 0 && spreadPercentOfTp > pairRules.AvoidTradeIfSpreadAbovePercentOfTp)
-                                return Fail(request.Id, "PAIR_SPREAD_TP_RATIO",
-                                    $"{request.Pair} spread is {spreadPercentOfTp:F1}% of TP distance; pair max is {pairRules.AvoidTradeIfSpreadAbovePercentOfTp:F1}%");
-                        }
+                    string? blocking = Core.CorrelationGroups.FindBlockingSymbol(
+                        request.Pair, openSymbols, _cfg.SymbolSuffix);
 
-                        Log($"[BOT] Spread: {symbolInfo.SpreadPips:F1} pips (max {maxSpreadPips:F1})");
-                    }
-                    else
-                    {
-                        Log($"[WARN] Could not fetch spread for {request.Pair} - proceeding without check");
-                    }
+                    if (blocking != null)
+                        return Fail(request.Id, "CORRELATION_BLOCK",
+                            $"Correlated position already open: {blocking}. " +
+                            $"Close it first or set correlation_check_enabled=false to override.");
                 }
 
                 // ── 11. Execute ────────────────────────────────────
@@ -606,13 +813,18 @@ namespace MT5TradingBot.Services
                 if (request.TakeProfit2 > 0)
                     Log($"[BOT] TP2 {request.TakeProfit2:F5} detected but one-click mode opens only one trade using TP {request.TakeProfit:F5}.");
 
-                Log($"[BOT] Sending trade to MT5 (R:R {rr:F2}, lot {request.LotSize:F2})");
-                var result = await _bridge.OpenTradeAsync(request).ConfigureAwait(false);
+                Log($"[BOT] Sending trade to MT5 (R:R {riskResult.RiskRewardRatio:F2}, " +
+                    $"lot {request.LotSize:F2})");
+                var result = _cfg.PaperTrading
+                    ? SimulatePaperTrade(request, livePrice)
+                    : await _bridge.OpenTradeAsync(request).ConfigureAwait(false);
 
                 if (result.IsSuccess)
                 {
                     _tradesToday++;
                     Log($"[OK] MT5 accepted ticket #{result.Ticket} | Trades today: {_tradesToday}/{_cfg.MaxTradesPerDay}");
+                    await _telegram.NotifyTradeOpenedAsync(result, request)
+                        .ConfigureAwait(false);
 
                     // Slippage check: only for MARKET orders where we have a live reference price
                     double maxSlippagePips = pairRules?.MaxSlippagePips > 0
@@ -625,11 +837,40 @@ namespace MT5TradingBot.Services
                     {
                         double pipSize = LotCalculator.GetPipSize(request.Pair.ToUpperInvariant());
                         double slippagePips = Math.Abs(result.ExecutedPrice - livePrice) / pipSize;
-                        if (slippagePips > maxSlippagePips)
+                        if (slippagePips > maxSlippagePips * 2)
+                        {
+                            Log($"[RISK] Extreme slippage ({slippagePips:F1} pips > {maxSlippagePips * 2:F1} limit×2)" +
+                                $" — closing #{result.Ticket}");
+
+                            bool closed = await _bridge.CloseTradeAsync(result.Ticket).ConfigureAwait(false);
+
+                            Log(closed
+                                ? $"[RISK] Position #{result.Ticket} closed due to extreme slippage."
+                                : $"[ERROR] Failed to close #{result.Ticket} after extreme slippage.");
+
+                            await _telegram.SendAsync(
+                                $"<b>⚠️ EXTREME SLIPPAGE — POSITION CLOSED</b>\n" +
+                                $"Ticket: #{result.Ticket}  {request.Pair}\n" +
+                                $"Slippage: {slippagePips:F1} pips (max: {maxSlippagePips:F1})\n" +
+                                $"Expected: {livePrice:F5}  Filled: {result.ExecutedPrice:F5}\n" +
+                                $"Position {(closed ? "CLOSED ✅" : "CLOSE FAILED ❌")}")
+                                .ConfigureAwait(false);
+                        }
+                        else if (slippagePips > maxSlippagePips)
+                        {
                             Log($"[WARN] HIGH SLIPPAGE on #{result.Ticket}: {slippagePips:F1} pips " +
                                 $"(expected {livePrice:F5}, filled {result.ExecutedPrice:F5})");
+
+                            await _telegram.SendAsync(
+                                $"<b>⚠️ High Slippage Warning</b>\n" +
+                                $"#{result.Ticket} {request.Pair}: {slippagePips:F1} pips slippage " +
+                                $"(max {maxSlippagePips:F1})")
+                                .ConfigureAwait(false);
+                        }
                         else
+                        {
                             Log($"[BOT] Slippage: {slippagePips:F1} pips (max {maxSlippagePips:F1})");
+                        }
                     }
                 }
                 else
@@ -657,6 +898,7 @@ namespace MT5TradingBot.Services
             // Prune tickets that are no longer open
             var openTickets = new HashSet<long>(positions.Select(p => p.Ticket));
             _slMovedTickets.IntersectWith(openTickets);
+            _trailingActiveTickets.IntersectWith(openTickets);
 
             foreach (var pos in positions)
             {
@@ -680,7 +922,8 @@ namespace MT5TradingBot.Services
                     ? pos.CurrentPrice - pos.OpenPrice
                     : pos.OpenPrice - pos.CurrentPrice;
 
-                bool shouldMoveSL = currentMove >= tpDistance * 0.6;
+                double beTriggerPct = _cfg.SlToBeTrigerPct > 0 && _cfg.SlToBeTrigerPct <= 1.0 ? _cfg.SlToBeTrigerPct : 0.6;
+                bool shouldMoveSL = currentMove >= tpDistance * beTriggerPct;
 
                 if (shouldMoveSL)
                 {
@@ -698,9 +941,80 @@ namespace MT5TradingBot.Services
         }
 
         // ══════════════════════════════════════════════════════════
-        //  CLOSED POSITION DETECTION
+        //  TRAILING STOP
         // ══════════════════════════════════════════════════════════
 
+        private async Task CheckTrailingStopAsync()
+        {
+            if (!_bridge.IsConnected) return;
+
+            List<LivePosition> positions;
+            try { positions = await _bridge.GetPositionsAsync().ConfigureAwait(false); }
+            catch { return; }
+
+            foreach (var pos in positions)
+            {
+                if (pos.MagicNumber != _cfg.MagicNumber) continue;
+
+                var rules = _pairSettings?.GetForPair(pos.Symbol);
+                if (rules == null || rules.TrailingStartPips <= 0 || rules.TrailingStepPips <= 0)
+                    continue;
+
+                double pipSize = rules.PipSize > 0
+                    ? rules.PipSize
+                    : LotCalculator.GetPipSize(pos.Symbol);
+
+                if (pipSize <= 0) continue;
+
+                double profitPips = pos.Type == Models.TradeType.BUY
+                    ? (pos.CurrentPrice - pos.OpenPrice) / pipSize
+                    : (pos.OpenPrice - pos.CurrentPrice) / pipSize;
+
+                if (profitPips < rules.TrailingStartPips) continue;
+
+                // Ideal trailing SL: keep TrailingStepPips behind current price
+                double idealSl = pos.Type == Models.TradeType.BUY
+                    ? pos.CurrentPrice - rules.TrailingStepPips * pipSize
+                    : pos.CurrentPrice + rules.TrailingStepPips * pipSize;
+
+                // Round to the same decimal precision as the current SL to avoid noise
+                int digits = pos.StopLoss.ToString("F5").TrimEnd('0').Length - 1;
+                digits = Math.Max(4, Math.Min(digits, 5));
+                idealSl = Math.Round(idealSl, digits);
+
+                // Only move SL if it improves position (never move backward)
+                bool improvesPosition = pos.Type == Models.TradeType.BUY
+                    ? idealSl > pos.StopLoss
+                    : idealSl < pos.StopLoss;
+
+                if (!improvesPosition) continue;
+
+                // Must not exceed TakeProfit boundary
+                if (pos.Type == Models.TradeType.BUY && idealSl >= pos.TakeProfit) continue;
+                if (pos.Type == Models.TradeType.SELL && idealSl <= pos.TakeProfit) continue;
+
+                Log($"📈 Trailing SL #{pos.Ticket} {pos.Symbol}: {pos.StopLoss:F5} → {idealSl:F5} " +
+                    $"(profit {profitPips:F1} pips, step {rules.TrailingStepPips:F1} pips)");
+
+                bool ok = await _bridge.ModifyPositionAsync(
+                    pos.Ticket, idealSl, pos.TakeProfit).ConfigureAwait(false);
+
+                if (ok)
+                {
+                    _trailingActiveTickets.Add(pos.Ticket);
+
+                    // If trailing is now past breakeven, mark as BE-moved so the
+                    // BE check does not attempt a redundant modify on the same ticket.
+                    bool pastBreakeven = pos.Type == Models.TradeType.BUY
+                        ? idealSl >= pos.OpenPrice
+                        : idealSl <= pos.OpenPrice;
+                    if (pastBreakeven)
+                        _slMovedTickets.Add(pos.Ticket);
+                }
+            }
+        }
+
+        // CLOSED POSITION DETECTION
         private async Task CheckClosedPositionsAsync()
         {
             if (!_bridge.IsConnected) return;
@@ -718,6 +1032,30 @@ namespace MT5TradingBot.Services
                     Log($"📕 Closed: #{closed.Ticket} {closed.Symbol} {closed.Type} " +
                         $"P&L: ${closed.Profit:F2}");
                     LogClose(closed);
+
+                    if (_tradeDb != null)
+                        _ = _tradeDb.UpdateCloseAsync(closed.Ticket, closed.Profit, DateTime.UtcNow);
+
+                    if (_edgeMonitor != null)
+                    {
+                        var status = _edgeMonitor.Record(closed.Profit);
+                        Log($"[EdgeMonitor] Win rate: {status.WinRatePct:F1}% " +
+                            $"({status.SampleSize} trades), " +
+                            $"Consecutive losses: {status.ConsecutiveLosses}");
+
+                        if (status.IsDegraded && !_edgePaused)
+                        {
+                            _edgePaused = true;
+                            Log("[EdgeMonitor] Edge degraded - auto-pausing new trade execution.");
+                            _ = _telegram.SendRiskBlockedAsync("ALL",
+                                $"Edge health degraded: win rate {status.WinRatePct:F1}% " +
+                                $"({status.SampleSize} trades), " +
+                                $"{status.ConsecutiveLosses} consecutive losses. " +
+                                "Bot paused for new entries.").ConfigureAwait(false);
+                        }
+
+                        OnEdgeStatusChanged?.Invoke(status);
+                    }
                 }
             }
 
@@ -801,6 +1139,10 @@ namespace MT5TradingBot.Services
                     $"\"{result.ErrorMessage}\"");
 
                 File.AppendAllText(LogFile, line + Environment.NewLine);
+
+                if (_tradeDb != null)
+                    _ = _tradeDb.InsertAsync(req, result);
+
             }
             catch (Exception ex) { Log($"Log write error: {ex.Message}"); }
         }
