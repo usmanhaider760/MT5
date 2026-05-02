@@ -192,6 +192,8 @@ namespace MT5TradingBot.UI
         private RichTextBox _txtLog;
         private Button _btnClearLog;
         private Button _btnSaveLog;
+        private Button _btnOpenLogFile;
+        private Button _btnDeleteLogs;
 
         private void InitializeComponent()
         {
@@ -361,6 +363,8 @@ namespace MT5TradingBot.UI
             _txtLog = new RichTextBox();
             _btnClearLog = new Button();
             _btnSaveLog = new Button();
+            _btnOpenLogFile = new Button();
+            _btnDeleteLogs = new Button();
             dataGridViewTextBoxColumn1 = new DataGridViewTextBoxColumn();
             dataGridViewTextBoxColumn2 = new DataGridViewTextBoxColumn();
             dataGridViewTextBoxColumn3 = new DataGridViewTextBoxColumn();
@@ -2248,6 +2252,8 @@ namespace MT5TradingBot.UI
             _tabLog.Controls.Add(_txtLog);
             _tabLog.Controls.Add(_btnClearLog);
             _tabLog.Controls.Add(_btnSaveLog);
+            _tabLog.Controls.Add(_btnOpenLogFile);
+            _tabLog.Controls.Add(_btnDeleteLogs);
             _tabLog.Location = new Point(4, 24);
             _tabLog.Name = "_tabLog";
             _tabLog.Size = new Size(192, 72);
@@ -2293,6 +2299,38 @@ namespace MT5TradingBot.UI
             _btnSaveLog.TabIndex = 2;
             _btnSaveLog.Text = "Save Log";
             _btnSaveLog.UseVisualStyleBackColor = false;
+            // 
+            // _btnOpenLogFile
+            // 
+            _btnOpenLogFile.Anchor = AnchorStyles.Bottom | AnchorStyles.Left;
+            _btnOpenLogFile.BackColor = Color.FromArgb(99, 179, 237);
+            _btnOpenLogFile.Cursor = Cursors.Hand;
+            _btnOpenLogFile.FlatAppearance.BorderSize = 0;
+            _btnOpenLogFile.FlatStyle = FlatStyle.Flat;
+            _btnOpenLogFile.Font = new Font("Segoe UI Semibold", 9F);
+            _btnOpenLogFile.ForeColor = Color.FromArgb(10, 10, 20);
+            _btnOpenLogFile.Location = new Point(232, 658);
+            _btnOpenLogFile.Name = "_btnOpenLogFile";
+            _btnOpenLogFile.Size = new Size(110, 30);
+            _btnOpenLogFile.TabIndex = 3;
+            _btnOpenLogFile.Text = "Open Log File";
+            _btnOpenLogFile.UseVisualStyleBackColor = false;
+            // 
+            // _btnDeleteLogs
+            // 
+            _btnDeleteLogs.Anchor = AnchorStyles.Bottom | AnchorStyles.Left;
+            _btnDeleteLogs.BackColor = Color.FromArgb(252, 95, 95);
+            _btnDeleteLogs.Cursor = Cursors.Hand;
+            _btnDeleteLogs.FlatAppearance.BorderSize = 0;
+            _btnDeleteLogs.FlatStyle = FlatStyle.Flat;
+            _btnDeleteLogs.Font = new Font("Segoe UI Semibold", 9F);
+            _btnDeleteLogs.ForeColor = Color.FromArgb(10, 10, 20);
+            _btnDeleteLogs.Location = new Point(352, 658);
+            _btnDeleteLogs.Name = "_btnDeleteLogs";
+            _btnDeleteLogs.Size = new Size(100, 30);
+            _btnDeleteLogs.TabIndex = 4;
+            _btnDeleteLogs.Text = "Delete Logs";
+            _btnDeleteLogs.UseVisualStyleBackColor = false;
             // 
             // dataGridViewTextBoxColumn1
             // 

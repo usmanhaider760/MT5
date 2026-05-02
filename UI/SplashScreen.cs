@@ -13,13 +13,15 @@ namespace MT5TradingBot.UI
         private readonly List<CheckRowControl> _rows = new();
         private int _totalModules;
         private int _passedModules;
-        private CancellationTokenSource? _cts;
+        private readonly CancellationTokenSource _userCancelCts = new();
+        private bool _cancelRequested;
 
         public SplashScreen()
         {
             InitializeComponent();
             AppIcon.ApplyTo(this);
             this.Load         += SplashScreen_Load;
+            this.FormClosing  += SplashScreen_FormClosing;
             _btnProceed.Click += BtnProceed_Click;
             _btnCancel.Click  += BtnCancel_Click;
         }
@@ -34,6 +36,7 @@ namespace MT5TradingBot.UI
             // Load settings first, then build module list
             var sm = new SettingsManager();
             await sm.LoadAsync().ConfigureAwait(false);
+            if (_cancelRequested) return;
 
             IModule[] modules =
             [
@@ -44,15 +47,17 @@ namespace MT5TradingBot.UI
 
             _totalModules = modules.Length;
 
+            using var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
             using var cts = CancellationTokenSource.CreateLinkedTokenSource(
-                new CancellationTokenSource(TimeSpan.FromSeconds(15)).Token);
-            _cts = cts;
+                timeoutCts.Token,
+                _userCancelCts.Token);
 
             try
             {
                 foreach (var module in modules)
                 {
                     cts.Token.ThrowIfCancellationRequested();
+                    if (_cancelRequested) return;
 
                     var row = AddCheckRow(module.Icon, module.Name, module.Description);
                     SetStatus($"Checking {module.Name}...");
@@ -61,6 +66,7 @@ namespace MT5TradingBot.UI
                     ModuleStatus result;
                     try   { result = await module.CheckAsync(cts.Token).ConfigureAwait(false); }
                     catch { result = new ModuleStatus(false, "Check timed out or threw an exception"); }
+                    if (_cancelRequested) return;
 
                     row.SetResult(result.IsOk, result.Message);
                     if (result.IsOk) _passedModules++;
@@ -84,8 +90,9 @@ namespace MT5TradingBot.UI
 
                 try { await Task.Delay(1500, cts.Token).ConfigureAwait(false); }
                 catch (OperationCanceledException) { return; }
+                if (_cancelRequested) return;
 
-                this.Invoke(LaunchMainForm);
+                SafeUi(LaunchMainForm);
             }
             else
             {
@@ -97,6 +104,7 @@ namespace MT5TradingBot.UI
 
         private CheckRowControl AddCheckRow(string icon, string name, string description)
         {
+            if (IsDisposed || _cancelRequested) throw new OperationCanceledException();
             if (_pnlCheckArea.InvokeRequired)
                 return (CheckRowControl)_pnlCheckArea.Invoke(() => AddCheckRow(icon, name, description))!;
 
@@ -113,6 +121,7 @@ namespace MT5TradingBot.UI
 
         private void SetStatus(string text)
         {
+            if (IsDisposed || _cancelRequested) return;
             if (_lblStatus.InvokeRequired)
                 _lblStatus.Invoke(() => _lblStatus.Text = text);
             else
@@ -123,6 +132,7 @@ namespace MT5TradingBot.UI
         {
             Action act = () =>
             {
+                if (IsDisposed || _cancelRequested) return;
                 _btnProceed.Text      = text;
                 _btnProceed.BackColor = accent;
                 _btnProceed.ForeColor = Color.White;
@@ -138,6 +148,7 @@ namespace MT5TradingBot.UI
         {
             Action act = () =>
             {
+                if (IsDisposed || _cancelRequested) return;
                 int trackWidth = _pnlProgressTrack.Width;
                 int fillWidth  = final
                     ? trackWidth
@@ -150,7 +161,9 @@ namespace MT5TradingBot.UI
 
         private void LaunchMainForm()
         {
+            if (IsDisposed || _cancelRequested) return;
             ShouldProceed = true;
+            DialogResult = DialogResult.OK;
             this.Close();
         }
 
@@ -158,9 +171,33 @@ namespace MT5TradingBot.UI
 
         private void BtnCancel_Click(object? sender, EventArgs e)
         {
-            _cts?.Cancel();
-            ShouldProceed = false;
+            CancelStartup();
+            DialogResult = DialogResult.Cancel;
             this.Close();
+        }
+
+        private void SplashScreen_FormClosing(object? sender, FormClosingEventArgs e)
+        {
+            if (!ShouldProceed)
+                CancelStartup();
+        }
+
+        private void CancelStartup()
+        {
+            if (_cancelRequested) return;
+
+            _cancelRequested = true;
+            ShouldProceed = false;
+            _btnCancel.Enabled = false;
+            _btnProceed.Enabled = false;
+            _userCancelCts.Cancel();
+        }
+
+        private void SafeUi(Action action)
+        {
+            if (IsDisposed || _cancelRequested) return;
+            if (InvokeRequired) Invoke(action);
+            else action();
         }
 
         // ── Inner control — one row per module ────────────────────

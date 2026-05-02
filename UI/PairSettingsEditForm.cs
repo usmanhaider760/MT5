@@ -211,7 +211,7 @@ namespace MT5TradingBot.UI
         {
             if (string.IsNullOrWhiteSpace(_txtPair.Text))
             {
-                MessageBox.Show(this, "Pair name is required.", "Pair Settings", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                AppMessageBox.Warning(this, "Pair name is required.", "Pair Settings");
                 return;
             }
 
@@ -310,7 +310,7 @@ namespace MT5TradingBot.UI
             }
             catch (Exception ex)
             {
-                MessageBox.Show(this, ex.Message, "Pair Settings JSON", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                AppMessageBox.Warning(this, ex.Message, "Pair Settings JSON");
                 return false;
             }
         }

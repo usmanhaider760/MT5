@@ -1,4 +1,5 @@
 using Microsoft.Extensions.DependencyInjection;
+using MT5TradingBot.Core;
 using MT5TradingBot.Data;
 using MT5TradingBot.Modules.NewsFilter;
 using MT5TradingBot.Modules.RiskManagement;
@@ -14,19 +15,7 @@ namespace MT5TradingBot
         static void Main()
         {
             // ── Logger setup ──────────────────────────────────────
-            string logDir = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-                "MT5TradingBot", "logs");
-            Directory.CreateDirectory(logDir);
-
-            Log.Logger = new LoggerConfiguration()
-                .MinimumLevel.Debug()
-                .WriteTo.File(
-                    Path.Combine(logDir, "bot-.log"),
-                    rollingInterval: RollingInterval.Day,
-                    retainedFileCountLimit: 30,
-                    outputTemplate: "[{Timestamp:HH:mm:ss} {Level:u3}] {Message:lj}{NewLine}{Exception}")
-                .CreateLogger();
+            AppLogFiles.ConfigureNewSession();
 
             Log.Information("=== MT5TradingBot starting ===");
 
@@ -34,7 +23,8 @@ namespace MT5TradingBot
             Application.ThreadException += (_, e) =>
             {
                 Log.Error(e.Exception, "Unhandled UI thread exception");
-                MessageBox.Show(
+                AppMessageBox.Error(
+                    null,
                     $"An error occurred:\n\n{e.Exception.Message}\n\nDetails saved to log.",
                     "MT5 Bot — Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
             };
@@ -43,7 +33,7 @@ namespace MT5TradingBot
             {
                 if (e.ExceptionObject is Exception ex)
                     Log.Fatal(ex, "Fatal unhandled exception");
-                Log.CloseAndFlush();
+                AppLogFiles.Close();
             };
 
             Application.SetUnhandledExceptionMode(UnhandledExceptionMode.CatchException);
@@ -80,7 +70,7 @@ namespace MT5TradingBot
             Application.Run(provider.GetRequiredService<MainForm>());
 
             Log.Information("=== MT5TradingBot shutdown ===");
-            Log.CloseAndFlush();
+            AppLogFiles.Close();
         }
     }
 }

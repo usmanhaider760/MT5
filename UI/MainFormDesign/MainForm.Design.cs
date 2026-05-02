@@ -540,7 +540,7 @@ namespace MT5TradingBot.UI
             _txtLog.Margin = Padding.Empty;
 
             layout.Controls.Add(_txtLog, 0, 0);
-            layout.Controls.Add(CreateButtonRow("_logButtons", _btnClearLog, _btnSaveLog), 0, 1);
+            layout.Controls.Add(CreateButtonRow("_logButtons", _btnClearLog, _btnOpenLogFile, _btnSaveLog, _btnDeleteLogs), 0, 1);
         }
 
         private static TableLayoutPanel ResetTabLayout(TabPage tab, string name, int columns, int rows)
@@ -644,6 +644,9 @@ namespace MT5TradingBot.UI
             StylePrimaryButton(_btnTestTelegram, C_ACCENT);
             StylePrimaryButton(_btnBotInstructions, C_ACCENT);
             StylePrimaryButton(_btnOpenFolder, C_ACCENT);
+            StylePrimaryButton(_btnOpenLogFile, C_ACCENT);
+            StylePrimaryButton(_btnSaveLog, C_ACCENT);
+            StylePrimaryButton(_btnDeleteLogs, C_RED);
             _pnlRR.BackColor = Color.FromArgb(24, 25, 38);
         }
 

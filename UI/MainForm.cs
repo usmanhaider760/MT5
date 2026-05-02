@@ -41,6 +41,8 @@ namespace MT5TradingBot.UI
         private bool _syncingAutoCloseValues;
         private IScalpingSessionService? _scalping;
         private readonly Button _btnStopScalping = new();
+        private const int MaxScreenLogLines = 500;
+        private const int MaxScreenLogChars = 180;
 
         // -- Pair analysis feed ------------------------------------
         private readonly Dictionary<string, Panel> _pairAnalysisCards = new(StringComparer.OrdinalIgnoreCase);
@@ -246,6 +248,8 @@ namespace MT5TradingBot.UI
 
             _btnClearLog.Click += BtnClearLog_Click;
             _btnSaveLog.Click  += BtnSaveLog_Click;
+            _btnOpenLogFile.Click += BtnOpenLogFile_Click;
+            _btnDeleteLogs.Click += BtnDeleteLogs_Click;
 
             _btnPairAdd.Click += BtnPairAdd_Click;
             _btnPairEdit.Click += BtnPairEdit_Click;
@@ -1714,7 +1718,7 @@ SAFETY RULES:
             }
             catch (Exception ex)
             {
-                MessageBox.Show(this, ex.Message, "Pair Settings", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                AppMessageBox.Warning(this, ex.Message, "Pair Settings");
             }
         }
 
@@ -1747,7 +1751,7 @@ SAFETY RULES:
             }
             catch (Exception ex)
             {
-                MessageBox.Show(this, ex.Message, "Pair Settings", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                AppMessageBox.Warning(this, ex.Message, "Pair Settings");
             }
         }
 
@@ -1757,12 +1761,12 @@ SAFETY RULES:
             if (selected == null || _pairSettings == null)
                 return;
 
-            var result = MessageBox.Show(
+            var result = AppMessageBox.Show(
                 this,
                 $"Delete pair settings for {selected.Pair}?",
                 "Pair Settings",
-                MessageBoxButtons.YesNo,
-                MessageBoxIcon.Warning);
+                MessageBoxIcon.Warning,
+                MessageBoxButtons.YesNo);
             if (result != DialogResult.Yes)
                 return;
 
@@ -1792,7 +1796,7 @@ SAFETY RULES:
             }
             catch (Exception ex)
             {
-                MessageBox.Show(this, ex.Message, "Pair Settings JSON", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                AppMessageBox.Warning(this, ex.Message, "Pair Settings JSON");
             }
         }
 
@@ -1936,16 +1940,62 @@ SAFETY RULES:
         public void Log(string msg, Color? color = null)
         {
             if (InvokeRequired) { Invoke(() => Log(msg, color)); return; }
-            string line = $"[{DateTime.Now:HH:mm:ss}] {msg}\n";
             Serilog.Log.Information("{msg}", msg);
+            string screenMessage = BuildScreenLogMessage(msg);
+            if (screenMessage.Length == 0) return;
+
+            string line = $"[{DateTime.Now:HH:mm:ss}] {screenMessage}\n";
             _txtLog.SuspendLayout();
             int start = _txtLog.TextLength;
             _txtLog.AppendText(line);
             _txtLog.Select(start, line.Length);
             _txtLog.SelectionColor = color ?? C_TEXT;
             _txtLog.Select(_txtLog.TextLength, 0);
+            TrimScreenLog();
             _txtLog.ResumeLayout();
             _txtLog.ScrollToCaret();
+        }
+
+        private static string BuildScreenLogMessage(string msg)
+        {
+            string text = CollapseWhitespace(msg);
+            string marker = text.StartsWith("[SCALP]", StringComparison.OrdinalIgnoreCase)
+                ? text[7..].Trim()
+                : text;
+            if (text.Length == 0 || (marker.Length > 0 && marker.All(ch => ch == '-')))
+                return "";
+
+            int detailIndex = text.IndexOf(" | ", StringComparison.Ordinal);
+            if (detailIndex > 0)
+            {
+                int secondDetailIndex = text.IndexOf(" | ", detailIndex + 3, StringComparison.Ordinal);
+                if (secondDetailIndex > 0)
+                    text = text[..secondDetailIndex];
+            }
+
+            return Truncate(text, MaxScreenLogChars);
+        }
+
+        private static string CollapseWhitespace(string value)
+        {
+            if (string.IsNullOrWhiteSpace(value)) return "";
+
+            var parts = value
+                .Replace('\r', ' ')
+                .Replace('\n', ' ')
+                .Replace('\t', ' ')
+                .Split(' ', StringSplitOptions.RemoveEmptyEntries);
+
+            return string.Join(' ', parts);
+        }
+
+        private void TrimScreenLog()
+        {
+            string[] lines = _txtLog.Lines;
+            if (lines.Length <= MaxScreenLogLines) return;
+
+            _txtLog.Lines = lines.Skip(lines.Length - MaxScreenLogLines).ToArray();
+            _txtLog.Select(_txtLog.TextLength, 0);
         }
 
         // -- Utility -----------------------------------------------
@@ -1958,8 +2008,8 @@ SAFETY RULES:
             return false;
         }
 
-        private static bool Confirm(string msg) =>
-            MessageBox.Show(msg, "Confirm", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) == DialogResult.Yes;
+        private bool Confirm(string msg) =>
+            AppMessageBox.Confirm(this, msg);
 
         private static void SetBtnState(Button btn, bool enabled)
         {
@@ -3671,8 +3721,7 @@ SAFETY RULES:
                 if (string.IsNullOrWhiteSpace(sigJson)) sigJson = info.RawJson ?? "";
                 if (string.IsNullOrWhiteSpace(sigJson))
                 {
-                    MessageBox.Show("Signal JSON not available.", "Signal JSON",
-                        MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    AppMessageBox.Info(form, "Signal JSON not available.", "Signal JSON");
                     return;
                 }
                 try
@@ -3783,8 +3832,7 @@ SAFETY RULES:
                     }
                     catch (Exception ex)
                     {
-                        MessageBox.Show($"Cannot save: {ex.Message}", "Save Error",
-                            MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                        AppMessageBox.Warning(jf, $"Cannot save: {ex.Message}", "Save Error");
                     }
                 };
                 btnCopy.Click += (_, _) =>
@@ -3865,18 +3913,35 @@ SAFETY RULES:
                         string.Join("\n", failedRules.Select(rule => "- " + rule)) +
                         "\n\nThe trade cannot be started until these hard safety rules are fixed.";
 
-                    MessageBox.Show(
-                        form,
-                        message,
-                        "Trade Blocked By Safety Rules",
-                        MessageBoxButtons.OK,
-                        MessageBoxIcon.Warning);
+                    AppMessageBox.Warning(form, message, "Trade Blocked By Safety Rules");
 
                     SetPlayStatus("Trade blocked because one or more required rules are not fulfilled.", C_RED);
                     Log("[BOT] Trade blocked by review safety rules: " + string.Join(" | ", failedRules), C_RED);
                     btnPlay.Text    = "Play / Start Trade";
                     btnPlay.Enabled = true;
                     return;
+                }
+
+                var warningItems = BuildReviewWarningItems(
+                    currentSnapshot,
+                    activeRequest,
+                    aiEnabled,
+                    autoScalpingRequested,
+                    GetSelectedReviewLotSize(),
+                    GetSelectedReviewLeverage());
+                if (warningItems.Count > 0)
+                {
+                    using var warningForm = new TradeWarningForm(warningItems);
+                    if (warningForm.ShowDialog(form) != DialogResult.OK)
+                    {
+                        SetPlayStatus("Trade cancelled after warning review.", C_YELLOW);
+                        Log("[BOT] Trade cancelled after review warnings.", C_YELLOW);
+                        btnPlay.Text = "Play / Start Trade";
+                        btnPlay.Enabled = true;
+                        return;
+                    }
+
+                    Log("[BOT] User confirmed review warnings: " + string.Join(" | ", warningItems.Select(w => w.Title)), C_YELLOW);
                 }
 
                 string aiInputPrompt = BuildCurrentAiInputPrompt();
@@ -4943,6 +5008,186 @@ SAFETY RULES:
             return failed;
         }
 
+        private List<TradeWarningItem> BuildReviewWarningItems(
+            JObject snapshot,
+            TradeRequest request,
+            bool aiEnabled,
+            bool autoScalpingRequested,
+            double selectedLotSize,
+            int selectedLeverage)
+        {
+            var warnings = new List<TradeWarningItem>();
+            string pair = request.Pair.ToUpperInvariant();
+            var pairRules = _pairSettings?.GetForPair(pair);
+            double minRr = pairRules?.ScalpingMinRR > 0 ? pairRules.ScalpingMinRR : _cfg.Bot.MinRRRatio;
+            double maxSpread = pairRules?.MaxSpreadPips > 0 ? pairRules.MaxSpreadPips : _cfg.Bot.MaxSpreadPips;
+
+            if (!autoScalpingRequested && !aiEnabled)
+            {
+                warnings.Add(new TradeWarningItem(
+                    "AI analysis will be skipped",
+                    "This trade will use the visible signal values directly, without AI re-analysis before creating the order.",
+                    "AI API key/model is not configured for review approval",
+                    "AI API Config tab: API key and model fields",
+                    "Configured AI provider for pre-trade analysis",
+                    "AI API Config tab: configured provider settings",
+                    "Manual/direct execution can continue only after you confirm this warning."));
+            }
+
+            double rr = CalculateReviewRiskReward(snapshot, request);
+            if (!double.IsNaN(rr) && minRr > 0)
+            {
+                bool rrWarn = _cfg.Bot.EnforceRR
+                    ? rr >= minRr && rr < minRr * 1.15
+                    : rr < minRr;
+                if (rrWarn)
+                {
+                    warnings.Add(new TradeWarningItem(
+                        _cfg.Bot.EnforceRR ? "Risk/reward is close to the minimum" : "Risk/reward is below the configured preference",
+                        "The reward compared with stop-loss risk is weak for this pair. A small spread or entry movement can reduce the effective R:R further.",
+                        $"{rr:0.00} R:R",
+                        "Review snapshot: entry, stop loss, take profit, selected lot size",
+                        $"{minRr:0.00} minimum R:R",
+                        pairRules == null ? "Bot Configuration: Min R:R Ratio" : $"Pair Settings: {pairRules.Pair} scalping_min_rr",
+                        rr >= minRr ? "Current value passes, but is less than 15% above the base value." : "Current value is below the base value; enforcement is disabled."));
+                }
+            }
+
+            double spread = ReadReviewNumber(snapshot, "price.spread_pips");
+            if (maxSpread > 0 && !double.IsNaN(spread) && spread <= maxSpread && spread >= maxSpread * 0.75)
+            {
+                warnings.Add(new TradeWarningItem(
+                    "Spread is near the maximum allowed",
+                    "The broker spread is high relative to the configured limit, so entry cost is already elevated before the trade starts.",
+                    $"{spread:0.0} pips",
+                    "Live MT5 symbol snapshot: price.spread_pips",
+                    $"<= {maxSpread:0.0} pips",
+                    pairRules == null ? "Bot Configuration: Max spread pips" : $"Pair Settings: {pairRules.Pair} max_spread_pips",
+                    "Current spread is at least 75% of the base limit."));
+            }
+
+            double equity = ReadReviewNumber(snapshot, "account.equity");
+            double balance = ReadReviewNumber(snapshot, "account.balance");
+            double freeMargin = ReadReviewNumber(snapshot, "account.free_margin");
+            double dollarRisk = ReadReviewNumber(snapshot, "risk.dollar_risk");
+            if (equity > 0 && dollarRisk > 0 && _cfg.Bot.MaxRiskPercent > 0)
+            {
+                double riskPct = dollarRisk / equity * 100.0;
+                if (riskPct <= _cfg.Bot.MaxRiskPercent && riskPct >= _cfg.Bot.MaxRiskPercent * 0.80)
+                {
+                    warnings.Add(new TradeWarningItem(
+                        "Trade risk is close to the per-trade limit",
+                        "This trade uses a large portion of the allowed risk for one position.",
+                        $"{riskPct:0.00}% (${dollarRisk:0.00})",
+                        "Review Trade risk preview: selected lot size, entry, stop loss, live equity",
+                        $"<= {_cfg.Bot.MaxRiskPercent:0.00}%",
+                        "Bot Configuration: Max Risk %",
+                        "Current risk is at least 80% of the configured max risk per trade."));
+                }
+            }
+
+            if (balance > 0 && freeMargin > 0 && freeMargin >= balance * 0.05 && freeMargin < balance * 0.10)
+            {
+                warnings.Add(new TradeWarningItem(
+                    "Free margin is getting low",
+                    "The account passes the hard margin check, but free margin is near the minimum safety floor.",
+                    $"{freeMargin:0.00}",
+                    "Live MT5 account snapshot: account.free_margin",
+                    $">= {(balance * 0.05):0.00} hard floor; preferred >= {(balance * 0.10):0.00}",
+                    "Review safety rule: 5% of account.balance hard floor, 10% caution level",
+                    "Current value is below the 10% caution level but above the 5% hard block."));
+            }
+
+            double totalRiskPct = ReadReviewBarrierCurrentPercent(snapshot, "execution_barriers.portfolio_risk_detail");
+            if (_cfg.Bot.MaxTotalRiskPercent > 0 && !double.IsNaN(totalRiskPct)
+                && totalRiskPct <= _cfg.Bot.MaxTotalRiskPercent
+                && totalRiskPct >= _cfg.Bot.MaxTotalRiskPercent * 0.80)
+            {
+                warnings.Add(new TradeWarningItem(
+                    "Total portfolio risk is close to the cap",
+                    "Open trade risk plus this new trade is near the configured total account risk limit.",
+                    $"{totalRiskPct:0.0}%",
+                    "Review Trade portfolio risk check: open positions plus this selected lot size",
+                    $"<= {_cfg.Bot.MaxTotalRiskPercent:0.0}%",
+                    "Bot Configuration: Max Total Risk %",
+                    "Current total risk is at least 80% of the configured cap."));
+            }
+
+            double tradesToday = ReadReviewNumber(snapshot, "account.daily_trades_taken");
+            if (!double.IsNaN(tradesToday) && _cfg.Bot.MaxTradesPerDay > 1
+                && tradesToday < _cfg.Bot.MaxTradesPerDay
+                && tradesToday >= _cfg.Bot.MaxTradesPerDay - 1)
+            {
+                warnings.Add(new TradeWarningItem(
+                    "Daily trade limit is almost reached",
+                    "Starting this trade may leave little or no room for another approved trade today.",
+                    $"{tradesToday:0} trades today",
+                    "Review Trade account snapshot: account.daily_trades_taken",
+                    $"< {_cfg.Bot.MaxTradesPerDay} trades per day",
+                    "Bot Configuration: Max Trades / Day",
+                    "Current value is within one trade of the daily limit."));
+            }
+
+            string newsProvider = _cfg.ApiIntegrations.NewsProvider;
+            string newsRisk = snapshot.SelectToken("news.news_risk_level")?.ToString() ?? "UNAVAILABLE";
+            string newsReason = snapshot.SelectToken("news.reason")?.ToString() ?? "No news detail available.";
+            bool newsConfigured = snapshot.SelectToken("news.configured")?.Value<bool?>() == true;
+            bool newsDisabled = string.Equals(newsProvider, "None", StringComparison.OrdinalIgnoreCase);
+            if (!newsDisabled && (!newsConfigured || newsRisk is "MEDIUM" or "UNAVAILABLE"))
+            {
+                warnings.Add(new TradeWarningItem(
+                    newsConfigured ? "News risk is not low" : "News data is unavailable",
+                    newsReason,
+                    newsConfigured ? newsRisk : "Provider/API data unavailable",
+                    "News Filter snapshot: configured economic-calendar provider response",
+                    "LOW risk or disabled news filter",
+                    "AI API Config: news provider, impact filter, blackout settings",
+                    "Current news state is not a hard block with the current settings, but it can affect spread and volatility."));
+            }
+
+            if (selectedLeverage >= 500)
+            {
+                warnings.Add(new TradeWarningItem(
+                    "Selected leverage is high",
+                    "High leverage can make small price movement consume margin quickly if lot size is too large.",
+                    $"{selectedLeverage}:1",
+                    "Review Trade window: leverage selector",
+                    "Lower leverage when possible for safer margin usage",
+                    "Operational safety guideline shown by Review Trade warning rules",
+                    "Current leverage is 500:1 or higher."));
+            }
+
+            if (Math.Abs(selectedLotSize - request.LotSize) >= 0.001)
+            {
+                warnings.Add(new TradeWarningItem(
+                    "Lot size was changed in review",
+                    "The trade will use the lot size selected in the Review Trade window, not the original signal lot size.",
+                    $"{selectedLotSize:0.##} lots",
+                    "Review Trade window: selected lot size control",
+                    $"{request.LotSize:0.##} lots from signal",
+                    "Signal JSON: lot_size field",
+                    "Selected review value overrides the original signal value."));
+            }
+
+            return warnings;
+        }
+
+        private static double ReadReviewBarrierCurrentPercent(JObject snapshot, string detailPath)
+        {
+            string detail = snapshot.SelectToken(detailPath)?.ToString() ?? "";
+            const string prefix = "Current:";
+            int start = detail.IndexOf(prefix, StringComparison.OrdinalIgnoreCase);
+            if (start < 0) return double.NaN;
+            start += prefix.Length;
+            int percent = detail.IndexOf('%', start);
+            if (percent < 0) return double.NaN;
+
+            string number = detail[start..percent].Trim();
+            return double.TryParse(number, NumberStyles.Any, CultureInfo.InvariantCulture, out double value)
+                ? value
+                : double.NaN;
+        }
+
         private static bool IsAiCompletableReviewBarrier(string flagPath, string detail)
         {
             if (flagPath == "execution_barriers.signal_fresh")
@@ -5861,10 +6106,52 @@ SAFETY RULES:
         private void BtnResetPrompt_Click(object? sender, EventArgs e)         => _txtClaudePrompt.Text = ClaudeConfig.DefaultPrompt;
 
         private void BtnClearLog_Click(object? sender, EventArgs e) => _txtLog.Clear();
+
+        private void BtnOpenLogFile_Click(object? sender, EventArgs e)
+        {
+            try
+            {
+                string path = AppLogFiles.CurrentLogFile;
+                if (string.IsNullOrWhiteSpace(path))
+                    throw new InvalidOperationException("Log file is not ready yet.");
+
+                Serilog.Log.Information("Opening log file: {Path}", path);
+                Process.Start(new ProcessStartInfo(path) { UseShellExecute = true });
+            }
+            catch (Exception ex)
+            {
+                Log($"[LOG] Could not open log file: {ex.Message}", C_RED);
+            }
+        }
+
         private void BtnSaveLog_Click(object? sender, EventArgs e)
         {
             using var d = new SaveFileDialog { Filter = "Text|*.txt", FileName = "MT5Log" };
             if (d.ShowDialog() == DialogResult.OK) File.WriteAllText(d.FileName, _txtLog.Text);
+        }
+
+        private void BtnDeleteLogs_Click(object? sender, EventArgs e)
+        {
+            if (!Confirm("Delete all log files and clear the on-screen log?")) return;
+
+            try
+            {
+                AppLogFiles.Close();
+                if (Directory.Exists(AppLogFiles.LogDirectory))
+                {
+                    foreach (string path in Directory.EnumerateFiles(AppLogFiles.LogDirectory, "*.log"))
+                        File.Delete(path);
+                }
+
+                AppLogFiles.RecreateCurrentFile();
+                _txtLog.Clear();
+                Log("[LOG] All log files deleted. New session log started.", C_YELLOW);
+            }
+            catch (Exception ex)
+            {
+                AppLogFiles.RecreateCurrentFile();
+                Log($"[LOG] Delete logs failed: {ex.Message}", C_RED);
+            }
         }
 
         // ==========================================================
