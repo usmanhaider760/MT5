@@ -1,0 +1,187 @@
+using System.Text;
+
+namespace MT5TradingBot.Modules.Backtesting
+{
+    public sealed record BacktestLiveExecutionMismatchItem(
+        string Item,
+        string LiveBehaviorStatus,
+        string BacktestBehaviorStatus,
+        string Severity,
+        string WhyItMattersForScalping,
+        string RecommendedFutureP2Fix);
+
+    public static class BacktestLiveExecutionMismatchAudit
+    {
+        public const string ReportFileName = "BACKTEST_LIVE_EXECUTION_MISMATCH_REPORT.md";
+
+        public static IReadOnlyList<BacktestLiveExecutionMismatchItem> CreateItems() =>
+        [
+            new(
+                "Commission",
+                "Present: live validation/paper execution can estimate configured commission.",
+                "Present: configured round-turn commission is deducted from summary trade P/L.",
+                "Medium",
+                "Scalping edges can be smaller than round-turn costs, so ignoring commission overstates expectancy.",
+                "Replace configured-only estimates with broker/account commission schedules where available and record assumptions per backtest run."),
+
+            new(
+                "Slippage",
+                "Present: configured pre-trade slippage checks and post-fill slippage logging exist.",
+                "Present: configured fixed slippage cost is deducted from summary trade P/L.",
+                "High",
+                "A few tenths of a pip can decide whether a scalp remains profitable.",
+                "Model entry and exit price slippage by symbol/session and persist the exact fill assumption in backtest output."),
+
+            new(
+                "Spread",
+                "Present: live risk checks use current symbol spread plus session spread rules.",
+                "Missing/Unverified: summary backtests do not model entry/exit bid-ask spread or spread widening.",
+                "Critical",
+                "Scalps depend on tight spreads; a trade-summary backtest can show fills that were not executable at live bid/ask.",
+                "Use bid/ask or tick data and apply spread at entry, SL, TP, and close for each simulated fill."),
+
+            new(
+                "Broker Stop Level",
+                "Present: live entry validation checks broker stop-level metadata.",
+                "Missing/Unverified: summary backtests do not reject SL/TP distances that would violate broker stop level.",
+                "High",
+                "Tight scalping stops can be rejected live even when the historical summary says the trade exists.",
+                "Add broker stop-level assumptions to the backtest execution model and reject impossible orders."),
+
+            new(
+                "Broker Freeze Level",
+                "Present: live entry validation checks broker freeze-level metadata.",
+                "Missing/Unverified: summary backtests do not model freeze-level limits for entries or modifications.",
+                "Medium",
+                "Freeze levels can prevent fast SL moves or pending-order operations during volatile scalping windows.",
+                "Model freeze-sensitive modify/close operations before claiming live-realistic management results."),
+
+            new(
+                "Broker Lot Min/Max/Step",
+                "Present: live validation checks broker min/max/step and volume limit metadata.",
+                "Missing/Unverified: summary backtests accept supplied lot sizes without broker lot-step rejection.",
+                "High",
+                "Small scalping lot adjustments can be rounded or rejected live, changing risk and margin.",
+                "Normalize/reject simulated lots using symbol min/max/step and include the final simulated volume."),
+
+            new(
+                "Margin Requirement",
+                "Present: live validation can request projected margin and fail closed when unavailable.",
+                "Missing/Unverified: summary backtests do not reject trades based on required margin or margin level.",
+                "High",
+                "Rapid scalping sequences can pass strategy rules but fail live margin checks.",
+                "Add margin projection assumptions using account equity, leverage, symbol margin rules, and open positions."),
+
+            new(
+                "OrderCheck Rejection",
+                "Present: live execution runs broker OrderCheck before OPEN_TRADE.",
+                "Missing/Unverified: summary backtests do not simulate broker OrderCheck rejection.",
+                "High",
+                "Broker-side validation can reject orders after local checks, especially around price/stops/volume.",
+                "Add configurable OrderCheck rejection simulation and record rejected simulated orders separately from losing trades."),
+
+            new(
+                "Order Send Rejection",
+                "Present: live order send failures are classified and surfaced with broker retcode/reason.",
+                "Missing/Unverified: summary backtests assume every supplied trade was accepted.",
+                "High",
+                "Scalping may cluster near volatile conditions where live order sends are more likely to fail.",
+                "Model rejectable sends with broker retcodes, rejection rates, or replayed live execution logs."),
+
+            new(
+                "Retry Policy",
+                "Present: live execution retries only transient failures after re-running safety gates.",
+                "Missing/Unverified: summary backtests do not model retry delay, changed price, or retry exhaustion.",
+                "Medium",
+                "A retry can turn a valid scalp into a late fill or no-fill.",
+                "Simulate retry attempts with latency, refreshed spread/slippage checks, and final accepted/rejected state."),
+
+            new(
+                "No-Trade Windows",
+                "Present: live validation blocks configured rollover/no-trade windows.",
+                "Missing/Unverified: summary backtests do not exclude trades inside no-trade windows.",
+                "High",
+                "Rollover and maintenance spreads can erase scalping edge or make fills impossible.",
+                "Apply configured no-trade windows to historical timestamps before accepting simulated trades."),
+
+            new(
+                "Session Spread Rules",
+                "Present: live validation applies session-specific spread caps.",
+                "Missing/Unverified: summary backtests do not model session spread caps or widening.",
+                "High",
+                "Session spread behavior is central to scalp execution quality.",
+                "Add session-aware spread assumptions and reject trades whose historical/session spread exceeds the cap."),
+
+            new(
+                "News Filter",
+                "Present: live validation can block high-impact news or fail closed when required news data is unavailable.",
+                "Missing/Unverified: summary backtests do not apply news blackout calendars.",
+                "Medium",
+                "News spikes can dominate short-horizon scalps and create unrepeatable fills.",
+                "Replay economic calendar blackout rules against trade timestamps and currency exposure."),
+
+            new(
+                "Latency",
+                "Missing/Unverified: live latency is not currently measured as a first-class execution assumption.",
+                "Missing/Unverified: summary backtests have no latency model.",
+                "Medium",
+                "A scalp entry can become stale within seconds when price moves quickly.",
+                "Record live signal-to-send and send-to-fill latency, then apply latency price drift in backtests."),
+
+            new(
+                "Intrabar SL/TP Behavior",
+                "Missing/Unverified: live execution is tick/broker driven after fill, but the backtest source is closed trade summaries.",
+                "Missing/Unverified: summary backtests use provided exit price and cannot prove whether SL or TP was hit first inside a candle.",
+                "Critical",
+                "For scalping, intrabar path decides whether tight SL or TP gets hit first.",
+                "Use tick or lower-timeframe OHLC path rules with explicit SL/TP priority assumptions.")
+        ];
+
+        public static string GenerateMarkdown(DateTime? generatedAtUtc = null)
+        {
+            var generatedAt = generatedAtUtc ?? DateTime.UtcNow;
+            var sb = new StringBuilder();
+
+            sb.AppendLine("# Backtest/Live Execution Mismatch Report");
+            sb.AppendLine();
+            sb.AppendLine($"Generated UTC: {generatedAt:yyyy-MM-dd HH:mm:ss}");
+            sb.AppendLine();
+            sb.AppendLine("Scope: P1 Patch 10 audit/reporting only. This report does not rewrite the backtest engine.");
+            sb.AppendLine();
+            sb.AppendLine("Current backtest warning: the backtest is trade-summary based. It can deduct configured commission and slippage costs, but it does not prove live-realistic fills unless the specific execution assumption is marked Present below.");
+            sb.AppendLine();
+            sb.AppendLine("| Item | Live Behavior Status | Backtest Behavior Status | Severity | Why It Matters For Scalping | Recommended Future P2 Fix |");
+            sb.AppendLine("|---|---|---|---|---|---|");
+
+            foreach (var item in CreateItems())
+            {
+                sb.Append("| ");
+                sb.Append(Escape(item.Item));
+                sb.Append(" | ");
+                sb.Append(Escape(item.LiveBehaviorStatus));
+                sb.Append(" | ");
+                sb.Append(Escape(item.BacktestBehaviorStatus));
+                sb.Append(" | ");
+                sb.Append(Escape(item.Severity));
+                sb.Append(" | ");
+                sb.Append(Escape(item.WhyItMattersForScalping));
+                sb.Append(" | ");
+                sb.Append(Escape(item.RecommendedFutureP2Fix));
+                sb.AppendLine(" |");
+            }
+
+            return sb.ToString();
+        }
+
+        public static string WriteReport(string directory, DateTime? generatedAtUtc = null)
+        {
+            Directory.CreateDirectory(directory);
+            string path = Path.Combine(directory, ReportFileName);
+            File.WriteAllText(path, GenerateMarkdown(generatedAtUtc));
+            return path;
+        }
+
+        private static string Escape(string value) =>
+            value.Replace("|", "\\|", StringComparison.Ordinal);
+    }
+}

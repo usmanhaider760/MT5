@@ -66,6 +66,7 @@ ForexBot is an MT5-connected forex trading system with:
 
 - Use clean modular architecture
 - Do NOT mix responsibilities across modules
+- Use `docs/CODE_MAP.md` before scanning folders.
 - Separate these clearly:
   - MT5 bridge
   - IPC communication

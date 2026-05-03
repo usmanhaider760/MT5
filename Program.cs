@@ -50,10 +50,7 @@ namespace MT5TradingBot
             services.AddSingleton<IAiContextManager, AiContextManager>();
             services.AddSingleton<ITradeRepository>(_ =>
             {
-                string dbPath = Path.Combine(
-                    Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-                    "MT5TradingBot", "trades.db");
-                return new SqliteTradeRepository(dbPath);
+                return new SqliteTradeRepository(AppPaths.PrepareTradesDatabaseFile());
             });
 
             // MainForm itself - resolved so its constructor receives IServiceProvider

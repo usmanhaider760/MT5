@@ -42,7 +42,11 @@
 
   <ItemGroup>
     <!-- Exclude empty AiPrompt resx to avoid duplicate resource name conflict with MainForm.resx -->
-    <EmbeddedResource Remove="UI\MainForm.AiPrompt.resx" />
+    <EmbeddedResource Remove="UI\Forms\MainForm.AiPrompt.resx" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Remove="Tests\**\*.cs" />
   </ItemGroup>
 
 </Project>

@@ -155,6 +155,8 @@ string ProcessRequest(string json)
    if(cmd == "CLOSE_TRADE")    return CmdCloseTrade(reqId, json);
    if(cmd == "MODIFY_POSITION")return CmdModifyPosition(reqId, json);
    if(cmd == "GET_SYMBOL_INFO")return CmdGetSymbolInfo(reqId, json);
+   if(cmd == "GET_MARGIN_ESTIMATE")return CmdGetMarginEstimate(reqId, json);
+   if(cmd == "CHECK_ORDER")    return CmdCheckOrder(reqId, json);
    if(cmd == "GET_MARKET_SNAPSHOT")return CmdGetMarketSnapshot(reqId, json);
    if(cmd == "CLOSE_ALL")      return CmdCloseAll(reqId);
 
@@ -440,17 +442,27 @@ string CmdGetSymbolInfo(string reqId, string json)
 
    double ask   = SymbolInfoDouble(sym, SYMBOL_ASK);
    double bid   = SymbolInfoDouble(sym, SYMBOL_BID);
-   double spread= (ask - bid) / SymbolInfoDouble(sym, SYMBOL_POINT);
+   double point = SymbolInfoDouble(sym, SYMBOL_POINT);
+   double spread= point > 0 ? (ask - bid) / point : 0;
    double minLot= SymbolInfoDouble(sym, SYMBOL_VOLUME_MIN);
    double maxLot= SymbolInfoDouble(sym, SYMBOL_VOLUME_MAX);
+   double lotStep= SymbolInfoDouble(sym, SYMBOL_VOLUME_STEP);
+   double volumeLimit= SymbolInfoDouble(sym, SYMBOL_VOLUME_LIMIT);
+   long stopLevel = SymbolInfoInteger(sym, SYMBOL_TRADE_STOPS_LEVEL);
+   long freezeLevel = SymbolInfoInteger(sym, SYMBOL_TRADE_FREEZE_LEVEL);
 
    string d = "{";
    d += "\"Symbol\":\""   + Esc(sym) + "\",";
    d += "\"Ask\":"        + DoubleToString(ask,    5) + ",";
    d += "\"Bid\":"        + DoubleToString(bid,    5) + ",";
    d += "\"Spread\":"     + DoubleToString(spread, 1) + ",";
-   d += "\"MinLot\":"     + DoubleToString(minLot, 2) + ",";
-   d += "\"MaxLot\":"     + DoubleToString(maxLot, 2) + ",";
+   d += "\"MinLot\":"     + DoubleToString(minLot, 4) + ",";
+   d += "\"MaxLot\":"     + DoubleToString(maxLot, 4) + ",";
+   d += "\"LotStep\":"    + DoubleToString(lotStep, 4) + ",";
+   d += "\"VolumeLimit\":" + DoubleToString(volumeLimit, 2) + ",";
+   d += "\"PointSize\":"   + DoubleToString(point, (int)SymbolInfoInteger(sym, SYMBOL_DIGITS)) + ",";
+   d += "\"StopLevelPoints\":" + IntegerToString(stopLevel) + ",";
+   d += "\"FreezeLevelPoints\":" + IntegerToString(freezeLevel) + ",";
    d += "\"Digits\":"     + IntegerToString(SymbolInfoInteger(sym, SYMBOL_DIGITS));
    d += "}";
    return Ok(reqId, d);
@@ -459,6 +471,186 @@ string CmdGetSymbolInfo(string reqId, string json)
 //+------------------------------------------------------------------+
 //| JSON helpers — minimal, no deps                                   |
 //+------------------------------------------------------------------+
+
+//+------------------------------------------------------------------+
+//| GET_MARKET_SNAPSHOT                                               |
+//+------------------------------------------------------------------+
+string CmdGetMarginEstimate(string reqId, string json)
+{
+   string data = JsonStr(json, "data");
+   if(StringLen(data) == 0) data = json;
+
+   string sym = JsonStr(data, "symbol");
+   if(StringLen(sym) == 0) sym = JsonStr(data, "Pair");
+   StringReplace(sym, "/", "");
+
+   string brokerSymbol = "";
+   if(!ResolveBrokerSymbol(sym, brokerSymbol))
+      return Err(reqId, "INVALID_SYMBOL", "Symbol not found: " + sym + ". Check broker suffix in MT5 Market Watch.");
+   sym = brokerSymbol;
+
+   string tradeType = JsonStr(data, "trade_type");
+   if(StringLen(tradeType) == 0) tradeType = JsonStr(data, "TradeType");
+   StringToUpper(tradeType);
+   bool isSell = (tradeType == "SELL");
+
+   double lots = JsonDbl(data, "lots");
+   if(lots <= 0) lots = JsonDbl(data, "lot_size");
+   if(lots <= 0) lots = JsonDbl(data, "LotSize");
+
+   double minLot = SymbolInfoDouble(sym, SYMBOL_VOLUME_MIN);
+   double maxLot = SymbolInfoDouble(sym, SYMBOL_VOLUME_MAX);
+   double lotStep = SymbolInfoDouble(sym, SYMBOL_VOLUME_STEP);
+   if(lots < minLot || lots > maxLot)
+      return Err(reqId, "INVALID_LOTS", "Lot size outside broker limits for " + sym);
+
+   int digits = (int)SymbolInfoInteger(sym, SYMBOL_DIGITS);
+   double price = JsonDbl(data, "price");
+   if(price <= 0) price = JsonDbl(data, "EntryPrice");
+   if(price <= 0)
+      price = isSell ? SymbolInfoDouble(sym, SYMBOL_BID) : SymbolInfoDouble(sym, SYMBOL_ASK);
+   if(price <= 0)
+      return Err(reqId, "NO_PRICE", "Price unavailable for margin estimate: " + sym);
+
+   ENUM_ORDER_TYPE orderType = isSell ? ORDER_TYPE_SELL : ORDER_TYPE_BUY;
+   double requiredMargin = 0.0;
+   ResetLastError();
+   if(!OrderCalcMargin(orderType, sym, lots, price, requiredMargin))
+   {
+      int err = GetLastError();
+      return Err(reqId, "MARGIN_ESTIMATE_FAILED",
+         "OrderCalcMargin failed for " + sym + " error " + IntegerToString(err));
+   }
+
+   if(requiredMargin <= 0)
+      return Err(reqId, "NO_MARGIN_DATA", "Required margin is zero for " + sym);
+
+   string d = "{";
+   d += "\"Symbol\":\"" + Esc(sym) + "\",";
+   d += "\"TradeType\":\"" + (isSell ? "SELL" : "BUY") + "\",";
+   d += "\"Lots\":" + DoubleToString(lots, 2) + ",";
+   d += "\"Price\":" + DoubleToString(price, digits) + ",";
+   d += "\"RequiredMargin\":" + DoubleToString(requiredMargin, 2) + ",";
+   d += "\"MinLot\":" + DoubleToString(minLot, 2) + ",";
+   d += "\"MaxLot\":" + DoubleToString(maxLot, 2) + ",";
+   d += "\"LotStep\":" + DoubleToString(lotStep, 2) + ",";
+   d += "\"Currency\":\"" + Esc(AccountInfoString(ACCOUNT_CURRENCY)) + "\"";
+   d += "}";
+   return Ok(reqId, d);
+}
+
+//+------------------------------------------------------------------+
+//| CHECK_ORDER                                                       |
+//+------------------------------------------------------------------+
+string CmdCheckOrder(string reqId, string json)
+{
+   string data = JsonStr(json, "data");
+   if(StringLen(data) == 0) data = json;
+
+   string sym = JsonStr(data, "symbol");
+   if(StringLen(sym) == 0) sym = JsonStr(data, "Pair");
+   StringReplace(sym, "/", "");
+
+   string brokerSymbol = "";
+   if(!ResolveBrokerSymbol(sym, brokerSymbol))
+      return Err(reqId, "INVALID_SYMBOL", "Symbol not found: " + sym + ". Check broker suffix in MT5 Market Watch.");
+   sym = brokerSymbol;
+
+   string tradeType = JsonStr(data, "trade_type");
+   if(StringLen(tradeType) == 0) tradeType = JsonStr(data, "TradeType");
+   StringToUpper(tradeType);
+   bool isSell = (tradeType == "SELL");
+
+   string orderType = JsonStr(data, "order_type");
+   if(StringLen(orderType) == 0) orderType = JsonStr(data, "OrderType");
+   StringToUpper(orderType);
+   bool isMarket = (orderType == "MARKET" || StringLen(orderType) == 0);
+   bool isLimit = (orderType == "LIMIT");
+   bool isStop = (orderType == "STOP");
+
+   double lots = JsonDbl(data, "lots");
+   if(lots <= 0) lots = JsonDbl(data, "lot_size");
+   if(lots <= 0) lots = JsonDbl(data, "LotSize");
+
+   double price = JsonDbl(data, "price");
+   if(price <= 0) price = JsonDbl(data, "EntryPrice");
+   if(price <= 0)
+      price = isSell ? SymbolInfoDouble(sym, SYMBOL_BID) : SymbolInfoDouble(sym, SYMBOL_ASK);
+
+   double sl = JsonDbl(data, "stop_loss");
+   if(sl <= 0) sl = JsonDbl(data, "StopLoss");
+   double tp = JsonDbl(data, "take_profit");
+   if(tp <= 0) tp = JsonDbl(data, "TakeProfit");
+   int magic = (int)JsonDbl(data, "magic_number");
+   if(magic <= 0) magic = (int)JsonDbl(data, "MagicNumber");
+   if(magic <= 0) magic = InpMagic;
+
+   if(lots <= 0) return Err(reqId, "INVALID_LOTS", "Lot size unavailable for OrderCheck: " + sym);
+   if(price <= 0) return Err(reqId, "NO_PRICE", "Price unavailable for OrderCheck: " + sym);
+
+   MqlTradeRequest checkRequest;
+   MqlTradeCheckResult checkResult;
+   ZeroMemory(checkRequest);
+   ZeroMemory(checkResult);
+
+   checkRequest.action = isMarket ? TRADE_ACTION_DEAL : TRADE_ACTION_PENDING;
+   checkRequest.symbol = sym;
+   checkRequest.volume = lots;
+   checkRequest.price = price;
+   checkRequest.sl = sl;
+   checkRequest.tp = tp;
+   checkRequest.magic = magic;
+   checkRequest.deviation = InpSlippage;
+   checkRequest.type_time = ORDER_TIME_GTC;
+
+   long fillingMode = SymbolInfoInteger(sym, SYMBOL_FILLING_MODE);
+   if((fillingMode & SYMBOL_FILLING_IOC) == SYMBOL_FILLING_IOC)
+      checkRequest.type_filling = ORDER_FILLING_IOC;
+   else if((fillingMode & SYMBOL_FILLING_FOK) == SYMBOL_FILLING_FOK)
+      checkRequest.type_filling = ORDER_FILLING_FOK;
+   else
+      checkRequest.type_filling = ORDER_FILLING_RETURN;
+
+   if(isMarket)
+      checkRequest.type = isSell ? ORDER_TYPE_SELL : ORDER_TYPE_BUY;
+   else if(isLimit)
+      checkRequest.type = isSell ? ORDER_TYPE_SELL_LIMIT : ORDER_TYPE_BUY_LIMIT;
+   else if(isStop)
+      checkRequest.type = isSell ? ORDER_TYPE_SELL_STOP : ORDER_TYPE_BUY_STOP;
+   else
+      return Err(reqId, "INVALID_ORDER_TYPE", "Unsupported order type for OrderCheck: " + orderType);
+
+   ResetLastError();
+   bool ok = OrderCheck(checkRequest, checkResult);
+   if(!ok)
+   {
+      int err = GetLastError();
+      return Err(reqId, "ORDERCHECK_FAILED",
+         "OrderCheck failed for " + sym + " error " + IntegerToString(err));
+   }
+
+   bool accepted =
+      checkResult.retcode == TRADE_RETCODE_DONE ||
+      checkResult.retcode == TRADE_RETCODE_PLACED ||
+      checkResult.retcode == TRADE_RETCODE_DONE_PARTIAL;
+
+   int digits = (int)SymbolInfoInteger(sym, SYMBOL_DIGITS);
+   string d = "{";
+   d += "\"IsAccepted\":" + BoolJson(accepted) + ",";
+   d += "\"Retcode\":" + IntegerToString(checkResult.retcode) + ",";
+   d += "\"Comment\":\"" + Esc(checkResult.comment) + "\",";
+   d += "\"Margin\":" + DoubleToString(checkResult.margin, 2) + ",";
+   d += "\"MarginFree\":" + DoubleToString(checkResult.margin_free, 2) + ",";
+   d += "\"MarginLevel\":" + DoubleToString(checkResult.margin_level, 2) + ",";
+   d += "\"Volume\":" + DoubleToString(lots, 2) + ",";
+   d += "\"Price\":" + DoubleToString(price, digits) + ",";
+   d += "\"StopLoss\":" + DoubleToString(sl, digits) + ",";
+   d += "\"TakeProfit\":" + DoubleToString(tp, digits) + ",";
+   d += "\"Symbol\":\"" + Esc(sym) + "\",";
+   d += "\"TradeType\":\"" + (isSell ? "SELL" : "BUY") + "\"";
+   d += "}";
+   return Ok(reqId, d);
+}
 
 //+------------------------------------------------------------------+
 //| GET_MARKET_SNAPSHOT                                               |
