@@ -10,6 +10,7 @@ using MT5TradingBot.Modules.BrokerIntegration;
 using MT5TradingBot.Modules.NewsFilter;
 using MT5TradingBot.Modules.RiskManagement;
 using MT5TradingBot.Modules.Scalping;
+using MT5TradingBot.Modules.StrategyProof;
 using MT5TradingBot.Modules.TradeExecution;
 using MT5TradingBot.Services;
 using Newtonsoft.Json;
@@ -158,6 +159,119 @@ internal static class Program
         new("backtest broker-rule simulation rejects insufficient margin", BacktestBrokerRuleSimulationRejectsInsufficientMargin),
         new("backtest broker-rule simulation fails clearly on missing metadata", BacktestBrokerRuleSimulationFailsClearlyOnMissingMetadata),
         new("backtest broker-rule simulation rejects simulated OrderCheck failure", BacktestBrokerRuleSimulationRejectsSimulatedOrderCheckFailure),
+        new("backtest no-trade filter blocks rollover window", BacktestNoTradeFilterBlocksRolloverWindow),
+        new("backtest no-trade filter blocks additional window", BacktestNoTradeFilterBlocksAdditionalWindow),
+        new("backtest no-trade filter blocks high session spread", BacktestNoTradeFilterBlocksHighSessionSpread),
+        new("backtest no-trade filter allows acceptable spread", BacktestNoTradeFilterAllowsAcceptableSpread),
+        new("backtest no-trade filter blocks historical high-impact news", BacktestNoTradeFilterBlocksHistoricalHighImpactNews),
+        new("backtest no-trade filter allows unrelated news", BacktestNoTradeFilterAllowsUnrelatedNews),
+        new("backtest no-trade filter fails clearly on missing spread data", BacktestNoTradeFilterFailsClearlyOnMissingSpreadData),
+        new("backtest no-trade filter fails clearly on invalid config", BacktestNoTradeFilterFailsClearlyOnInvalidConfig),
+        new("backtest no-trade filter result includes matched filter details", BacktestNoTradeFilterResultIncludesMatchedFilterDetails),
+        new("backtest out-of-sample split by ratio works", BacktestOutOfSampleSplitByRatioWorks),
+        new("backtest out-of-sample split by date works", BacktestOutOfSampleSplitByDateWorks),
+        new("backtest out-of-sample invalid config fails clearly", BacktestOutOfSampleInvalidConfigFailsClearly),
+        new("backtest walk-forward windows are generated correctly", BacktestWalkForwardWindowsAreGeneratedCorrectly),
+        new("backtest walk-forward invalid config fails clearly", BacktestWalkForwardInvalidConfigFailsClearly),
+        new("backtest Monte Carlo is deterministic with fixed seed", BacktestMonteCarloIsDeterministicWithFixedSeed),
+        new("backtest Monte Carlo reports robustness statistics", BacktestMonteCarloReportsRobustnessStatistics),
+        new("backtest Monte Carlo empty trade list fails clearly", BacktestMonteCarloEmptyTradeListFailsClearly),
+        new("backtest reporting basic metrics calculate correctly", BacktestReportingBasicMetricsCalculateCorrectly),
+        new("backtest reporting profit factor handles no-loss case safely", BacktestReportingProfitFactorHandlesNoLossCaseSafely),
+        new("backtest reporting max drawdown calculates correctly", BacktestReportingMaxDrawdownCalculatesCorrectly),
+        new("backtest reporting worst losing streak calculates correctly", BacktestReportingWorstLosingStreakCalculatesCorrectly),
+        new("backtest reporting costs aggregate correctly", BacktestReportingCostsAggregateCorrectly),
+        new("backtest reporting grouping by symbol works", BacktestReportingGroupingBySymbolWorks),
+        new("backtest reporting grouping by session works", BacktestReportingGroupingBySessionWorks),
+        new("backtest reporting grouping by spread regime works", BacktestReportingGroupingBySpreadRegimeWorks),
+        new("backtest reporting empty trade list fails clearly", BacktestReportingEmptyTradeListFailsClearly),
+        new("signal quality metrics calculate correctly for mixed wins and losses", SignalQualityMetricsCalculateMixedWinsAndLosses),
+        new("signal quality expectancy after costs is correct", SignalQualityExpectancyAfterCostsIsCorrect),
+        new("signal quality profit factor handles no-loss case safely", SignalQualityProfitFactorHandlesNoLossCaseSafely),
+        new("signal quality worst losing streak calculates correctly", SignalQualityWorstLosingStreakCalculatesCorrectly),
+        new("signal quality average duration calculates when timestamps exist", SignalQualityAverageDurationCalculatesWhenTimestampsExist),
+        new("signal quality grouping by signal source works", SignalQualityGroupingBySignalSourceWorks),
+        new("signal quality missing source groups as unknown", SignalQualityMissingSourceGroupsAsUnknown),
+        new("signal quality empty input fails clearly", SignalQualityEmptyInputFailsClearly),
+        new("segmented performance grouping by symbol works", SegmentedPerformanceGroupingBySymbolWorks),
+        new("segmented performance grouping by session works", SegmentedPerformanceGroupingBySessionWorks),
+        new("segmented performance grouping by spread regime works", SegmentedPerformanceGroupingBySpreadRegimeWorks),
+        new("segmented performance missing metadata goes to Unknown", SegmentedPerformanceMissingMetadataGoesToUnknown),
+        new("segmented performance AI confidence bucket grouping works", SegmentedPerformanceAiConfidenceBucketGroupingWorks),
+        new("segmented performance signal source reason grouping works", SegmentedPerformanceSignalSourceReasonGroupingWorks),
+        new("segmented performance metrics calculate correctly", SegmentedPerformanceMetricsCalculateCorrectly),
+        new("segmented performance empty input fails clearly", SegmentedPerformanceEmptyInputFailsClearly),
+        new("cost sensitivity spread increase reduces net profit correctly", CostSensitivitySpreadIncreaseReducesNetProfitCorrectly),
+        new("cost sensitivity slippage increase reduces net profit correctly", CostSensitivitySlippageIncreaseReducesNetProfitCorrectly),
+        new("cost sensitivity commission increase reduces net profit correctly", CostSensitivityCommissionIncreaseReducesNetProfitCorrectly),
+        new("cost sensitivity combined worse-cost scenario works", CostSensitivityCombinedWorseCostScenarioWorks),
+        new("cost sensitivity win-to-loss flip count works", CostSensitivityWinToLossFlipCountWorks),
+        new("cost sensitivity invalid scenario config fails clearly", CostSensitivityInvalidScenarioConfigFailsClearly),
+        new("cost sensitivity missing cost fields produce warnings", CostSensitivityMissingCostFieldsProduceWarnings),
+        new("cost sensitivity empty input fails clearly", CostSensitivityEmptyInputFailsClearly),
+        new("strategy robustness OOS degradation is calculated", StrategyRobustnessOosDegradationIsCalculated),
+        new("strategy robustness small sample is inconclusive", StrategyRobustnessSmallSampleIsInconclusive),
+        new("strategy robustness Monte Carlo summary is included", StrategyRobustnessMonteCarloSummaryIsIncluded),
+        new("strategy robustness failing drawdown threshold returns Fail", StrategyRobustnessFailingDrawdownThresholdReturnsFail),
+        new("strategy robustness passing thresholds return Pass", StrategyRobustnessPassingThresholdsReturnPass),
+        new("strategy robustness invalid split config fails clearly", StrategyRobustnessInvalidSplitConfigFailsClearly),
+        new("strategy robustness invalid Monte Carlo config fails clearly", StrategyRobustnessInvalidMonteCarloConfigFailsClearly),
+        new("strategy robustness empty input fails clearly", StrategyRobustnessEmptyInputFailsClearly),
+        new("AI filter impact outperforming non-AI returns Improves", AiFilterImpactOutperformingNonAiReturnsImproves),
+        new("AI filter impact underperforming non-AI returns Hurts", AiFilterImpactUnderperformingNonAiReturnsHurts),
+        new("AI filter impact missing comparison group returns Inconclusive", AiFilterImpactMissingComparisonGroupReturnsInconclusive),
+        new("AI filter impact confidence bucket grouping works", AiFilterImpactConfidenceBucketGroupingWorks),
+        new("AI filter impact blocked winner loser analysis works", AiFilterImpactBlockedWinnerLoserAnalysisWorks),
+        new("AI filter impact missing confidence produces warning", AiFilterImpactMissingConfidenceProducesWarning),
+        new("AI filter impact small sample is inconclusive", AiFilterImpactSmallSampleIsInconclusive),
+        new("realistic backtest runner rejects no-trade filtered candidate", RealisticBacktestRunnerRejectsNoTradeFilteredCandidate),
+        new("realistic backtest runner rejects broker-rule blocked candidate", RealisticBacktestRunnerRejectsBrokerRuleBlockedCandidate),
+        new("realistic backtest runner records TP hit as winning trade", RealisticBacktestRunnerRecordsTpHitAsWinningTrade),
+        new("realistic backtest runner records SL hit as losing trade", RealisticBacktestRunnerRecordsSlHitAsLosingTrade),
+        new("realistic backtest runner deducts execution costs", RealisticBacktestRunnerDeductsExecutionCosts),
+        new("realistic backtest runner records unresolved trade as open", RealisticBacktestRunnerRecordsUnresolvedTradeAsOpen),
+        new("realistic backtest runner produces metrics report", RealisticBacktestRunnerProducesMetricsReport),
+        new("realistic backtest report can be generated without MT5", RealisticBacktestReportCanBeGeneratedWithoutMt5),
+        new("realistic backtest report includes outcome counts", RealisticBacktestReportIncludesOutcomeCounts),
+        new("realistic backtest report includes execution costs", RealisticBacktestReportIncludesExecutionCosts),
+        new("realistic backtest report includes assumptions and warnings", RealisticBacktestReportIncludesAssumptionsAndWarnings),
+        new("realistic backtest report can load CSV market data", RealisticBacktestReportCanLoadCsvMarketData),
+        new("strategy extraction report can be generated", StrategyExtractionReportCanBeGenerated),
+        new("strategy extraction report includes deterministic logic section", StrategyExtractionReportIncludesDeterministicLogicSection),
+        new("strategy extraction report includes AI boundary section", StrategyExtractionReportIncludesAiBoundarySection),
+        new("strategy extraction report includes hold no-trade behavior section", StrategyExtractionReportIncludesHoldNoTradeBehaviorSection),
+        new("strategy extraction report includes code evidence paths", StrategyExtractionReportIncludesCodeEvidencePaths),
+        new("repaint lookahead audit report can be generated", RepaintLookaheadAuditReportCanBeGenerated),
+        new("repaint lookahead audit report includes live signal-generation risk section", RepaintLookaheadAuditReportIncludesLiveSignalGenerationRiskSection),
+        new("repaint lookahead audit report includes realistic backtest runner risk section", RepaintLookaheadAuditReportIncludesRealisticRunnerRiskSection),
+        new("repaint lookahead audit report includes old trade-summary backtest limitation section", RepaintLookaheadAuditReportIncludesOldTradeSummaryLimitationSection),
+        new("repaint lookahead audit report includes AI leakage risk section", RepaintLookaheadAuditReportIncludesAiLeakageRiskSection),
+        new("repaint lookahead audit report includes severity and status fields", RepaintLookaheadAuditReportIncludesSeverityAndStatusFields),
+        new("strategy edge verdict report can be generated", StrategyEdgeVerdictReportCanBeGenerated),
+        new("strategy edge verdict passing metrics produce Pass", StrategyEdgeVerdictPassingMetricsProducePass),
+        new("strategy edge verdict weak metrics produce Fail", StrategyEdgeVerdictWeakMetricsProduceFail),
+        new("strategy edge verdict small sample produces Inconclusive", StrategyEdgeVerdictSmallSampleProducesInconclusive),
+        new("strategy edge verdict critical repaint finding forces Fail", StrategyEdgeVerdictCriticalRepaintFindingForcesFail),
+        new("strategy edge verdict report includes not-live-proof warning", StrategyEdgeVerdictReportIncludesNotLiveProofWarning),
+        new("strategy edge verdict report includes AI caution", StrategyEdgeVerdictReportIncludesAiCaution),
+        new("demo paper reconciliation matching metrics returns Matches", DemoPaperReconciliationMatchingMetricsReturnsMatches),
+        new("demo paper reconciliation large expectancy degradation returns Diverges", DemoPaperReconciliationLargeExpectancyDegradationReturnsDiverges),
+        new("demo paper reconciliation too small sample returns Inconclusive", DemoPaperReconciliationTooSmallSampleReturnsInconclusive),
+        new("demo paper reconciliation missing cost data produces warning", DemoPaperReconciliationMissingCostDataProducesWarning),
+        new("demo paper reconciliation demo outperformance is handled safely", DemoPaperReconciliationDemoOutperformanceHandledSafely),
+        new("demo paper reconciliation backtest no-trade data fails clearly", DemoPaperReconciliationBacktestNoTradeDataFailsClearly),
+        new("final strategy proof package can be generated", FinalStrategyProofPackageCanBeGenerated),
+        new("final strategy proof package strong evidence classifies proven positive edge", FinalStrategyProofPackageStrongEvidenceClassifiesProvenPositiveEdge),
+        new("final strategy proof package weak negative evidence classifies negative edge", FinalStrategyProofPackageWeakNegativeEvidenceClassifiesNegativeEdge),
+        new("final strategy proof package small sample classifies inconclusive", FinalStrategyProofPackageSmallSampleClassifiesInconclusive),
+        new("final strategy proof package critical repaint blocks positive classification", FinalStrategyProofPackageCriticalRepaintBlocksPositiveClassification),
+        new("final strategy proof package includes required risk warnings", FinalStrategyProofPackageIncludesRequiredRiskWarnings),
+        new("final strategy proof package includes AI caution", FinalStrategyProofPackageIncludesAiCaution),
+        new("strategy adapter converts BUY signal to realistic candidate", StrategyAdapterConvertsBuySignalToCandidate),
+        new("strategy adapter converts SELL signal to realistic candidate", StrategyAdapterConvertsSellSignalToCandidate),
+        new("strategy adapter skips HOLD signal", StrategyAdapterSkipsHoldSignal),
+        new("strategy adapter skips incomplete signal", StrategyAdapterSkipsIncompleteSignal),
+        new("strategy adapter stays separate from live execution", StrategyAdapterStaysSeparateFromLiveExecution),
         new("max spread filter blocks high spread", MaxSpreadFilterBlocksHighSpread),
         new("stop-loss placement rejects wrong side of entry", StopLossPlacementRejectsWrongSide),
         new("take-profit placement rejects wrong side of entry", TakeProfitPlacementRejectsWrongSide),
@@ -2506,6 +2620,2044 @@ internal static class Program
         return Task.CompletedTask;
     }
 
+    private static Task BacktestNoTradeFilterBlocksRolloverWindow()
+    {
+        var result = BacktestNoTradeFilterSimulator.Evaluate(FilterInput(
+            timestampUtc: TestUtc(23, 58),
+            config: RolloverConfig("23:55", "00:10")));
+
+        AssertFilterReject(result, "BACKTEST_NO_TRADE_WINDOW", "rollover", "NoTradeWindow");
+        AssertContains("rollover", result.RejectionReason);
+        return Task.CompletedTask;
+    }
+
+    private static Task BacktestNoTradeFilterBlocksAdditionalWindow()
+    {
+        var config = RolloverConfig("23:55", "00:10");
+        config.AdditionalNoTradeWindows.Add(new NoTradeWindowConfig
+        {
+            Name = "London close",
+            StartUtc = "15:00",
+            EndUtc = "16:00"
+        });
+
+        var result = BacktestNoTradeFilterSimulator.Evaluate(FilterInput(
+            timestampUtc: TestUtc(15, 30),
+            config: config));
+
+        AssertFilterReject(result, "BACKTEST_NO_TRADE_WINDOW", "London close", "NoTradeWindow");
+        return Task.CompletedTask;
+    }
+
+    private static Task BacktestNoTradeFilterBlocksHighSessionSpread()
+    {
+        var result = BacktestNoTradeFilterSimulator.Evaluate(FilterInput(
+            timestampUtc: TestUtc(10, 30),
+            config: SessionSpreadConfig(defaultMaxSpreadPips: 10, oldMaxSpreadPips: 20,
+                SpreadRule("London", "10:00", "11:00", 2.0)),
+            spreadPips: 3.0));
+
+        AssertFilterReject(result, "BACKTEST_SESSION_SPREAD_LIMIT", "London", "SessionSpread");
+        AssertContains("exceeds", result.RejectionReason);
+        return Task.CompletedTask;
+    }
+
+    private static Task BacktestNoTradeFilterAllowsAcceptableSpread()
+    {
+        var result = BacktestNoTradeFilterSimulator.Evaluate(FilterInput(
+            timestampUtc: TestUtc(10, 30),
+            config: SessionSpreadConfig(defaultMaxSpreadPips: 10, oldMaxSpreadPips: 20,
+                SpreadRule("London", "10:00", "11:00", 2.0)),
+            spreadPips: 1.5));
+
+        AssertTrue(result.Allowed, "Acceptable historical spread should allow filter simulation to continue.");
+        AssertEqual("", result.RejectionCode, "Allowed filter result should not carry a rejection code.");
+        return Task.CompletedTask;
+    }
+
+    private static Task BacktestNoTradeFilterBlocksHistoricalHighImpactNews()
+    {
+        var result = BacktestNoTradeFilterSimulator.Evaluate(FilterInput(
+            timestampUtc: TestUtc(9, 45),
+            newsConfig: NewsRequired(),
+            newsEvents:
+            [
+                NewsEvent(TestUtc(10, 0), currency: "USD", impact: "High", title: "US CPI")
+            ]));
+
+        AssertFilterReject(result, "BACKTEST_NEWS_BLACKOUT", "US CPI", "News");
+        AssertContains("news blackout", result.RejectionReason);
+        return Task.CompletedTask;
+    }
+
+    private static Task BacktestNoTradeFilterAllowsUnrelatedNews()
+    {
+        var result = BacktestNoTradeFilterSimulator.Evaluate(FilterInput(
+            timestampUtc: TestUtc(9, 45),
+            newsConfig: NewsRequired(),
+            newsEvents:
+            [
+                NewsEvent(TestUtc(10, 0), currency: "AUD", impact: "High", title: "AU CPI")
+            ]));
+
+        AssertTrue(result.Allowed, "Unrelated historical news should not block EURUSD.");
+        return Task.CompletedTask;
+    }
+
+    private static Task BacktestNoTradeFilterFailsClearlyOnMissingSpreadData()
+    {
+        var result = BacktestNoTradeFilterSimulator.Evaluate(FilterInput(
+            timestampUtc: TestUtc(10, 30),
+            config: SessionSpreadConfig(defaultMaxSpreadPips: 10, oldMaxSpreadPips: 20,
+                SpreadRule("London", "10:00", "11:00", 2.0)),
+            spreadPips: null));
+
+        AssertFilterReject(result, "BACKTEST_SPREAD_DATA_UNAVAILABLE", "session-spread", "SessionSpread");
+        AssertContains("spread data is unavailable", result.RejectionReason);
+        return Task.CompletedTask;
+    }
+
+    private static Task BacktestNoTradeFilterFailsClearlyOnInvalidConfig()
+    {
+        var result = BacktestNoTradeFilterSimulator.Evaluate(FilterInput(
+            timestampUtc: TestUtc(23, 58),
+            config: RolloverConfig("not-a-time", "00:10")));
+
+        AssertFilterReject(result, "BACKTEST_NO_TRADE_CONFIG_INVALID", "rollover", "InvalidConfig");
+        AssertContains("invalid UTC start/end time", result.RejectionReason);
+        return Task.CompletedTask;
+    }
+
+    private static Task BacktestNoTradeFilterResultIncludesMatchedFilterDetails()
+    {
+        var result = BacktestNoTradeFilterSimulator.Evaluate(FilterInput(
+            timestampUtc: TestUtc(10, 30),
+            config: SessionSpreadConfig(defaultMaxSpreadPips: 10, oldMaxSpreadPips: 20,
+                SpreadRule("London", "10:00", "11:00", 2.0)),
+            spreadPips: 3.0));
+
+        AssertFalse(result.Allowed, "High spread should reject before checking matched filter details.");
+        AssertEqual("London", result.MatchedFilterName, "Result should include the matched filter name.");
+        AssertEqual("SessionSpread", result.MatchedFilterType, "Result should include the matched filter type.");
+        AssertContains("EURUSD", result.RejectionReason);
+        return Task.CompletedTask;
+    }
+
+    private static Task BacktestOutOfSampleSplitByRatioWorks()
+    {
+        var result = BacktestRobustnessTesting.SplitOutOfSample(
+            RobustnessTrades(100, -25, 50, -10, 20),
+            new OutOfSampleSplitConfig { InSampleRatio = 0.60 });
+
+        AssertTrue(result.Success, "Valid ratio split should succeed.");
+        AssertEqual(3, result.InSampleCount, "60% of five trades should create three in-sample trades.");
+        AssertEqual(2, result.OutOfSampleCount, "Remaining trades should be out-of-sample.");
+        AssertClose(125, result.InSampleProfitLossUsd, 0.0001, "In-sample P/L should sum first chronological partition.");
+        AssertClose(10, result.OutOfSampleProfitLossUsd, 0.0001, "Out-of-sample P/L should sum remaining chronological partition.");
+        return Task.CompletedTask;
+    }
+
+    private static Task BacktestOutOfSampleSplitByDateWorks()
+    {
+        var result = BacktestRobustnessTesting.SplitOutOfSample(
+            RobustnessTrades(100, -25, 50, -10, 20),
+            new OutOfSampleSplitConfig { SplitDateUtc = RobustnessUtc(4) });
+
+        AssertTrue(result.Success, "Valid date split should succeed.");
+        AssertEqual(3, result.InSampleCount, "Trades before split date should be in-sample.");
+        AssertEqual(2, result.OutOfSampleCount, "Trades on or after split date should be out-of-sample.");
+        AssertEqual("T4", result.OutOfSample[0].Id, "Date split should preserve chronological order.");
+        return Task.CompletedTask;
+    }
+
+    private static Task BacktestOutOfSampleInvalidConfigFailsClearly()
+    {
+        var result = BacktestRobustnessTesting.SplitOutOfSample(
+            RobustnessTrades(100, -25, 50),
+            new OutOfSampleSplitConfig { InSampleRatio = 1.20 });
+
+        AssertFalse(result.Success, "Invalid ratio should fail split generation.");
+        AssertEqual("BACKTEST_SPLIT_CONFIG_INVALID", result.FailureCode, "Invalid split config should return a clear code.");
+        AssertContains("ratio", result.FailureReason);
+        return Task.CompletedTask;
+    }
+
+    private static Task BacktestWalkForwardWindowsAreGeneratedCorrectly()
+    {
+        var result = BacktestRobustnessTesting.GenerateWalkForwardWindows(new WalkForwardConfig
+        {
+            StartUtc = RobustnessUtc(1),
+            EndUtc = RobustnessUtc(31),
+            TrainingPeriod = TimeSpan.FromDays(10),
+            TestingPeriod = TimeSpan.FromDays(5),
+            StepSize = TimeSpan.FromDays(5)
+        });
+
+        AssertTrue(result.Success, "Valid walk-forward config should generate windows.");
+        AssertEqual(4, result.Windows.Count, "Expected four rolling train/test windows.");
+        AssertEqual(1, result.Windows[0].Index, "First walk-forward window should be indexed.");
+        AssertEqual(RobustnessUtc(1).ToString("O"), result.Windows[0].TrainingStartUtc.ToString("O"),
+            "First training window should start at configured start.");
+        AssertEqual(RobustnessUtc(11).ToString("O"), result.Windows[0].TestingStartUtc.ToString("O"),
+            "First testing window should begin after training period.");
+        AssertEqual(RobustnessUtc(31).ToString("O"), result.Windows[3].TestingEndUtc.ToString("O"),
+            "Last testing window should end exactly at configured end.");
+        return Task.CompletedTask;
+    }
+
+    private static Task BacktestWalkForwardInvalidConfigFailsClearly()
+    {
+        var result = BacktestRobustnessTesting.GenerateWalkForwardWindows(new WalkForwardConfig
+        {
+            StartUtc = RobustnessUtc(1),
+            EndUtc = RobustnessUtc(10),
+            TrainingPeriod = TimeSpan.Zero,
+            TestingPeriod = TimeSpan.FromDays(2),
+            StepSize = TimeSpan.FromDays(1)
+        });
+
+        AssertFalse(result.Success, "Invalid walk-forward config should fail.");
+        AssertEqual("BACKTEST_WALK_FORWARD_CONFIG_INVALID", result.FailureCode,
+            "Invalid walk-forward config should return a clear code.");
+        AssertContains("positive training", result.FailureReason);
+        return Task.CompletedTask;
+    }
+
+    private static Task BacktestMonteCarloIsDeterministicWithFixedSeed()
+    {
+        double[] pnl = [100, -50, 25, -75, 50];
+        var config = new MonteCarloConfig { StartingEquity = 10_000, Iterations = 25, Seed = 7 };
+
+        var first = BacktestRobustnessTesting.RunMonteCarloTradeSequence(pnl, config);
+        var second = BacktestRobustnessTesting.RunMonteCarloTradeSequence(pnl, config);
+
+        AssertTrue(first.Success && second.Success, "Monte Carlo should succeed for valid inputs.");
+        AssertClose(first.MaxDrawdownAmount.Average, second.MaxDrawdownAmount.Average, 0.0001,
+            "Fixed seed should produce deterministic drawdown distribution.");
+        AssertClose(first.SimulationResults[0].MaxDrawdownAmount, second.SimulationResults[0].MaxDrawdownAmount, 0.0001,
+            "Fixed seed should produce deterministic first simulation.");
+        AssertEqual(first.SimulationResults[0].WorstLosingStreak, second.SimulationResults[0].WorstLosingStreak,
+            "Fixed seed should produce deterministic losing streaks.");
+        return Task.CompletedTask;
+    }
+
+    private static Task BacktestMonteCarloReportsRobustnessStatistics()
+    {
+        var result = BacktestRobustnessTesting.RunMonteCarloTradeSequence(
+            [100, -150, -50, 200, -25],
+            new MonteCarloConfig { StartingEquity = 10_000, Iterations = 50, Seed = 3 });
+
+        AssertTrue(result.Success, "Monte Carlo should succeed for non-empty trade P/L input.");
+        AssertEqual(50, result.Iterations, "Monte Carlo result should report configured iterations.");
+        AssertClose(10_075, result.FinalEquity.Min, 0.0001, "Final equity distribution should include final-equity min.");
+        AssertClose(10_075, result.FinalEquity.Max, 0.0001, "Final equity distribution should include final-equity max.");
+        AssertTrue(result.MaxDrawdownAmount.Max > 0, "Monte Carlo should report max drawdown distribution.");
+        AssertTrue(result.WorstLosingStreak.Max >= 1, "Monte Carlo should report losing streak distribution.");
+        AssertEqual(50, result.SimulationResults.Count, "Monte Carlo should retain per-iteration statistics.");
+        return Task.CompletedTask;
+    }
+
+    private static Task BacktestMonteCarloEmptyTradeListFailsClearly()
+    {
+        var result = BacktestRobustnessTesting.RunMonteCarloTradeSequence(
+            [],
+            new MonteCarloConfig { StartingEquity = 10_000, Iterations = 10, Seed = 1 });
+
+        AssertFalse(result.Success, "Empty Monte Carlo trade list should fail clearly.");
+        AssertEqual("BACKTEST_MONTE_CARLO_NO_TRADES", result.FailureCode,
+            "Empty Monte Carlo input should return a clear code.");
+        AssertContains("At least one trade", result.FailureReason);
+        return Task.CompletedTask;
+    }
+
+    private static Task BacktestReportingBasicMetricsCalculateCorrectly()
+    {
+        var report = BacktestReportingMetrics.BuildReport(ReportingTrades());
+
+        AssertTrue(report.Success, "Valid reporting trades should produce metrics.");
+        AssertEqual(5, report.Overall.TotalTrades, "Total trade count should include all trades.");
+        AssertEqual(3, report.Overall.WinningTrades, "Winning trade count should include positive P/L trades.");
+        AssertEqual(2, report.Overall.LosingTrades, "Losing trade count should include negative P/L trades.");
+        AssertClose(60, report.Overall.WinRatePercent, 0.0001, "Win rate should be wins / total.");
+        AssertClose(350, report.Overall.GrossProfitUsd, 0.0001, "Gross profit should sum positive P/L.");
+        AssertClose(200, report.Overall.GrossLossUsd, 0.0001, "Gross loss should sum absolute negative P/L.");
+        AssertClose(150, report.Overall.NetProfitUsd, 0.0001, "Net profit should sum all P/L.");
+        AssertClose(1.75, report.Overall.ProfitFactor, 0.0001, "Profit factor should be gross profit / gross loss.");
+        AssertClose(30, report.Overall.ExpectancyPerTradeUsd, 0.0001, "Expectancy should be net P/L per trade.");
+        AssertClose(0.34, report.Overall.AverageRMultiple.GetValueOrDefault(), 0.0001,
+            "Average R multiple should be calculated when R data exists.");
+        return Task.CompletedTask;
+    }
+
+    private static Task BacktestReportingProfitFactorHandlesNoLossCaseSafely()
+    {
+        var report = BacktestReportingMetrics.BuildReport(
+        [
+            ReportTrade(100),
+            ReportTrade(50, day: 2)
+        ]);
+
+        AssertTrue(report.Success, "No-loss report should still succeed.");
+        AssertTrue(report.Overall.ProfitFactorUnlimited, "No-loss profitable report should mark profit factor as unlimited.");
+        AssertTrue(double.IsPositiveInfinity(report.Overall.ProfitFactor),
+            "No-loss profitable report should represent profit factor safely as positive infinity.");
+        return Task.CompletedTask;
+    }
+
+    private static Task BacktestReportingMaxDrawdownCalculatesCorrectly()
+    {
+        var report = BacktestReportingMetrics.BuildReport(ReportingTrades());
+
+        AssertClose(200, report.Overall.MaxDrawdownUsd, 0.0001,
+            "Max drawdown should use cumulative P/L peak-to-trough movement.");
+        return Task.CompletedTask;
+    }
+
+    private static Task BacktestReportingWorstLosingStreakCalculatesCorrectly()
+    {
+        var report = BacktestReportingMetrics.BuildReport(ReportingTrades());
+
+        AssertEqual(2, report.Overall.WorstLosingStreak,
+            "Worst losing streak should count consecutive negative P/L trades.");
+        return Task.CompletedTask;
+    }
+
+    private static Task BacktestReportingCostsAggregateCorrectly()
+    {
+        var report = BacktestReportingMetrics.BuildReport(ReportingTrades());
+
+        AssertClose(5.00, report.Overall.TotalCommissionUsd, 0.0001, "Commission should aggregate across trades.");
+        AssertClose(2.50, report.Overall.TotalSlippageUsd, 0.0001, "Slippage should aggregate across trades.");
+        AssertClose(7.50, report.Overall.TotalSpreadCostUsd, 0.0001, "Spread cost should aggregate across trades.");
+        AssertClose(15.00, report.Overall.TotalExecutionCostUsd, 0.0001,
+            "Total execution cost should sum commission, slippage, and spread cost.");
+        AssertTrue(report.Warnings.Count == 0, "Complete reporting trades should not produce missing-data warnings.");
+        return Task.CompletedTask;
+    }
+
+    private static Task BacktestReportingGroupingBySymbolWorks()
+    {
+        var report = BacktestReportingMetrics.BuildReport(ReportingTrades());
+        var eurusd = report.BySymbol.Single(g => g.Key == "EURUSD").Metrics;
+        var gbpusd = report.BySymbol.Single(g => g.Key == "GBPUSD").Metrics;
+
+        AssertEqual(3, eurusd.TotalTrades, "EURUSD group should include its trades.");
+        AssertClose(250, eurusd.NetProfitUsd, 0.0001, "EURUSD group should calculate net P/L.");
+        AssertEqual(2, gbpusd.TotalTrades, "GBPUSD group should include its trades.");
+        AssertClose(-100, gbpusd.NetProfitUsd, 0.0001, "GBPUSD group should calculate net P/L.");
+        return Task.CompletedTask;
+    }
+
+    private static Task BacktestReportingGroupingBySessionWorks()
+    {
+        var report = BacktestReportingMetrics.BuildReport(ReportingTrades());
+        var london = report.BySession.Single(g => g.Key == "London").Metrics;
+        var ny = report.BySession.Single(g => g.Key == "NewYork").Metrics;
+
+        AssertEqual(3, london.TotalTrades, "London group should include its trades.");
+        AssertClose(-100, london.NetProfitUsd, 0.0001, "London group should calculate net P/L.");
+        AssertEqual(2, ny.TotalTrades, "NewYork group should include its trades.");
+        AssertClose(250, ny.NetProfitUsd, 0.0001, "NewYork group should calculate net P/L.");
+        return Task.CompletedTask;
+    }
+
+    private static Task BacktestReportingGroupingBySpreadRegimeWorks()
+    {
+        var report = BacktestReportingMetrics.BuildReport(ReportingTrades());
+        var tight = report.BySpreadRegime.Single(g => g.Key == "Tight").Metrics;
+        var wide = report.BySpreadRegime.Single(g => g.Key == "Wide").Metrics;
+
+        AssertEqual(3, tight.TotalTrades, "Tight-spread group should include its trades.");
+        AssertClose(350, tight.NetProfitUsd, 0.0001, "Tight-spread group should calculate net P/L.");
+        AssertEqual(2, wide.TotalTrades, "Wide-spread group should include its trades.");
+        AssertClose(-200, wide.NetProfitUsd, 0.0001, "Wide-spread group should calculate net P/L.");
+        return Task.CompletedTask;
+    }
+
+    private static Task BacktestReportingEmptyTradeListFailsClearly()
+    {
+        var report = BacktestReportingMetrics.BuildReport([]);
+
+        AssertFalse(report.Success, "Empty report input should fail clearly.");
+        AssertEqual("BACKTEST_REPORT_NO_TRADES", report.FailureCode,
+            "Empty report input should return a clear code.");
+        AssertContains("No trades", report.FailureReason);
+        return Task.CompletedTask;
+    }
+
+    private static Task SignalQualityMetricsCalculateMixedWinsAndLosses()
+    {
+        var report = StrategySignalQualityMetrics.BuildReport(new StrategySignalQualityInput
+        {
+            Outcomes =
+            [
+                QualityCompleted("W1", 100, exitMinutes: 10),
+                QualityCompleted("L1", -40, minutes: 20, exitMinutes: 30),
+                QualityRejected("R1", minutes: 40),
+                QualityOpen("O1", minutes: 50)
+            ],
+            SkippedOrHeldSignals = 2,
+            SourceByCandidateId = SourceMap(("W1", "deterministic/base strategy"), ("L1", "deterministic/base strategy")),
+            RMultipleByCandidateId = RMap(("W1", 1.0), ("L1", -0.4)),
+            AssumptionsUsed = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["cost_basis"] = "realistic net outcome"
+            }
+        });
+
+        AssertTrue(report.Success, "Mixed signal-quality input should produce a report.");
+        AssertEqual(6, report.OverallMetrics.TotalSignals, "Total signals should include executable plus skipped/held.");
+        AssertEqual(4, report.OverallMetrics.ExecutableSignals, "Executable signals should include completed, rejected, and open outcomes.");
+        AssertEqual(2, report.OverallMetrics.SkippedOrHeldSignals, "Skipped/held signals should be retained.");
+        AssertEqual(1, report.OverallMetrics.RejectedSignals, "Rejected signal count should include rejected outcomes.");
+        AssertEqual(1, report.OverallMetrics.OpenTrades, "Open trade count should include unresolved outcomes.");
+        AssertEqual(2, report.OverallMetrics.CompletedTrades, "Completed trade count should include successful outcomes only.");
+        AssertEqual(1, report.OverallMetrics.WinningTrades, "Winning trades should use net P/L after costs.");
+        AssertEqual(1, report.OverallMetrics.LosingTrades, "Losing trades should use net P/L after costs.");
+        AssertClose(50, report.OverallMetrics.WinRateAfterCostsPercent, 0.0001, "Win rate should use completed trades only.");
+        AssertClose(100, report.OverallMetrics.AverageWinAfterCostsUsd, 0.0001, "Average win should use net P/L after costs.");
+        AssertClose(40, report.OverallMetrics.AverageLossAfterCostsUsd, 0.0001, "Average loss should use absolute net loss after costs.");
+        AssertEqual("realistic net outcome", report.AssumptionsUsed["cost_basis"], "Assumptions should be preserved.");
+        return Task.CompletedTask;
+    }
+
+    private static Task SignalQualityExpectancyAfterCostsIsCorrect()
+    {
+        var report = StrategySignalQualityMetrics.BuildReport(new StrategySignalQualityInput
+        {
+            Outcomes =
+            [
+                QualityCompleted("W1", 120, exitMinutes: 5),
+                QualityCompleted("L1", -60, minutes: 10, exitMinutes: 20),
+                QualityCompleted("L2", -30, minutes: 30, exitMinutes: 40)
+            ]
+        });
+
+        AssertTrue(report.Success, "Completed trades should produce expectancy.");
+        AssertClose(10, report.OverallMetrics.ExpectancyAfterCostsUsd, 0.0001,
+            "Expectancy should be net P/L after costs divided by completed trades.");
+        return Task.CompletedTask;
+    }
+
+    private static Task SignalQualityProfitFactorHandlesNoLossCaseSafely()
+    {
+        var report = StrategySignalQualityMetrics.BuildReport(new StrategySignalQualityInput
+        {
+            Outcomes =
+            [
+                QualityCompleted("W1", 50, exitMinutes: 5),
+                QualityCompleted("W2", 100, minutes: 10, exitMinutes: 20)
+            ]
+        });
+
+        AssertTrue(report.Success, "No-loss signal-quality report should succeed.");
+        AssertTrue(report.OverallMetrics.ProfitFactorAfterCostsUnlimited,
+            "No-loss profitable signal-quality report should mark profit factor as unlimited.");
+        AssertTrue(double.IsPositiveInfinity(report.OverallMetrics.ProfitFactorAfterCosts),
+            "No-loss profitable signal-quality report should safely represent profit factor as infinity.");
+        return Task.CompletedTask;
+    }
+
+    private static Task SignalQualityWorstLosingStreakCalculatesCorrectly()
+    {
+        var report = StrategySignalQualityMetrics.BuildReport(new StrategySignalQualityInput
+        {
+            Outcomes =
+            [
+                QualityCompleted("W1", 50, exitMinutes: 5),
+                QualityCompleted("L1", -10, minutes: 10, exitMinutes: 15),
+                QualityCompleted("L2", -20, minutes: 20, exitMinutes: 25),
+                QualityCompleted("W2", 40, minutes: 30, exitMinutes: 35),
+                QualityCompleted("L3", -30, minutes: 40, exitMinutes: 45)
+            ]
+        });
+
+        AssertEqual(2, report.OverallMetrics.WorstLosingStreak,
+            "Worst losing streak should count consecutive completed net losing trades.");
+        return Task.CompletedTask;
+    }
+
+    private static Task SignalQualityAverageDurationCalculatesWhenTimestampsExist()
+    {
+        var report = StrategySignalQualityMetrics.BuildReport(new StrategySignalQualityInput
+        {
+            Outcomes =
+            [
+                QualityCompleted("T1", 50, exitMinutes: 10),
+                QualityCompleted("T2", -20, minutes: 20, exitMinutes: 50)
+            ]
+        });
+
+        AssertTrue(report.OverallMetrics.AverageTradeDuration.HasValue,
+            "Average trade duration should be calculated when exit timestamps exist.");
+        AssertClose(20, report.OverallMetrics.AverageTradeDuration!.Value.TotalMinutes, 0.0001,
+            "Average duration should be calculated from signal timestamp to exit timestamp.");
+        return Task.CompletedTask;
+    }
+
+    private static Task SignalQualityGroupingBySignalSourceWorks()
+    {
+        var report = StrategySignalQualityMetrics.BuildReport(new StrategySignalQualityInput
+        {
+            Outcomes =
+            [
+                QualityCompleted("D1", 100, exitMinutes: 10),
+                QualityCompleted("A1", -50, minutes: 20, exitMinutes: 30),
+                QualityRejected("M1", minutes: 40)
+            ],
+            SourceByCandidateId = SourceMap(
+                ("D1", "deterministic/base strategy"),
+                ("A1", "auto-scalping"),
+                ("M1", "manual user approved"))
+        });
+
+        var deterministic = report.MetricsBySignalSource.Single(g =>
+            g.SignalSource == StrategySignalSourceLabels.DeterministicBaseStrategy);
+        var auto = report.MetricsBySignalSource.Single(g =>
+            g.SignalSource == StrategySignalSourceLabels.AutoScalping);
+        var manual = report.MetricsBySignalSource.Single(g =>
+            g.SignalSource == StrategySignalSourceLabels.ManualUserApproved);
+
+        AssertEqual(1, deterministic.Metrics.CompletedTrades, "Deterministic group should include its completed trade.");
+        AssertClose(100, deterministic.Metrics.ExpectancyAfterCostsUsd, 0.0001,
+            "Deterministic group should calculate net expectancy.");
+        AssertEqual(1, auto.Metrics.CompletedTrades, "Auto-scalping group should include its completed trade.");
+        AssertEqual(1, manual.Metrics.RejectedSignals, "Manual/user-approved group should include its rejection.");
+        return Task.CompletedTask;
+    }
+
+    private static Task SignalQualityMissingSourceGroupsAsUnknown()
+    {
+        var report = StrategySignalQualityMetrics.BuildReport(new StrategySignalQualityInput
+        {
+            Outcomes = [QualityCompleted("U1", 25, exitMinutes: 5)]
+        });
+
+        var unknown = report.MetricsBySignalSource.Single(g =>
+            g.SignalSource == StrategySignalSourceLabels.Unknown);
+        AssertEqual(1, unknown.Metrics.CompletedTrades, "Missing source should be grouped as unknown.");
+        AssertContains("missing signal source metadata", string.Join(" ", report.Warnings));
+        return Task.CompletedTask;
+    }
+
+    private static Task SignalQualityEmptyInputFailsClearly()
+    {
+        var report = StrategySignalQualityMetrics.BuildReport(new StrategySignalQualityInput());
+
+        AssertFalse(report.Success, "Empty signal-quality input should fail clearly.");
+        AssertEqual(StrategySignalQualityMetrics.NoDataCode, report.FailureCode,
+            "Empty input should return a clear no-data code.");
+        AssertContains("No signals", report.FailureReason);
+        return Task.CompletedTask;
+    }
+
+    private static Task SegmentedPerformanceGroupingBySymbolWorks()
+    {
+        var report = StrategySegmentAnalyzer.BuildReport(new StrategySegmentAnalysisInput
+        {
+            Outcomes =
+            [
+                QualityCompleted("E1", 100, exitMinutes: 5, symbol: "EURUSD"),
+                QualityCompleted("G1", -40, minutes: 10, exitMinutes: 15, symbol: "GBPUSD"),
+                QualityCompleted("E2", 50, minutes: 20, exitMinutes: 25, symbol: "EURUSD")
+            ]
+        });
+
+        var symbolGroup = SegmentGroup(report, "Symbol");
+        var eurusd = Segment(symbolGroup, "EURUSD");
+        var gbpusd = Segment(symbolGroup, "GBPUSD");
+
+        AssertEqual(2, eurusd.TotalTrades, "EURUSD symbol segment should include its completed trades.");
+        AssertClose(150, eurusd.NetProfitUsd, 0.0001, "EURUSD segment should calculate net P/L.");
+        AssertEqual(1, gbpusd.TotalTrades, "GBPUSD symbol segment should include its completed trade.");
+        AssertClose(-40, gbpusd.NetProfitUsd, 0.0001, "GBPUSD segment should calculate net P/L.");
+        return Task.CompletedTask;
+    }
+
+    private static Task SegmentedPerformanceGroupingBySessionWorks()
+    {
+        var report = StrategySegmentAnalyzer.BuildReport(new StrategySegmentAnalysisInput
+        {
+            Outcomes =
+            [
+                QualityCompleted("L1", 100, exitMinutes: 5, session: "London"),
+                QualityCompleted("N1", -25, minutes: 10, exitMinutes: 15, session: "NewYork"),
+                QualityCompleted("L2", 50, minutes: 20, exitMinutes: 25, session: "London")
+            ]
+        });
+
+        var sessionGroup = SegmentGroup(report, "Session");
+        AssertEqual(2, Segment(sessionGroup, "London").TotalTrades,
+            "London session segment should include its completed trades.");
+        AssertClose(-25, Segment(sessionGroup, "NewYork").NetProfitUsd, 0.0001,
+            "NewYork session segment should calculate net P/L.");
+        return Task.CompletedTask;
+    }
+
+    private static Task SegmentedPerformanceGroupingBySpreadRegimeWorks()
+    {
+        var report = StrategySegmentAnalyzer.BuildReport(new StrategySegmentAnalysisInput
+        {
+            Outcomes =
+            [
+                QualityCompleted("T1", 80, exitMinutes: 5, spreadRegime: "Tight"),
+                QualityCompleted("W1", -30, minutes: 10, exitMinutes: 15, spreadRegime: "Wide"),
+                QualityCompleted("T2", 20, minutes: 20, exitMinutes: 25, spreadRegime: "Tight")
+            ]
+        });
+
+        var spreadGroup = SegmentGroup(report, "Spread Regime");
+        AssertEqual(2, Segment(spreadGroup, "Tight").TotalTrades,
+            "Tight-spread segment should include its completed trades.");
+        AssertClose(-30, Segment(spreadGroup, "Wide").NetProfitUsd, 0.0001,
+            "Wide-spread segment should calculate net P/L.");
+        return Task.CompletedTask;
+    }
+
+    private static Task SegmentedPerformanceMissingMetadataGoesToUnknown()
+    {
+        var report = StrategySegmentAnalyzer.BuildReport(new StrategySegmentAnalysisInput
+        {
+            Outcomes =
+            [
+                QualityCompleted("U1", 40, exitMinutes: 5, session: "", spreadRegime: "")
+            ]
+        });
+
+        AssertEqual(1, Segment(SegmentGroup(report, "Session"), StrategySegmentAnalyzer.UnknownSegment).TotalTrades,
+            "Missing session should group as Unknown.");
+        AssertEqual(1, Segment(SegmentGroup(report, "Spread Regime"), StrategySegmentAnalyzer.UnknownSegment).TotalTrades,
+            "Missing spread regime should group as Unknown.");
+        AssertEqual(1, Segment(SegmentGroup(report, "Volatility Regime"), StrategySegmentAnalyzer.UnknownSegment).TotalTrades,
+            "Missing volatility regime should group as Unknown.");
+        AssertEqual(1, Segment(SegmentGroup(report, "Trend/Range Regime"), StrategySegmentAnalyzer.UnknownSegment).TotalTrades,
+            "Missing trend/range regime should group as Unknown.");
+        AssertEqual(1, Segment(SegmentGroup(report, "AI Confidence Bucket"), StrategySegmentAnalyzer.UnknownSegment).TotalTrades,
+            "Missing AI confidence should group as Unknown.");
+        AssertEqual(1, Segment(SegmentGroup(report, "Signal Reason/Source"), StrategySegmentAnalyzer.UnknownSegment).TotalTrades,
+            "Missing signal reason/source should group as Unknown.");
+        AssertContains("grouped as Unknown", string.Join(" ", report.Warnings));
+        return Task.CompletedTask;
+    }
+
+    private static Task SegmentedPerformanceAiConfidenceBucketGroupingWorks()
+    {
+        var report = StrategySegmentAnalyzer.BuildReport(new StrategySegmentAnalysisInput
+        {
+            Outcomes =
+            [
+                QualityCompleted("A1", 30, exitMinutes: 5),
+                QualityCompleted("A2", 40, minutes: 10, exitMinutes: 15),
+                QualityCompleted("A3", -10, minutes: 20, exitMinutes: 25)
+            ],
+            AiConfidenceByCandidateId = ConfidenceMap(("A1", 45), ("A2", 75), ("A3", 92))
+        });
+
+        var aiGroup = SegmentGroup(report, "AI Confidence Bucket");
+        AssertEqual(1, Segment(aiGroup, "0-49").TotalTrades, "Low AI confidence bucket should group correctly.");
+        AssertEqual(1, Segment(aiGroup, "70-79").TotalTrades, "70s AI confidence bucket should group correctly.");
+        AssertEqual(1, Segment(aiGroup, "90-100").TotalTrades, "90+ AI confidence bucket should group correctly.");
+        return Task.CompletedTask;
+    }
+
+    private static Task SegmentedPerformanceSignalSourceReasonGroupingWorks()
+    {
+        var report = StrategySegmentAnalyzer.BuildReport(new StrategySegmentAnalysisInput
+        {
+            Outcomes =
+            [
+                QualityCompleted("S1", 70, exitMinutes: 5),
+                QualityCompleted("S2", -20, minutes: 10, exitMinutes: 15),
+                QualityCompleted("S3", 50, minutes: 20, exitMinutes: 25)
+            ],
+            SignalReasonByCandidateId = SourceMap(("S1", "M5 trend aligned")),
+            SignalSourceByCandidateId = SourceMap(("S2", "auto-scalping"), ("S3", "AI confirmed"))
+        });
+
+        var sourceGroup = SegmentGroup(report, "Signal Reason/Source");
+        AssertEqual(1, Segment(sourceGroup, "M5 trend aligned").TotalTrades,
+            "Signal reason should be preferred when available.");
+        AssertEqual(1, Segment(sourceGroup, StrategySignalSourceLabels.AutoScalping).TotalTrades,
+            "Signal source should be normalized when reason is missing.");
+        AssertEqual(1, Segment(sourceGroup, StrategySignalSourceLabels.AiConfirmed).TotalTrades,
+            "AI source should be normalized when reason is missing.");
+        return Task.CompletedTask;
+    }
+
+    private static Task SegmentedPerformanceMetricsCalculateCorrectly()
+    {
+        var report = StrategySegmentAnalyzer.BuildReport(new StrategySegmentAnalysisInput
+        {
+            Outcomes =
+            [
+                QualityCompleted("M1", 100, exitMinutes: 5, symbol: "EURUSD", totalExecutionCostUsd: 3),
+                QualityCompleted("M2", -40, minutes: 10, exitMinutes: 15, symbol: "EURUSD", totalExecutionCostUsd: 4),
+                QualityCompleted("M3", -20, minutes: 20, exitMinutes: 25, symbol: "EURUSD", totalExecutionCostUsd: 5),
+                QualityCompleted("M4", 60, minutes: 30, exitMinutes: 35, symbol: "EURUSD", totalExecutionCostUsd: 6)
+            ],
+            AssumptionsUsed = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["segment_scope"] = "completed realistic outcomes"
+            }
+        });
+
+        var eurusd = Segment(SegmentGroup(report, "Symbol"), "EURUSD");
+        AssertTrue(report.Success, "Segmented report should succeed for completed trades.");
+        AssertEqual(4, eurusd.TotalTrades, "Segment total should include completed trades only.");
+        AssertClose(50, eurusd.WinRatePercent, 0.0001, "Win rate should use positive net P/L trades.");
+        AssertClose(100, eurusd.NetProfitUsd, 0.0001, "Net profit should sum net P/L after costs.");
+        AssertClose(2.67, eurusd.ProfitFactor, 0.0001, "Profit factor should use gross win / gross loss.");
+        AssertClose(25, eurusd.ExpectancyUsd, 0.0001, "Expectancy should use net P/L after costs per trade.");
+        AssertClose(60, eurusd.MaxDrawdownUsd, 0.0001, "Max drawdown should use chronological segment equity.");
+        AssertEqual(2, eurusd.WorstLosingStreak, "Worst losing streak should count consecutive segment losers.");
+        AssertClose(80, eurusd.AverageWinUsd, 0.0001, "Average win should use segment winners.");
+        AssertClose(30, eurusd.AverageLossUsd, 0.0001, "Average loss should use absolute segment losses.");
+        AssertClose(18, eurusd.TotalExecutionCostUsd, 0.0001, "Total execution cost should aggregate costs.");
+        AssertEqual("completed realistic outcomes", report.AssumptionsUsed["segment_scope"],
+            "Segment assumptions should be preserved.");
+        return Task.CompletedTask;
+    }
+
+    private static Task SegmentedPerformanceEmptyInputFailsClearly()
+    {
+        var report = StrategySegmentAnalyzer.BuildReport(new StrategySegmentAnalysisInput());
+
+        AssertFalse(report.Success, "Empty segmented analysis input should fail clearly.");
+        AssertEqual(StrategySegmentAnalyzer.NoDataCode, report.FailureCode,
+            "Empty segmented analysis should return a clear no-data code.");
+        AssertContains("No completed", report.FailureReason);
+        return Task.CompletedTask;
+    }
+
+    private static Task CostSensitivitySpreadIncreaseReducesNetProfitCorrectly()
+    {
+        var report = CostSensitivityRunner.Run(new CostSensitivityInput
+        {
+            Outcomes =
+            [
+                QualityCompleted("C1", 95, exitMinutes: 5, grossProfitLossUsd: 100,
+                    spreadCostUsd: 2, slippageCostUsd: 1, commissionCostUsd: 2)
+            ],
+            Scenarios = [new CostSensitivityScenario { Name = "spread x2", SpreadMultiplier = 2 }]
+        });
+
+        var scenario = report.ScenarioMetrics.Single();
+        AssertTrue(report.Success, "Spread sensitivity report should succeed.");
+        AssertClose(95, report.BaseMetrics.NetProfitUsd, 0.0001, "Base metrics should preserve original net P/L.");
+        AssertClose(93, scenario.Metrics.NetProfitUsd, 0.0001,
+            "Doubling spread cost from 2 to 4 should reduce net profit by 2.");
+        AssertClose(-2, scenario.DegradationFromBase.NetProfitChangeUsd, 0.0001,
+            "Degradation should report net profit change from base.");
+        return Task.CompletedTask;
+    }
+
+    private static Task CostSensitivitySlippageIncreaseReducesNetProfitCorrectly()
+    {
+        var report = CostSensitivityRunner.Run(new CostSensitivityInput
+        {
+            Outcomes =
+            [
+                QualityCompleted("C1", 95, exitMinutes: 5, grossProfitLossUsd: 100,
+                    spreadCostUsd: 2, slippageCostUsd: 1, commissionCostUsd: 2)
+            ],
+            Scenarios = [new CostSensitivityScenario { Name = "slippage x3", SlippageMultiplier = 3 }]
+        });
+
+        AssertClose(93, report.ScenarioMetrics.Single().Metrics.NetProfitUsd, 0.0001,
+            "Tripling slippage cost from 1 to 3 should reduce net profit by 2.");
+        return Task.CompletedTask;
+    }
+
+    private static Task CostSensitivityCommissionIncreaseReducesNetProfitCorrectly()
+    {
+        var report = CostSensitivityRunner.Run(new CostSensitivityInput
+        {
+            Outcomes =
+            [
+                QualityCompleted("C1", 95, exitMinutes: 5, grossProfitLossUsd: 100,
+                    spreadCostUsd: 2, slippageCostUsd: 1, commissionCostUsd: 2)
+            ],
+            Scenarios = [new CostSensitivityScenario { Name = "commission x2", CommissionMultiplier = 2 }]
+        });
+
+        AssertClose(93, report.ScenarioMetrics.Single().Metrics.NetProfitUsd, 0.0001,
+            "Doubling commission cost from 2 to 4 should reduce net profit by 2.");
+        return Task.CompletedTask;
+    }
+
+    private static Task CostSensitivityCombinedWorseCostScenarioWorks()
+    {
+        var report = CostSensitivityRunner.Run(new CostSensitivityInput
+        {
+            Outcomes =
+            [
+                QualityCompleted("C1", 95, exitMinutes: 5, grossProfitLossUsd: 100,
+                    spreadCostUsd: 2, slippageCostUsd: 1, commissionCostUsd: 2)
+            ],
+            Scenarios =
+            [
+                new CostSensitivityScenario
+                {
+                    Name = "combined stress",
+                    SpreadMultiplier = 2,
+                    AdditionalSpreadPips = 1,
+                    SlippageMultiplier = 2,
+                    AdditionalSlippagePips = 0.5,
+                    CommissionMultiplier = 2,
+                    AdditionalCommissionPerLot = 4
+                }
+            ],
+            PipCostUsdPerPipByCandidateId = DoubleMap(("C1", 10)),
+            LotSizeByCandidateId = DoubleMap(("C1", 0.5)),
+            AssumptionsUsed = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["cost_stress"] = "synthetic"
+            }
+        });
+
+        var scenario = report.ScenarioMetrics.Single();
+        AssertTrue(report.Success, "Combined stress report should succeed.");
+        AssertClose(73, scenario.Metrics.NetProfitUsd, 0.0001,
+            "Combined stress should apply multipliers, additional pips, and additional commission.");
+        AssertClose(27, scenario.Metrics.TotalExecutionCostUsd, 0.0001,
+            "Combined stress should recalculate total execution cost.");
+        AssertEqual("synthetic", report.AssumptionsUsed["cost_stress"], "Assumptions should be preserved.");
+        return Task.CompletedTask;
+    }
+
+    private static Task CostSensitivityWinToLossFlipCountWorks()
+    {
+        var report = CostSensitivityRunner.Run(new CostSensitivityInput
+        {
+            Outcomes =
+            [
+                QualityCompleted("C1", 5, exitMinutes: 5, grossProfitLossUsd: 10,
+                    spreadCostUsd: 2, slippageCostUsd: 1, commissionCostUsd: 2),
+                QualityCompleted("C2", 20, minutes: 10, exitMinutes: 15, grossProfitLossUsd: 25,
+                    spreadCostUsd: 2, slippageCostUsd: 1, commissionCostUsd: 2)
+            ],
+            Scenarios = [new CostSensitivityScenario { Name = "spread x4", SpreadMultiplier = 4 }]
+        });
+
+        var scenario = report.ScenarioMetrics.Single();
+        AssertEqual(1, scenario.Metrics.WinToLossFlipCount,
+            "Only the marginal winner should flip from win to loss under higher costs.");
+        AssertEqual(1, scenario.DegradationFromBase.WinToLossFlipCountChange,
+            "Degradation should include win-to-loss flip count change.");
+        return Task.CompletedTask;
+    }
+
+    private static Task CostSensitivityInvalidScenarioConfigFailsClearly()
+    {
+        var report = CostSensitivityRunner.Run(new CostSensitivityInput
+        {
+            Outcomes = [QualityCompleted("C1", 95, exitMinutes: 5)],
+            Scenarios = [new CostSensitivityScenario { Name = "bad spread", SpreadMultiplier = -1 }]
+        });
+
+        AssertFalse(report.Success, "Invalid scenario config should fail clearly.");
+        AssertEqual(CostSensitivityRunner.InvalidScenarioCode, report.FailureCode,
+            "Invalid scenario config should return a clear code.");
+        AssertContains("spread multiplier", report.FailureReason);
+        return Task.CompletedTask;
+    }
+
+    private static Task CostSensitivityMissingCostFieldsProduceWarnings()
+    {
+        var report = CostSensitivityRunner.Run(new CostSensitivityInput
+        {
+            Outcomes =
+            [
+                QualityCompleted("C1", 50, exitMinutes: 5, grossProfitLossUsd: 50,
+                    spreadCostUsd: 0, slippageCostUsd: 0, commissionCostUsd: 0)
+            ],
+            Scenarios =
+            [
+                new CostSensitivityScenario
+                {
+                    Name = "missing metadata add-ons",
+                    AdditionalSpreadPips = 1,
+                    AdditionalSlippagePips = 1,
+                    AdditionalCommissionPerLot = 2
+                }
+            ]
+        });
+
+        string warnings = string.Join(" ", report.Warnings);
+        AssertTrue(report.Success, "Missing cost metadata should warn without connecting to broker data.");
+        AssertContains("zero spread cost", warnings);
+        AssertContains("zero slippage cost", warnings);
+        AssertContains("zero commission cost", warnings);
+        AssertContains("pip-cost metadata is missing", warnings);
+        AssertContains("lot-size metadata is missing", warnings);
+        return Task.CompletedTask;
+    }
+
+    private static Task CostSensitivityEmptyInputFailsClearly()
+    {
+        var report = CostSensitivityRunner.Run(new CostSensitivityInput());
+
+        AssertFalse(report.Success, "Empty cost sensitivity input should fail clearly.");
+        AssertEqual(CostSensitivityRunner.NoDataCode, report.FailureCode,
+            "Empty cost sensitivity input should return a clear no-data code.");
+        AssertContains("No completed", report.FailureReason);
+        return Task.CompletedTask;
+    }
+
+    private static Task StrategyRobustnessOosDegradationIsCalculated()
+    {
+        var report = StrategyRobustnessRunner.Run(RobustnessInput(
+            [100, 100, -50, -50],
+            thresholds: LenientRobustnessThresholds(maxOosDegradation: 500)));
+
+        AssertTrue(report.Success, "Valid robustness input should succeed.");
+        AssertClose(100, report.InSampleMetrics.ExpectancyUsd, 0.0001,
+            "In-sample expectancy should be calculated from first chronological partition.");
+        AssertClose(-50, report.OutOfSampleMetrics.ExpectancyUsd, 0.0001,
+            "Out-of-sample expectancy should be calculated from second chronological partition.");
+        AssertClose(-150, report.OutOfSampleDegradation.ExpectancyChangeUsd, 0.0001,
+            "OOS degradation should compare OOS expectancy to in-sample expectancy.");
+        return Task.CompletedTask;
+    }
+
+    private static Task StrategyRobustnessSmallSampleIsInconclusive()
+    {
+        var report = StrategyRobustnessRunner.Run(RobustnessInput(
+            [20, 25],
+            thresholds: new StrategyRobustnessThresholds
+            {
+                MinimumTotalTrades = 5,
+                MinimumOutOfSampleTrades = 3,
+                MaximumOosExpectancyDegradationUsd = 100,
+                MaximumMonteCarloDrawdownUsd = 1_000,
+                MaximumMonteCarloLosingStreak = 10
+            }));
+
+        AssertTrue(report.Success, "Small but valid sample should still produce a robustness report.");
+        AssertEqual(StrategyRobustnessVerdicts.Inconclusive, report.Verdict,
+            "Small sample should be inconclusive rather than pass.");
+        AssertContains("sample is too small", string.Join(" ", report.Warnings));
+        return Task.CompletedTask;
+    }
+
+    private static Task StrategyRobustnessMonteCarloSummaryIsIncluded()
+    {
+        var report = StrategyRobustnessRunner.Run(RobustnessInput(
+            [100, -20, 80, -10, 70, -10],
+            thresholds: LenientRobustnessThresholds(),
+            monteCarlo: new MonteCarloConfig { StartingEquity = 10_000, Iterations = 25, Seed = 9 },
+            walkForward: RobustnessWalkForwardConfig()));
+
+        AssertTrue(report.Success, "Valid robustness input should include Monte Carlo summary.");
+        AssertEqual(25, report.MonteCarloSummary.Iterations, "Monte Carlo summary should preserve iteration count.");
+        AssertClose(10_210, report.MonteCarloSummary.FinalEquity.Min, 0.0001,
+            "Final equity should be deterministic for fixed total P/L.");
+        AssertTrue(report.MonteCarloSummary.MaxDrawdown.Max >= 0,
+            "Monte Carlo max drawdown distribution should be included.");
+        AssertTrue(report.MonteCarloSummary.WorstLosingStreak.Max >= 1,
+            "Monte Carlo losing streak distribution should be included.");
+        AssertTrue(report.WalkForwardWindows.Count > 0, "Walk-forward window summaries should be included when configured.");
+        return Task.CompletedTask;
+    }
+
+    private static Task StrategyRobustnessFailingDrawdownThresholdReturnsFail()
+    {
+        var report = StrategyRobustnessRunner.Run(RobustnessInput(
+            [100, -200, 80, 90],
+            thresholds: new StrategyRobustnessThresholds
+            {
+                MinimumTotalTrades = 4,
+                MinimumOutOfSampleTrades = 2,
+                MaximumOosExpectancyDegradationUsd = 1_000,
+                MaximumMonteCarloDrawdownUsd = 50,
+                MaximumMonteCarloLosingStreak = 10
+            }));
+
+        AssertTrue(report.Success, "Drawdown threshold failure should still produce a report.");
+        AssertEqual(StrategyRobustnessVerdicts.Fail, report.Verdict,
+            "Drawdown threshold breach should fail the robustness verdict.");
+        AssertContains("Monte Carlo max drawdown", string.Join(" ", report.FailedCriteria));
+        return Task.CompletedTask;
+    }
+
+    private static Task StrategyRobustnessPassingThresholdsReturnPass()
+    {
+        var report = StrategyRobustnessRunner.Run(RobustnessInput(
+            [100, -20, 80, -10, 70, -10],
+            thresholds: LenientRobustnessThresholds()));
+
+        AssertTrue(report.Success, "Valid passing robustness input should succeed.");
+        AssertEqual(StrategyRobustnessVerdicts.Pass, report.Verdict,
+            "Positive OOS expectancy and lenient thresholds should pass.");
+        AssertEqual(0, report.FailedCriteria.Count, "Passing report should not include failed criteria.");
+        return Task.CompletedTask;
+    }
+
+    private static Task StrategyRobustnessInvalidSplitConfigFailsClearly()
+    {
+        var report = StrategyRobustnessRunner.Run(RobustnessInput(
+            [10, 20, 30],
+            split: new OutOfSampleSplitConfig { InSampleRatio = 1.2 }));
+
+        AssertFalse(report.Success, "Invalid split config should fail clearly.");
+        AssertEqual(StrategyRobustnessRunner.SplitConfigInvalidCode, report.FailureCode,
+            "Invalid split config should map to strategy robustness split failure.");
+        AssertContains("split", report.FailureReason);
+        return Task.CompletedTask;
+    }
+
+    private static Task StrategyRobustnessInvalidMonteCarloConfigFailsClearly()
+    {
+        var report = StrategyRobustnessRunner.Run(RobustnessInput(
+            [10, 20, 30, 40],
+            monteCarlo: new MonteCarloConfig { StartingEquity = 10_000, Iterations = 0, Seed = 1 }));
+
+        AssertFalse(report.Success, "Invalid Monte Carlo config should fail clearly.");
+        AssertEqual(StrategyRobustnessRunner.MonteCarloConfigInvalidCode, report.FailureCode,
+            "Invalid Monte Carlo config should map to strategy robustness Monte Carlo failure.");
+        AssertContains("Monte Carlo", report.FailureReason);
+        return Task.CompletedTask;
+    }
+
+    private static Task StrategyRobustnessEmptyInputFailsClearly()
+    {
+        var report = StrategyRobustnessRunner.Run(new StrategyRobustnessInput());
+
+        AssertFalse(report.Success, "Empty robustness input should fail clearly.");
+        AssertEqual(StrategyRobustnessRunner.NoDataCode, report.FailureCode,
+            "Empty robustness input should return a clear no-data code.");
+        AssertContains("No completed", report.FailureReason);
+        return Task.CompletedTask;
+    }
+
+    private static Task AiFilterImpactOutperformingNonAiReturnsImproves()
+    {
+        var report = AiFilterImpactAnalyzer.Analyze(new AiFilterImpactInput
+        {
+            Outcomes =
+            [
+                QualityCompleted("AI1", 100, exitMinutes: 5),
+                QualityCompleted("AI2", 80, minutes: 10, exitMinutes: 15),
+                QualityCompleted("D1", 20, minutes: 20, exitMinutes: 25),
+                QualityCompleted("A1", -10, minutes: 30, exitMinutes: 35)
+            ],
+            SignalSourceByCandidateId = SourceMap(
+                ("AI1", "AI-confirmed"),
+                ("AI2", "Claude AI"),
+                ("D1", "deterministic/base strategy"),
+                ("A1", "auto-scalping")),
+            AiConfidenceByCandidateId = DoubleMap(("AI1", 92), ("AI2", 84)),
+            Thresholds = TinyAiThresholds()
+        });
+
+        AssertTrue(report.Success, "AI filter impact report should succeed.");
+        AssertEqual(AiFilterImpactVerdicts.Improves, report.Verdict,
+            "Higher AI-confirmed expectancy should return Improves.");
+        AssertClose(90, report.OverallComparison.AiConfirmed.ExpectancyUsd, 0.0001,
+            "AI expectancy should use AI-confirmed completed outcomes.");
+        AssertClose(5, report.OverallComparison.NonAi.ExpectancyUsd, 0.0001,
+            "Non-AI expectancy should combine deterministic/manual/auto cohorts.");
+        AssertTrue(report.OverallComparison.AiOutperformsNonAi,
+            "Comparison should flag AI outperformance.");
+        return Task.CompletedTask;
+    }
+
+    private static Task AiFilterImpactUnderperformingNonAiReturnsHurts()
+    {
+        var report = AiFilterImpactAnalyzer.Analyze(new AiFilterImpactInput
+        {
+            Outcomes =
+            [
+                QualityCompleted("AI1", -40, exitMinutes: 5),
+                QualityCompleted("AI2", -20, minutes: 10, exitMinutes: 15),
+                QualityCompleted("D1", 60, minutes: 20, exitMinutes: 25),
+                QualityCompleted("A1", 40, minutes: 30, exitMinutes: 35)
+            ],
+            SignalSourceByCandidateId = SourceMap(
+                ("AI1", "AI-confirmed"),
+                ("AI2", "AI-confirmed"),
+                ("D1", "deterministic/base strategy"),
+                ("A1", "auto-scalping")),
+            AiConfidenceByCandidateId = DoubleMap(("AI1", 80), ("AI2", 75)),
+            Thresholds = TinyAiThresholds()
+        });
+
+        AssertEqual(AiFilterImpactVerdicts.Hurts, report.Verdict,
+            "Lower AI-confirmed expectancy should return Hurts.");
+        AssertClose(-80, report.OverallComparison.ExpectancyDeltaAiVsNonAiUsd, 0.0001,
+            "Expectancy delta should compare AI-confirmed to non-AI.");
+        return Task.CompletedTask;
+    }
+
+    private static Task AiFilterImpactMissingComparisonGroupReturnsInconclusive()
+    {
+        var report = AiFilterImpactAnalyzer.Analyze(new AiFilterImpactInput
+        {
+            Outcomes =
+            [
+                QualityCompleted("AI1", 100, exitMinutes: 5),
+                QualityCompleted("AI2", 80, minutes: 10, exitMinutes: 15)
+            ],
+            SignalSourceByCandidateId = SourceMap(("AI1", "AI-confirmed"), ("AI2", "AI-confirmed")),
+            AiConfidenceByCandidateId = DoubleMap(("AI1", 90), ("AI2", 85)),
+            Thresholds = TinyAiThresholds()
+        });
+
+        AssertEqual(AiFilterImpactVerdicts.Inconclusive, report.Verdict,
+            "Missing non-AI comparison group should be inconclusive.");
+        AssertContains("No non-AI", string.Join(" ", report.Warnings));
+        return Task.CompletedTask;
+    }
+
+    private static Task AiFilterImpactConfidenceBucketGroupingWorks()
+    {
+        var report = AiFilterImpactAnalyzer.Analyze(new AiFilterImpactInput
+        {
+            Outcomes =
+            [
+                QualityCompleted("AI1", 20, exitMinutes: 5),
+                QualityCompleted("AI2", 40, minutes: 10, exitMinutes: 15),
+                QualityCompleted("D1", 10, minutes: 20, exitMinutes: 25)
+            ],
+            SignalSourceByCandidateId = SourceMap(
+                ("AI1", "AI-confirmed"),
+                ("AI2", "AI-confirmed"),
+                ("D1", "deterministic/base strategy")),
+            AiConfidenceByCandidateId = DoubleMap(("AI1", 74), ("AI2", 91)),
+            Thresholds = TinyAiThresholds()
+        });
+
+        var bucket70 = report.ConfidenceBucketComparison.Single(b => b.Bucket == "70-79");
+        var bucket90 = report.ConfidenceBucketComparison.Single(b => b.Bucket == "90-100");
+        AssertEqual(1, bucket70.Metrics.CompletedTrades, "70-79 AI confidence bucket should include its trade.");
+        AssertClose(20, bucket70.Metrics.ExpectancyUsd, 0.0001, "70-79 bucket should calculate expectancy.");
+        AssertEqual(1, bucket90.Metrics.CompletedTrades, "90-100 AI confidence bucket should include its trade.");
+        AssertClose(91, bucket90.Metrics.AverageAiConfidence.GetValueOrDefault(), 0.0001,
+            "Bucket metrics should include average confidence.");
+        return Task.CompletedTask;
+    }
+
+    private static Task AiFilterImpactBlockedWinnerLoserAnalysisWorks()
+    {
+        var report = AiFilterImpactAnalyzer.Analyze(new AiFilterImpactInput
+        {
+            Outcomes =
+            [
+                QualityCompleted("AI1", 20, exitMinutes: 5),
+                QualityCompleted("D1", 10, minutes: 10, exitMinutes: 15)
+            ],
+            BlockedSignalCounterfactualOutcomes =
+            [
+                QualityCompleted("B1", 50, minutes: 20, exitMinutes: 25),
+                QualityCompleted("B2", -30, minutes: 30, exitMinutes: 35),
+                QualityCompleted("B3", 40, minutes: 40, exitMinutes: 45)
+            ],
+            SignalSourceByCandidateId = SourceMap(("AI1", "AI-confirmed"), ("D1", "deterministic/base strategy")),
+            AiConfidenceByCandidateId = DoubleMap(("AI1", 82)),
+            Thresholds = TinyAiThresholds()
+        });
+
+        AssertEqual(3, report.BlockedSignalAnalysis.BlockedSignalsWithCounterfactuals,
+            "Blocked analysis should count simulated blocked outcomes.");
+        AssertEqual(2, report.BlockedSignalAnalysis.BlockedWouldHaveWon,
+            "Blocked analysis should count blocked winners.");
+        AssertEqual(1, report.BlockedSignalAnalysis.BlockedWouldHaveLost,
+            "Blocked analysis should count blocked losers.");
+        AssertTrue(report.BlockedSignalAnalysis.AiMostlyBlocksWinners,
+            "Blocked analysis should flag when AI mostly blocks winners.");
+        AssertClose(60, report.BlockedSignalAnalysis.BlockedCounterfactualNetProfitUsd, 0.0001,
+            "Blocked counterfactual net P/L should be summed.");
+        return Task.CompletedTask;
+    }
+
+    private static Task AiFilterImpactMissingConfidenceProducesWarning()
+    {
+        var report = AiFilterImpactAnalyzer.Analyze(new AiFilterImpactInput
+        {
+            Outcomes =
+            [
+                QualityCompleted("AI1", 30, exitMinutes: 5),
+                QualityCompleted("D1", 10, minutes: 10, exitMinutes: 15)
+            ],
+            SignalSourceByCandidateId = SourceMap(("AI1", "AI-confirmed"), ("D1", "deterministic/base strategy")),
+            Thresholds = TinyAiThresholds()
+        });
+
+        AssertContains("missing AI confidence", string.Join(" ", report.Warnings));
+        AssertFalse(report.OverallComparison.AiConfirmed.AverageAiConfidence.HasValue,
+            "Missing confidence should leave average confidence empty.");
+        return Task.CompletedTask;
+    }
+
+    private static Task AiFilterImpactSmallSampleIsInconclusive()
+    {
+        var report = AiFilterImpactAnalyzer.Analyze(new AiFilterImpactInput
+        {
+            Outcomes =
+            [
+                QualityCompleted("AI1", 100, exitMinutes: 5),
+                QualityCompleted("D1", 10, minutes: 10, exitMinutes: 15)
+            ],
+            SignalSourceByCandidateId = SourceMap(("AI1", "AI-confirmed"), ("D1", "deterministic/base strategy")),
+            AiConfidenceByCandidateId = DoubleMap(("AI1", 90)),
+            Thresholds = new AiFilterImpactThresholds
+            {
+                MinimumAiConfirmedTrades = 3,
+                MinimumNonAiTrades = 3,
+                MinimumExpectancyDeltaUsd = 0
+            }
+        });
+
+        AssertEqual(AiFilterImpactVerdicts.Inconclusive, report.Verdict,
+            "Too-small samples should be inconclusive.");
+        AssertContains("sample is too small", string.Join(" ", report.Warnings));
+        return Task.CompletedTask;
+    }
+
+    private static Task RealisticBacktestRunnerRejectsNoTradeFilteredCandidate()
+    {
+        var result = RealisticBacktestRunner.Run(RealisticInput(
+            [RealisticCandidate(timestampUtc: TestUtc(23, 58))],
+            config: RolloverConfig("23:55", "00:10")));
+
+        AssertTrue(result.Success, "Runner should complete with rejected candidate outcome.");
+        AssertEqual(1, result.RejectedTrades.Count, "No-trade filter should produce one rejected outcome.");
+        AssertEqual("BACKTEST_NO_TRADE_WINDOW", result.RejectedTrades[0].RejectionCode,
+            "Rejected no-trade candidate should preserve filter rejection code.");
+        AssertEqual(0, result.SuccessfulTrades.Count, "Rejected candidate should not become a successful trade.");
+        return Task.CompletedTask;
+    }
+
+    private static Task RealisticBacktestRunnerRejectsBrokerRuleBlockedCandidate()
+    {
+        var result = RealisticBacktestRunner.Run(RealisticInput(
+            [RealisticCandidate(stopLoss: 1.09995)],
+            ticks: RunnerTicks((0, 1.10000, 1.10010)),
+            symbolInfo: BacktestBrokerSymbol(stopLevelPoints: 50, freezeLevelPoints: 0, volumeLimit: 0)));
+
+        AssertTrue(result.Success, "Runner should complete with broker-rule rejected candidate outcome.");
+        AssertEqual(1, result.RejectedTrades.Count, "Broker rule should produce one rejected outcome.");
+        AssertEqual("BACKTEST_BROKER_STOP_LEVEL", result.RejectedTrades[0].RejectionCode,
+            "Broker-rule rejection should preserve broker simulator code.");
+        AssertContains("stop level", result.RejectedTrades[0].RejectionReason);
+        return Task.CompletedTask;
+    }
+
+    private static Task RealisticBacktestRunnerRecordsTpHitAsWinningTrade()
+    {
+        var result = RealisticBacktestRunner.Run(RealisticInput(
+            [RealisticCandidate()],
+            ticks: RunnerTicks(
+                (0, 1.10000, 1.10010),
+                (1, 1.10110, 1.10120))));
+
+        AssertEqual(1, result.SuccessfulTrades.Count, "TP hit should produce one successful outcome.");
+        var trade = result.SuccessfulTrades[0];
+        AssertEqual(IntrabarExitType.TakeProfit.ToString(), trade.ExitType.ToString(),
+            "TP hit should record take-profit exit type.");
+        AssertTrue(trade.NetProfitLossUsd > 0, "TP outcome should remain profitable after default spread cost.");
+        return Task.CompletedTask;
+    }
+
+    private static Task RealisticBacktestRunnerRecordsSlHitAsLosingTrade()
+    {
+        var result = RealisticBacktestRunner.Run(RealisticInput(
+            [RealisticCandidate()],
+            ticks: RunnerTicks(
+                (0, 1.10000, 1.10010),
+                (1, 1.09890, 1.09900))));
+
+        AssertEqual(1, result.SuccessfulTrades.Count, "SL hit should still produce a completed trade outcome.");
+        var trade = result.SuccessfulTrades[0];
+        AssertEqual(IntrabarExitType.StopLoss.ToString(), trade.ExitType.ToString(),
+            "SL hit should record stop-loss exit type.");
+        AssertTrue(trade.NetProfitLossUsd < 0, "SL outcome should be losing after execution costs.");
+        return Task.CompletedTask;
+    }
+
+    private static Task RealisticBacktestRunnerDeductsExecutionCosts()
+    {
+        var config = Config();
+        config.EnableCommissionModel = true;
+        config.CommissionPerLotPerSide = 5.0;
+        config.CommissionMode = "RoundTurn";
+        config.EnableSlippageModel = true;
+        config.EstimatedSlippagePips = 0.5;
+        config.MaxAllowedSlippagePips = 2.0;
+
+        var result = RealisticBacktestRunner.Run(RealisticInput(
+            [RealisticCandidate()],
+            ticks: RunnerTicks(
+                (0, 1.10000, 1.10010),
+                (1, 1.10110, 1.10120)),
+            config: config));
+
+        var trade = result.SuccessfulTrades.Single();
+        AssertTrue(trade.TotalExecutionCostUsd > 0, "Runner should apply spread, commission, and slippage costs.");
+        AssertClose(
+            trade.GrossProfitLossUsd - trade.TotalExecutionCostUsd,
+            trade.NetProfitLossUsd,
+            0.0001,
+            "Net outcome should deduct total execution costs from gross P/L.");
+        AssertClose(
+            trade.CommissionCostUsd + trade.SlippageCostUsd + trade.SpreadCostUsd,
+            trade.TotalExecutionCostUsd,
+            0.0001,
+            "Total execution cost should equal component costs.");
+        return Task.CompletedTask;
+    }
+
+    private static Task RealisticBacktestRunnerRecordsUnresolvedTradeAsOpen()
+    {
+        var result = RealisticBacktestRunner.Run(RealisticInput(
+            [RealisticCandidate()],
+            ticks: RunnerTicks((0, 1.10000, 1.10010))));
+
+        AssertEqual(1, result.OpenTrades.Count, "Candidate with no SL/TP hit should be recorded as open.");
+        AssertEqual(0, result.SuccessfulTrades.Count, "Unresolved candidate should not become successful.");
+        AssertEqual(0, result.RejectedTrades.Count, "Unresolved candidate should not become rejected.");
+        AssertContains("no SL/TP hit", string.Join(" ", result.OpenTrades[0].Warnings));
+        return Task.CompletedTask;
+    }
+
+    private static Task RealisticBacktestRunnerProducesMetricsReport()
+    {
+        var result = RealisticBacktestRunner.Run(RealisticInput(
+            [
+                RealisticCandidate(id: "WIN"),
+                RealisticCandidate(id: "LOSS", timestampUtc: TestUtc(10, 1), takeProfit: 1.1030)
+            ],
+            ticks:
+            [
+                .. RunnerTicks((0, 1.10000, 1.10010), (1, 1.10110, 1.10120)),
+                new BacktestTick
+                {
+                    TimestampUtc = TestUtc(10, 1),
+                    Symbol = "EURUSD",
+                    Bid = 1.10000,
+                    Ask = 1.10010
+                },
+                new BacktestTick
+                {
+                    TimestampUtc = TestUtc(10, 1).AddSeconds(1),
+                    Symbol = "EURUSD",
+                    Bid = 1.09890,
+                    Ask = 1.09900
+                }
+            ]));
+
+        AssertTrue(result.MetricsReport.Success, "Runner should produce metrics for completed trade outcomes.");
+        AssertEqual(2, result.MetricsReport.Overall.TotalTrades,
+            "Metrics report should include completed successful outcomes.");
+        AssertEqual(1, result.MetricsReport.Overall.WinningTrades,
+            "Metrics report should include winning completed outcomes.");
+        AssertEqual(1, result.MetricsReport.Overall.LosingTrades,
+            "Metrics report should include losing completed outcomes.");
+        return Task.CompletedTask;
+    }
+
+    private static async Task RealisticBacktestReportCanBeGeneratedWithoutMt5()
+    {
+        string outputPath = Path.Combine(TestFolder(), RealisticBacktestReportCommand.DefaultReportFileName);
+        var result = await new RealisticBacktestReportCommand()
+            .RunAsync(RealisticBacktestReportCommand.CreateMinimalExample(outputPath))
+            .ConfigureAwait(false);
+
+        AssertTrue(result.Success, "Report command should run without MT5 or broker dependencies.");
+        AssertTrue(File.Exists(outputPath), "Report command should write the markdown report.");
+        AssertEqual(
+            RealisticBacktestReportCommand.DefaultReportFileName,
+            Path.GetFileName(result.OutputPath),
+            "Report filename should use the required default name.");
+        AssertContains("Realistic Backtest Report", result.Markdown);
+        AssertContains("No MT5 or live broker connection required", result.Markdown);
+    }
+
+    private static async Task RealisticBacktestReportIncludesOutcomeCounts()
+    {
+        string outputPath = Path.Combine(TestFolder(), RealisticBacktestReportCommand.DefaultReportFileName);
+        var result = await new RealisticBacktestReportCommand()
+            .RunAsync(RealisticBacktestReportCommand.CreateMinimalExample(outputPath))
+            .ConfigureAwait(false);
+
+        AssertContains("| Total candidates | 3 |", result.Markdown);
+        AssertContains("| Completed trades | 1 |", result.Markdown);
+        AssertContains("| Rejected trades | 1 |", result.Markdown);
+        AssertContains("| Unresolved/open trades | 1 |", result.Markdown);
+        AssertContains("BACKTEST_BROKER_STOP_LEVEL", result.Markdown);
+    }
+
+    private static async Task RealisticBacktestReportIncludesExecutionCosts()
+    {
+        string outputPath = Path.Combine(TestFolder(), RealisticBacktestReportCommand.DefaultReportFileName);
+        var result = await new RealisticBacktestReportCommand()
+            .RunAsync(RealisticBacktestReportCommand.CreateMinimalExample(outputPath))
+            .ConfigureAwait(false);
+
+        AssertContains("| Total commission |", result.Markdown);
+        AssertContains("| Total slippage |", result.Markdown);
+        AssertContains("| Total spread cost |", result.Markdown);
+        AssertTrue(result.BacktestResult.MetricsReport.Overall.TotalExecutionCostUsd > 0,
+            "Fixture report should include non-zero spread/commission/slippage costs.");
+    }
+
+    private static async Task RealisticBacktestReportIncludesAssumptionsAndWarnings()
+    {
+        string outputPath = Path.Combine(TestFolder(), RealisticBacktestReportCommand.DefaultReportFileName);
+        var result = await new RealisticBacktestReportCommand()
+            .RunAsync(RealisticBacktestReportCommand.CreateMinimalExample(outputPath))
+            .ConfigureAwait(false);
+
+        AssertContains("Assumptions And Warnings", result.Markdown);
+        AssertContains("simulation only, not live proof", result.Markdown);
+        AssertContains("not live proof", result.Markdown);
+        AssertContains("Warning:", result.Markdown);
+    }
+
+    private static async Task RealisticBacktestReportCanLoadCsvMarketData()
+    {
+        string folder = TestFolder();
+        Directory.CreateDirectory(folder);
+        string tickCsv = Path.Combine(folder, "ticks.csv");
+        File.WriteAllLines(tickCsv,
+        [
+            "timestamp,symbol,bid,ask",
+            "2026-01-02T10:00:00Z,EURUSD,1.10000,1.10010",
+            "2026-01-02T10:00:10Z,EURUSD,1.10110,1.10120"
+        ]);
+
+        string outputPath = Path.Combine(folder, RealisticBacktestReportCommand.DefaultReportFileName);
+        var example = RealisticBacktestReportCommand.CreateMinimalExample(outputPath);
+        var request = example with
+        {
+            TickCsvPath = tickCsv,
+            Ticks = [],
+            Candidates =
+            [
+                RealisticCandidate(
+                    id: "CSV-WIN",
+                    timestampUtc: new DateTime(2026, 1, 2, 10, 0, 0, DateTimeKind.Utc))
+            ],
+            SymbolInfoBySymbol = new Dictionary<string, SymbolInfo>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["EURUSD"] = BacktestBrokerSymbol(stopLevelPoints: 0, freezeLevelPoints: 0, volumeLimit: 0)
+            }
+        };
+
+        var result = await new RealisticBacktestReportCommand()
+            .RunAsync(request)
+            .ConfigureAwait(false);
+
+        AssertTrue(result.Success, "Report command should run from CSV market data.");
+        AssertEqual(1, result.BacktestResult.SuccessfulTrades.Count,
+            "CSV-loaded ticks should allow the candidate to complete.");
+        AssertContains("CSV/provided bid-ask ticks", result.Markdown);
+    }
+
+    private static async Task StrategyExtractionReportCanBeGenerated()
+    {
+        string outputPath = Path.Combine(TestFolder(), StrategyExtractionReportGenerator.DefaultReportFileName);
+        var result = await new StrategyExtractionReportGenerator()
+            .GenerateAsync(FindRepoRoot(), outputPath)
+            .ConfigureAwait(false);
+
+        AssertTrue(result.Success, "Strategy extraction report generation should succeed.");
+        AssertTrue(File.Exists(outputPath), "Strategy extraction report file should be written.");
+        AssertEqual(
+            StrategyExtractionReportGenerator.DefaultReportFileName,
+            Path.GetFileName(result.OutputPath),
+            "Strategy extraction report should use the required filename.");
+        AssertContains("Strategy Extraction Report", result.Markdown);
+    }
+
+    private static async Task StrategyExtractionReportIncludesDeterministicLogicSection()
+    {
+        var result = await GenerateStrategyExtractionReportForTest().ConfigureAwait(false);
+
+        AssertContains("Deterministic Rule Logic", result.Markdown);
+        AssertContains("Base strategy direction: Hold", result.Markdown);
+        AssertContains("base deterministic strategy currently produces mostly HOLD", result.Markdown);
+        AssertContains("StrategyEngine.CreateInitialSignalAsync", result.Markdown);
+    }
+
+    private static async Task StrategyExtractionReportIncludesAiBoundarySection()
+    {
+        var result = await GenerateStrategyExtractionReportForTest().ConfigureAwait(false);
+
+        AssertContains("AI-Assisted Logic Boundary", result.Markdown);
+        AssertContains("ClaudeSignalService.ParseAndExecuteAsync", result.Markdown);
+        AssertContains("SignalDecisionService.CreateDecisionAsync", result.Markdown);
+    }
+
+    private static async Task StrategyExtractionReportIncludesHoldNoTradeBehaviorSection()
+    {
+        var result = await GenerateStrategyExtractionReportForTest().ConfigureAwait(false);
+
+        AssertContains("Hold/No-Trade Behavior", result.Markdown);
+        AssertContains("NO_TRADE", result.Markdown);
+        AssertContains("WAIT", result.Markdown);
+        AssertContains("Not verified", result.Markdown);
+    }
+
+    private static async Task StrategyExtractionReportIncludesCodeEvidencePaths()
+    {
+        var result = await GenerateStrategyExtractionReportForTest().ConfigureAwait(false);
+
+        AssertContains("Code Evidence", result.Markdown);
+        AssertContains("Trading/StrategyEngine/StrategyEngine.cs", result.Markdown);
+        AssertContains("Trading/Scalping/ScalpingSessionService.cs", result.Markdown);
+        AssertContains("Application/Workflows/AutoBotService.cs", result.Markdown);
+        AssertContains("UI/Forms/MainForm.cs", result.Markdown);
+    }
+
+    private static async Task RepaintLookaheadAuditReportCanBeGenerated()
+    {
+        string outputPath = Path.Combine(TestFolder(), RepaintLookaheadAuditReportGenerator.DefaultReportFileName);
+        var result = await new RepaintLookaheadAuditReportGenerator()
+            .GenerateAsync(FindRepoRoot(), outputPath)
+            .ConfigureAwait(false);
+
+        AssertTrue(result.Success, "Repaint/lookahead audit report generation should succeed.");
+        AssertTrue(File.Exists(outputPath), "Repaint/lookahead audit report file should be written.");
+        AssertEqual(
+            RepaintLookaheadAuditReportGenerator.DefaultReportFileName,
+            Path.GetFileName(result.OutputPath),
+            "Repaint/lookahead audit report should use the required filename.");
+        AssertContains("Repainting / Future-Data Bias Audit Report", result.Markdown);
+    }
+
+    private static async Task RepaintLookaheadAuditReportIncludesLiveSignalGenerationRiskSection()
+    {
+        var result = await GenerateRepaintLookaheadAuditReportForTest().ConfigureAwait(false);
+
+        AssertContains("Live Signal-Generation Risk", result.Markdown);
+        AssertContains("SnapshotCandleJson", result.Markdown);
+        AssertContains("SnapshotPriceJson", result.Markdown);
+        AssertContains("MT5_EA/TradingBotEA.mq5", result.Markdown);
+    }
+
+    private static async Task RepaintLookaheadAuditReportIncludesRealisticRunnerRiskSection()
+    {
+        var result = await GenerateRepaintLookaheadAuditReportForTest().ConfigureAwait(false);
+
+        AssertContains("Realistic Backtest Runner Risk", result.Markdown);
+        AssertContains("RealisticBacktestRunner.ResolveExit", result.Markdown);
+        AssertContains("StrategyToRealisticBacktestAdapter.ResolveEntryPrice", result.Markdown);
+        AssertContains("IntrabarExitSimulator.SimulateOhlcExit", result.Markdown);
+    }
+
+    private static async Task RepaintLookaheadAuditReportIncludesOldTradeSummaryLimitationSection()
+    {
+        var result = await GenerateRepaintLookaheadAuditReportForTest().ConfigureAwait(false);
+
+        AssertContains("Old Trade-Summary Backtest Limitation", result.Markdown);
+        AssertContains("DbBacktestLoader.LoadAsync", result.Markdown);
+        AssertContains("BacktestingService.CalculatePips", result.Markdown);
+        AssertContains("ProfitUsd", result.Markdown);
+    }
+
+    private static async Task RepaintLookaheadAuditReportIncludesAiLeakageRiskSection()
+    {
+        var result = await GenerateRepaintLookaheadAuditReportForTest().ConfigureAwait(false);
+
+        AssertContains("AI-Prompt Leakage Risk", result.Markdown);
+        AssertContains("AiPrompts.AiInputPromptTemplate", result.Markdown);
+        AssertContains("TRADE HISTORY", result.Markdown);
+        AssertContains("Last 5 Trades", result.Markdown);
+    }
+
+    private static async Task RepaintLookaheadAuditReportIncludesSeverityAndStatusFields()
+    {
+        var result = await GenerateRepaintLookaheadAuditReportForTest().ConfigureAwait(false);
+
+        AssertContains("Severity", result.Markdown);
+        AssertContains("Status", result.Markdown);
+        AssertContains("Critical", result.Markdown);
+        AssertContains("High", result.Markdown);
+        AssertContains("Medium", result.Markdown);
+        AssertContains("Low", result.Markdown);
+        AssertContains("Confirmed", result.Markdown);
+        AssertContains("Potential", result.Markdown);
+        AssertContains("Not verified", result.Markdown);
+    }
+
+    private static async Task StrategyEdgeVerdictReportCanBeGenerated()
+    {
+        string outputPath = Path.Combine(TestFolder(), StrategyEdgeVerdictReportBuilder.DefaultReportFileName);
+        var result = await new StrategyEdgeVerdictReportBuilder()
+            .GenerateAsync(BuildPassingStrategyEdgeInput(), outputPath)
+            .ConfigureAwait(false);
+
+        AssertTrue(result.Success, "Strategy edge verdict report generation should succeed.");
+        AssertTrue(File.Exists(outputPath), "Strategy edge verdict report file should be written.");
+        AssertEqual(
+            StrategyEdgeVerdictReportBuilder.DefaultReportFileName,
+            Path.GetFileName(result.ReportPath),
+            "Strategy edge verdict report should use the required filename.");
+        AssertContains("Strategy Edge Verdict Report", result.Markdown);
+        AssertContains("Executive Verdict", result.Markdown);
+        AssertContains("Live-demo readiness score", result.Markdown);
+    }
+
+    private static async Task StrategyEdgeVerdictPassingMetricsProducePass()
+    {
+        string outputPath = Path.Combine(TestFolder(), StrategyEdgeVerdictReportBuilder.DefaultReportFileName);
+        var result = await new StrategyEdgeVerdictReportBuilder()
+            .GenerateAsync(BuildPassingStrategyEdgeInput(), outputPath)
+            .ConfigureAwait(false);
+
+        AssertEqual(StrategyEdgeVerdicts.Pass, result.Verdict,
+            "Passing metrics and component reports should produce Pass.");
+        AssertEqual(0, result.FailedCriteria.Count,
+            "Passing verdict should not include failed criteria.");
+    }
+
+    private static async Task StrategyEdgeVerdictWeakMetricsProduceFail()
+    {
+        var input = BuildStrategyEdgeInput(
+            [
+                QualityCompleted("AI1", 10, exitMinutes: 5),
+                QualityCompleted("AI2", -100, minutes: 10, exitMinutes: 15),
+                QualityCompleted("D1", 5, minutes: 20, exitMinutes: 25),
+                QualityCompleted("D2", -80, minutes: 30, exitMinutes: 35)
+            ],
+            StrategyEdgePassingCriteria() with
+            {
+                MinimumProfitFactorAfterCosts = 1.2,
+                MinimumExpectancyAfterCostsUsd = 0
+            },
+            repaintMarkdown: NoCriticalRepaintMarkdown());
+
+        string outputPath = Path.Combine(TestFolder(), StrategyEdgeVerdictReportBuilder.DefaultReportFileName);
+        var result = await new StrategyEdgeVerdictReportBuilder()
+            .GenerateAsync(input, outputPath)
+            .ConfigureAwait(false);
+
+        AssertEqual(StrategyEdgeVerdicts.Fail, result.Verdict,
+            "Weak profit factor and expectancy should fail the verdict.");
+        AssertContains("Profit factor", string.Join(" ", result.FailedCriteria));
+        AssertContains("Expectancy", string.Join(" ", result.FailedCriteria));
+    }
+
+    private static async Task StrategyEdgeVerdictSmallSampleProducesInconclusive()
+    {
+        var input = BuildStrategyEdgeInput(
+            [
+                QualityCompleted("AI1", 100, exitMinutes: 5),
+                QualityCompleted("D1", 50, minutes: 10, exitMinutes: 15)
+            ],
+            StrategyEdgePassingCriteria() with { MinimumCompletedTrades = 10 },
+            repaintMarkdown: NoCriticalRepaintMarkdown());
+
+        string outputPath = Path.Combine(TestFolder(), StrategyEdgeVerdictReportBuilder.DefaultReportFileName);
+        var result = await new StrategyEdgeVerdictReportBuilder()
+            .GenerateAsync(input, outputPath)
+            .ConfigureAwait(false);
+
+        AssertEqual(StrategyEdgeVerdicts.Inconclusive, result.Verdict,
+            "Small sample should be inconclusive rather than passed as proof.");
+        AssertContains("sample is too small", string.Join(" ", result.Warnings));
+    }
+
+    private static async Task StrategyEdgeVerdictCriticalRepaintFindingForcesFail()
+    {
+        var input = BuildPassingStrategyEdgeInput() with
+        {
+            RepaintLookaheadAuditMarkdown = CriticalRepaintMarkdown()
+        };
+
+        string outputPath = Path.Combine(TestFolder(), StrategyEdgeVerdictReportBuilder.DefaultReportFileName);
+        var result = await new StrategyEdgeVerdictReportBuilder()
+            .GenerateAsync(input, outputPath)
+            .ConfigureAwait(false);
+
+        AssertEqual(StrategyEdgeVerdicts.Fail, result.Verdict,
+            "Critical repaint/lookahead finding should force failure when configured to fail.");
+        AssertContains("Critical repaint/lookahead", string.Join(" ", result.FailedCriteria));
+    }
+
+    private static async Task StrategyEdgeVerdictReportIncludesNotLiveProofWarning()
+    {
+        string outputPath = Path.Combine(TestFolder(), StrategyEdgeVerdictReportBuilder.DefaultReportFileName);
+        var result = await new StrategyEdgeVerdictReportBuilder()
+            .GenerateAsync(BuildPassingStrategyEdgeInput(), outputPath)
+            .ConfigureAwait(false);
+
+        AssertContains("Backtest edge is not live proof", result.Markdown);
+        AssertContains("Live demo/paper validation is still required", result.Markdown);
+    }
+
+    private static async Task StrategyEdgeVerdictReportIncludesAiCaution()
+    {
+        string outputPath = Path.Combine(TestFolder(), StrategyEdgeVerdictReportBuilder.DefaultReportFileName);
+        var result = await new StrategyEdgeVerdictReportBuilder()
+            .GenerateAsync(BuildPassingStrategyEdgeInput(), outputPath)
+            .ConfigureAwait(false);
+
+        AssertContains("AI should not be trusted unless AI impact analysis shows improvement", result.Markdown);
+        AssertContains("AI filter verdict", result.Markdown);
+    }
+
+    private static Task DemoPaperReconciliationMatchingMetricsReturnsMatches()
+    {
+        var report = DemoPaperReconciliationAnalyzer.Analyze(new DemoPaperReconciliationInput
+        {
+            BacktestOutcomes = ReconciliationBaseline("B"),
+            DemoPaperOutcomes = ReconciliationBaseline("D"),
+            Tolerances = ReconciliationTolerances()
+        });
+
+        AssertTrue(report.Success, "Matching demo/paper reconciliation input should succeed.");
+        AssertEqual(DemoPaperReconciliationVerdicts.Matches, report.Verdict,
+            "Matching demo/paper metrics should return Matches.");
+        AssertEqual(4, report.BacktestMetrics.TotalTrades,
+            "Backtest total trades should include completed and rejected outcomes.");
+        AssertEqual(3, report.DemoPaperMetrics.CompletedTrades,
+            "Demo/paper completed trades should be counted.");
+        AssertClose(25, report.DemoPaperMetrics.RejectionRatePercent, 0.0001,
+            "Rejection rate should include rejected demo/paper outcomes.");
+        AssertClose(0, report.Deltas.ExpectancyChangeUsd, 0.0001,
+            "Matching demo/paper expectancy should have zero delta.");
+        AssertTrue(report.DemoPaperMetrics.AverageTradeDuration.HasValue,
+            "Trade duration should calculate when timestamps exist.");
+        return Task.CompletedTask;
+    }
+
+    private static Task DemoPaperReconciliationLargeExpectancyDegradationReturnsDiverges()
+    {
+        var report = DemoPaperReconciliationAnalyzer.Analyze(new DemoPaperReconciliationInput
+        {
+            BacktestOutcomes = ReconciliationBaseline("B"),
+            DemoPaperOutcomes =
+            [
+                ReconciliationCompleted("D1", 20, exitMinutes: 5),
+                ReconciliationCompleted("D2", -100, minutes: 10, exitMinutes: 15),
+                ReconciliationCompleted("D3", -80, minutes: 20, exitMinutes: 25)
+            ],
+            Tolerances = ReconciliationTolerances(maxExpectancyDegradation: 10)
+        });
+
+        AssertTrue(report.Success, "Reconciliation should still produce a structured report when demo diverges.");
+        AssertEqual(DemoPaperReconciliationVerdicts.Diverges, report.Verdict,
+            "Large demo/paper expectancy degradation should diverge.");
+        AssertContains("Expectancy degradation", string.Join(" ", report.FailedToleranceCriteria));
+        AssertTrue(report.Deltas.ExpectancyChangeUsd < 0,
+            "Demo/paper expectancy delta should show degradation.");
+        return Task.CompletedTask;
+    }
+
+    private static Task DemoPaperReconciliationTooSmallSampleReturnsInconclusive()
+    {
+        var report = DemoPaperReconciliationAnalyzer.Analyze(new DemoPaperReconciliationInput
+        {
+            BacktestOutcomes = ReconciliationBaseline("B"),
+            DemoPaperOutcomes = [ReconciliationCompleted("D1", 100, exitMinutes: 5)],
+            Tolerances = ReconciliationTolerances(minDemoTrades: 3)
+        });
+
+        AssertTrue(report.Success, "Small demo/paper sample should still produce a report.");
+        AssertEqual(DemoPaperReconciliationVerdicts.Inconclusive, report.Verdict,
+            "Too small demo/paper sample should be inconclusive.");
+        AssertContains("sample is too small", string.Join(" ", report.Warnings));
+        return Task.CompletedTask;
+    }
+
+    private static Task DemoPaperReconciliationMissingCostDataProducesWarning()
+    {
+        var report = DemoPaperReconciliationAnalyzer.Analyze(new DemoPaperReconciliationInput
+        {
+            BacktestOutcomes = ReconciliationBaseline("B"),
+            DemoPaperOutcomes =
+            [
+                ReconciliationCompleted("D1", 100, exitMinutes: 5, totalCost: 0, spread: 0, slippage: 0, commission: 0),
+                ReconciliationCompleted("D2", -40, minutes: 10, exitMinutes: 15, totalCost: 0, spread: 0, slippage: 0, commission: 0),
+                ReconciliationCompleted("D3", 60, minutes: 20, exitMinutes: 25, totalCost: 0, spread: 0, slippage: 0, commission: 0)
+            ],
+            Tolerances = ReconciliationTolerances()
+        });
+
+        AssertTrue(report.Success, "Missing cost data should not prevent report generation.");
+        AssertContains("zero spread cost", string.Join(" ", report.Warnings));
+        AssertContains("zero slippage cost", string.Join(" ", report.Warnings));
+        AssertContains("zero commission cost", string.Join(" ", report.Warnings));
+        return Task.CompletedTask;
+    }
+
+    private static Task DemoPaperReconciliationDemoOutperformanceHandledSafely()
+    {
+        var report = DemoPaperReconciliationAnalyzer.Analyze(new DemoPaperReconciliationInput
+        {
+            BacktestOutcomes = ReconciliationBaseline("B"),
+            DemoPaperOutcomes =
+            [
+                ReconciliationCompleted("D1", 150, exitMinutes: 5),
+                ReconciliationCompleted("D2", -10, minutes: 10, exitMinutes: 15),
+                ReconciliationCompleted("D3", 100, minutes: 20, exitMinutes: 25)
+            ],
+            Tolerances = ReconciliationTolerances()
+        });
+
+        AssertTrue(report.Success, "Demo/paper outperformance should produce a successful report.");
+        AssertEqual(DemoPaperReconciliationVerdicts.Matches, report.Verdict,
+            "Demo/paper outperformance should not be treated as a divergence.");
+        AssertTrue(report.Deltas.ExpectancyChangeUsd > 0,
+            "Demo/paper outperformance should preserve positive expectancy delta.");
+        AssertEqual(0, report.FailedToleranceCriteria.Count,
+            "Outperformance should not fail degradation tolerances.");
+        return Task.CompletedTask;
+    }
+
+    private static Task DemoPaperReconciliationBacktestNoTradeDataFailsClearly()
+    {
+        var report = DemoPaperReconciliationAnalyzer.Analyze(new DemoPaperReconciliationInput
+        {
+            BacktestOutcomes = [QualityRejected("B1")],
+            DemoPaperOutcomes = [ReconciliationCompleted("D1", 100, exitMinutes: 5)],
+            Tolerances = ReconciliationTolerances(minDemoTrades: 1)
+        });
+
+        AssertFalse(report.Success, "Backtest with no completed trades should fail clearly.");
+        AssertEqual(DemoPaperReconciliationAnalyzer.NoBacktestTradesCode, report.FailureCode,
+            "Backtest no-trade data should return a clear failure code.");
+        AssertContains("no completed trades", report.FailureReason);
+        return Task.CompletedTask;
+    }
+
+    private static async Task FinalStrategyProofPackageCanBeGenerated()
+    {
+        string outputPath = Path.Combine(TestFolder(), FinalStrategyProofPackageGenerator.DefaultReportFileName);
+        var result = await new FinalStrategyProofPackageGenerator()
+            .GenerateAsync(BuildStrongFinalStrategyProofInput(), outputPath)
+            .ConfigureAwait(false);
+
+        AssertTrue(result.Success, "Final strategy proof package generation should succeed.");
+        AssertTrue(File.Exists(outputPath), "Final strategy proof package file should be written.");
+        AssertEqual(FinalStrategyProofPackageGenerator.DefaultReportFileName, Path.GetFileName(result.ReportPath),
+            "Final package should use the required filename.");
+        AssertContains("Final Strategy Proof Package", result.Markdown);
+        AssertContains("Executive Classification", result.Markdown);
+        AssertContains("Go/No-Go Criteria", result.Markdown);
+    }
+
+    private static async Task FinalStrategyProofPackageStrongEvidenceClassifiesProvenPositiveEdge()
+    {
+        string outputPath = Path.Combine(TestFolder(), FinalStrategyProofPackageGenerator.DefaultReportFileName);
+        var result = await new FinalStrategyProofPackageGenerator()
+            .GenerateAsync(BuildStrongFinalStrategyProofInput(), outputPath)
+            .ConfigureAwait(false);
+
+        AssertEqual(StrategyEvidenceClassifications.ProvenPositiveEdge, result.EvidenceClassification,
+            "Strong evidence should classify as proven positive edge.");
+        AssertEqual(StrategyReadinessRecommendations.ProceedToTinyLiveTest, result.ReadinessRecommendation,
+            "Strong evidence with matching demo/paper reconciliation should recommend tiny live test readiness.");
+        AssertEqual(0, result.FailedCriteria.Count, "Strong evidence should not fail go/no-go criteria.");
+    }
+
+    private static async Task FinalStrategyProofPackageWeakNegativeEvidenceClassifiesNegativeEdge()
+    {
+        var input = BuildFinalStrategyProofInput(
+            [
+                QualityCompleted("AI1", -100, exitMinutes: 5),
+                QualityCompleted("AI2", -80, minutes: 10, exitMinutes: 15),
+                QualityCompleted("D1", 10, minutes: 20, exitMinutes: 25),
+                QualityCompleted("A1", -40, minutes: 30, exitMinutes: 35)
+            ],
+            edgeVerdict: StrategyEdgeVerdicts.Fail,
+            demoReport: DemoReconciliationMatches());
+
+        string outputPath = Path.Combine(TestFolder(), FinalStrategyProofPackageGenerator.DefaultReportFileName);
+        var result = await new FinalStrategyProofPackageGenerator()
+            .GenerateAsync(input, outputPath)
+            .ConfigureAwait(false);
+
+        AssertEqual(StrategyEvidenceClassifications.NegativeEdge, result.EvidenceClassification,
+            "Negative expectancy or sub-1 profit factor should classify as negative edge.");
+        AssertEqual(StrategyReadinessRecommendations.BlockLiveTrading, result.ReadinessRecommendation,
+            "Negative edge should block live trading.");
+        AssertContains("Minimum expectancy", string.Join(" ", result.FailedCriteria));
+    }
+
+    private static async Task FinalStrategyProofPackageSmallSampleClassifiesInconclusive()
+    {
+        var input = BuildFinalStrategyProofInput(
+            [
+                QualityCompleted("AI1", 100, exitMinutes: 5),
+                QualityCompleted("D1", 40, minutes: 10, exitMinutes: 15)
+            ],
+            criteria: FinalPackageCriteria() with { MinimumCompletedRealisticBacktestTrades = 10 },
+            edgeVerdict: StrategyEdgeVerdicts.Inconclusive,
+            demoReport: DemoReconciliationMatches());
+
+        string outputPath = Path.Combine(TestFolder(), FinalStrategyProofPackageGenerator.DefaultReportFileName);
+        var result = await new FinalStrategyProofPackageGenerator()
+            .GenerateAsync(input, outputPath)
+            .ConfigureAwait(false);
+
+        AssertEqual(StrategyEvidenceClassifications.Inconclusive, result.EvidenceClassification,
+            "Small samples should classify as inconclusive.");
+        AssertEqual(StrategyReadinessRecommendations.CollectMoreData, result.ReadinessRecommendation,
+            "Small samples should recommend collecting more data.");
+        AssertContains("Minimum completed realistic backtest trades", string.Join(" ", result.FailedCriteria));
+    }
+
+    private static async Task FinalStrategyProofPackageCriticalRepaintBlocksPositiveClassification()
+    {
+        var input = BuildStrongFinalStrategyProofInput() with
+        {
+            RepaintLookaheadAuditMarkdown = CriticalRepaintMarkdown()
+        };
+
+        string outputPath = Path.Combine(TestFolder(), FinalStrategyProofPackageGenerator.DefaultReportFileName);
+        var result = await new FinalStrategyProofPackageGenerator()
+            .GenerateAsync(input, outputPath)
+            .ConfigureAwait(false);
+
+        AssertEqual(StrategyEvidenceClassifications.NotProven, result.EvidenceClassification,
+            "Critical repaint/lookahead finding should block positive classification.");
+        AssertEqual(StrategyReadinessRecommendations.BlockLiveTrading, result.ReadinessRecommendation,
+            "Critical repaint/lookahead findings should block live trading.");
+        AssertContains("Critical repaint/lookahead", string.Join(" ", result.FailedCriteria));
+    }
+
+    private static async Task FinalStrategyProofPackageIncludesRequiredRiskWarnings()
+    {
+        string outputPath = Path.Combine(TestFolder(), FinalStrategyProofPackageGenerator.DefaultReportFileName);
+        var result = await new FinalStrategyProofPackageGenerator()
+            .GenerateAsync(BuildStrongFinalStrategyProofInput(), outputPath)
+            .ConfigureAwait(false);
+
+        AssertContains("This is not financial advice", result.Markdown);
+        AssertContains("Backtest results are not live proof", result.Markdown);
+        AssertContains("Real-money trading should remain blocked unless go criteria are met", result.Markdown);
+    }
+
+    private static async Task FinalStrategyProofPackageIncludesAiCaution()
+    {
+        string outputPath = Path.Combine(TestFolder(), FinalStrategyProofPackageGenerator.DefaultReportFileName);
+        var result = await new FinalStrategyProofPackageGenerator()
+            .GenerateAsync(BuildStrongFinalStrategyProofInput(), outputPath)
+            .ConfigureAwait(false);
+
+        AssertContains("AI confirmation should not be trusted unless measured as improving expectancy", result.Markdown);
+        AssertContains("AI filter impact summary", result.Markdown);
+    }
+
+    private static Task StrategyAdapterConvertsBuySignalToCandidate()
+    {
+        var signal = StrategySignal(SignalDirection.Buy);
+
+        var result = StrategyToRealisticBacktestAdapter.FromMarketSignal(
+            signal,
+            new StrategyBacktestAdapterOptions
+            {
+                LotSize = 0.20,
+                TimestampUtc = TestUtc(9, 30),
+                Session = "London",
+                SpreadRegime = "Tight",
+                SpreadPips = 0.8,
+                SourceSignalConfidence = 82
+            });
+
+        AssertTrue(result.CandidateCreated, "BUY strategy signal should create a candidate.");
+        AssertNotNull(result.Candidate, "BUY conversion should include candidate details.");
+        var candidate = result.Candidate!;
+        AssertEqual(signal.Id, candidate.Id, "Candidate should preserve source signal id.");
+        AssertEqual("EURUSD", candidate.Symbol, "Candidate should preserve symbol.");
+        AssertEqual(TradeType.BUY.ToString(), candidate.Direction.ToString(), "BUY signal should map to BUY trade type.");
+        AssertClose(1.1000, candidate.EntryPrice, 0.0000001, "Candidate should preserve entry price.");
+        AssertClose(1.0990, candidate.StopLoss, 0.0000001, "Candidate should preserve stop loss.");
+        AssertClose(1.1010, candidate.TakeProfit, 0.0000001, "Candidate should preserve take profit.");
+        AssertClose(0.20, candidate.LotSize, 0.0000001, "Candidate should use adapter lot size.");
+        AssertEqual("London", candidate.Session, "Candidate should include session metadata.");
+        AssertEqual("Tight", candidate.SpreadRegime, "Candidate should include spread-regime metadata.");
+        AssertEqual("momentum signal", candidate.SourceSignalReason, "Candidate should preserve source reason.");
+        AssertClose(82, candidate.SourceSignalConfidence.GetValueOrDefault(), 0.0000001,
+            "Candidate should preserve source confidence when available.");
+        return Task.CompletedTask;
+    }
+
+    private static Task StrategyAdapterConvertsSellSignalToCandidate()
+    {
+        var signal = StrategySignal(
+            SignalDirection.Sell,
+            entryPrice: 1.1000,
+            stopLoss: 1.1010,
+            takeProfit: 1.0990);
+
+        var result = StrategyToRealisticBacktestAdapter.FromMarketSignal(
+            signal,
+            new StrategyBacktestAdapterOptions
+            {
+                LotSize = 0.10,
+                HistoricalMarketPrice = 1.1001
+            });
+
+        AssertTrue(result.CandidateCreated, "SELL strategy signal should create a candidate.");
+        AssertNotNull(result.Candidate, "SELL conversion should include candidate details.");
+        var candidate = result.Candidate!;
+        AssertEqual(TradeType.SELL.ToString(), candidate.Direction.ToString(), "SELL signal should map to SELL trade type.");
+        AssertClose(1.1000, candidate.EntryPrice, 0.0000001,
+            "Candidate should prefer explicit strategy entry over historical placeholder price.");
+        AssertClose(1.1010, candidate.StopLoss, 0.0000001, "Candidate should preserve SELL stop loss.");
+        AssertClose(1.0990, candidate.TakeProfit, 0.0000001, "Candidate should preserve SELL take profit.");
+        return Task.CompletedTask;
+    }
+
+    private static Task StrategyAdapterSkipsHoldSignal()
+    {
+        var result = StrategyToRealisticBacktestAdapter.FromMarketSignal(
+            StrategySignal(SignalDirection.Hold),
+            new StrategyBacktestAdapterOptions
+            {
+                LotSize = 0.10,
+                HistoricalMarketPrice = 1.1000
+            });
+
+        AssertFalse(result.CandidateCreated, "HOLD strategy signal should not create an executable candidate.");
+        AssertEqual("STRATEGY_HOLD", result.SkipCode, "HOLD skip should include clear code.");
+        AssertContains("HOLD", result.SkipReason);
+        return Task.CompletedTask;
+    }
+
+    private static Task StrategyAdapterSkipsIncompleteSignal()
+    {
+        var signal = StrategySignal(SignalDirection.Buy);
+        signal.StopLoss = 0;
+        signal.TakeProfit = 0;
+
+        var result = StrategyToRealisticBacktestAdapter.FromMarketSignal(
+            signal,
+            new StrategyBacktestAdapterOptions());
+
+        AssertFalse(result.CandidateCreated, "Incomplete strategy signal should not create a candidate.");
+        AssertEqual("STRATEGY_SIGNAL_INCOMPLETE", result.SkipCode,
+            "Incomplete signal should include clear skip code.");
+        AssertContains("stop loss", result.SkipReason);
+        AssertContains("take profit", result.SkipReason);
+        AssertContains("lot size", result.SkipReason);
+        return Task.CompletedTask;
+    }
+
+    private static Task StrategyAdapterStaysSeparateFromLiveExecution()
+    {
+        string path = Path.Combine(
+            FindRepoRoot(),
+            "Trading",
+            "Backtesting",
+            "StrategyToRealisticBacktestAdapter.cs");
+        string source = File.ReadAllText(path);
+
+        AssertFalse(source.Contains("MT5Bridge", StringComparison.Ordinal),
+            "Strategy adapter must not depend on MT5 bridge.");
+        AssertFalse(source.Contains("OpenTradeAsync", StringComparison.Ordinal),
+            "Strategy adapter must not place MT5 orders.");
+        AssertFalse(source.Contains("ITradeExecutionService", StringComparison.Ordinal),
+            "Strategy adapter must not depend on live trade execution services.");
+        AssertFalse(source.Contains("AutoBotService", StringComparison.Ordinal),
+            "Strategy adapter must not alter or depend on live workflow.");
+        return Task.CompletedTask;
+    }
+
     private static async Task MaxSpreadFilterBlocksHighSpread()
     {
         var result = await NewRiskManager().ValidateAsync(
@@ -3357,6 +5509,262 @@ internal static class Program
         return path;
     }
 
+    private static Task<StrategyExtractionReportResult> GenerateStrategyExtractionReportForTest()
+    {
+        string outputPath = Path.Combine(TestFolder(), StrategyExtractionReportGenerator.DefaultReportFileName);
+        return new StrategyExtractionReportGenerator().GenerateAsync(FindRepoRoot(), outputPath);
+    }
+
+    private static Task<RepaintLookaheadAuditReportResult> GenerateRepaintLookaheadAuditReportForTest()
+    {
+        string outputPath = Path.Combine(TestFolder(), RepaintLookaheadAuditReportGenerator.DefaultReportFileName);
+        return new RepaintLookaheadAuditReportGenerator().GenerateAsync(FindRepoRoot(), outputPath);
+    }
+
+    private static StrategyEdgeVerdictReportInput BuildPassingStrategyEdgeInput() =>
+        BuildStrategyEdgeInput(
+            [
+                QualityCompleted("AI1", 100, exitMinutes: 5),
+                QualityCompleted("AI2", 80, minutes: 10, exitMinutes: 15),
+                QualityCompleted("AI3", 60, minutes: 20, exitMinutes: 25),
+                QualityCompleted("D1", 30, minutes: 30, exitMinutes: 35, symbol: "GBPUSD", session: "NewYork"),
+                QualityCompleted("D2", -10, minutes: 40, exitMinutes: 45, symbol: "GBPUSD", session: "NewYork"),
+                QualityCompleted("A1", 20, minutes: 50, exitMinutes: 55)
+            ],
+            StrategyEdgePassingCriteria(),
+            repaintMarkdown: NoCriticalRepaintMarkdown());
+
+    private static StrategyEdgeVerdictReportInput BuildStrategyEdgeInput(
+        IReadOnlyList<RealisticBacktestTradeOutcome> outcomes,
+        StrategyEdgeVerdictCriteria criteria,
+        string? repaintMarkdown = null)
+    {
+        var sourceByCandidateId = outcomes.ToDictionary(
+            o => o.CandidateId,
+            o => EdgeSourceFor(o.CandidateId),
+            StringComparer.OrdinalIgnoreCase);
+        var aiConfidenceByCandidateId = outcomes
+            .Where(o => sourceByCandidateId[o.CandidateId] == StrategySignalSourceLabels.AiConfirmed)
+            .ToDictionary(
+                o => o.CandidateId,
+                o => o.CandidateId == "AI1" ? 92.0 : o.CandidateId == "AI2" ? 84.0 : 78.0,
+                StringComparer.OrdinalIgnoreCase);
+
+        var signalQuality = StrategySignalQualityMetrics.BuildReport(new StrategySignalQualityInput
+        {
+            Outcomes = outcomes,
+            SourceByCandidateId = sourceByCandidateId,
+            AssumptionsUsed = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["signal_quality_scope"] = "completed realistic outcomes"
+            }
+        });
+
+        var segments = StrategySegmentAnalyzer.BuildReport(new StrategySegmentAnalysisInput
+        {
+            Outcomes = outcomes,
+            SignalSourceByCandidateId = sourceByCandidateId,
+            AiConfidenceByCandidateId = aiConfidenceByCandidateId,
+            AssumptionsUsed = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["segment_scope"] = "completed realistic outcomes"
+            }
+        });
+
+        var cost = CostSensitivityRunner.Run(new CostSensitivityInput
+        {
+            Outcomes = outcomes,
+            Scenarios = [new CostSensitivityScenario { Name = "Base/original costs" }],
+            AssumptionsUsed = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["cost_scope"] = "original execution costs"
+            }
+        });
+
+        var robustness = StrategyRobustnessRunner.Run(new StrategyRobustnessInput
+        {
+            Outcomes = outcomes,
+            SplitConfig = new OutOfSampleSplitConfig { InSampleRatio = 0.50 },
+            MonteCarloConfig = new MonteCarloConfig { StartingEquity = 10_000, Iterations = 20, Seed = 7 },
+            Thresholds = LenientRobustnessThresholds(),
+            AssumptionsUsed = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["robustness_scope"] = "completed realistic outcomes"
+            }
+        });
+
+        var aiImpact = AiFilterImpactAnalyzer.Analyze(new AiFilterImpactInput
+        {
+            Outcomes = outcomes,
+            SignalSourceByCandidateId = sourceByCandidateId,
+            AiConfidenceByCandidateId = aiConfidenceByCandidateId,
+            Thresholds = TinyAiThresholds(),
+            AssumptionsUsed = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["ai_scope"] = "frozen fixture metadata"
+            }
+        });
+
+        return new StrategyEdgeVerdictReportInput
+        {
+            SignalQualityReport = signalQuality,
+            SegmentAnalysisReport = segments,
+            CostSensitivityReport = cost,
+            RobustnessReport = robustness,
+            AiFilterImpactReport = aiImpact,
+            StrategyExtractionMarkdown = StrategyExtractionMarkdownForVerdict(),
+            RepaintLookaheadAuditMarkdown = repaintMarkdown ?? NoCriticalRepaintMarkdown(),
+            Criteria = criteria,
+            AssumptionsUsed = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["verdict_scope"] = "P3 analytics fixture only"
+            }
+        };
+    }
+
+    private static StrategyEdgeVerdictCriteria StrategyEdgePassingCriteria() => new()
+    {
+        MinimumCompletedTrades = 4,
+        MinimumProfitFactorAfterCosts = 1.2,
+        MinimumExpectancyAfterCostsUsd = 0,
+        MaximumDrawdownUsd = 1_000,
+        MaximumLosingStreak = 5,
+        MaximumCostSensitivityNetProfitDegradationUsd = 1_000,
+        RobustnessMustPassOrBeInconclusive = true,
+        CriticalRepaintLookaheadFindingFails = true
+    };
+
+    private static string EdgeSourceFor(string candidateId)
+    {
+        if (candidateId.StartsWith("AI", StringComparison.OrdinalIgnoreCase))
+            return StrategySignalSourceLabels.AiConfirmed;
+        if (candidateId.StartsWith("A", StringComparison.OrdinalIgnoreCase))
+            return StrategySignalSourceLabels.AutoScalping;
+        return StrategySignalSourceLabels.DeterministicBaseStrategy;
+    }
+
+    private static string StrategyExtractionMarkdownForVerdict() =>
+        "# Strategy Extraction Report\n\nThe base deterministic strategy currently produces mostly HOLD.";
+
+    private static string NoCriticalRepaintMarkdown() =>
+        "# Repainting / Future-Data Bias Audit Report\n\n| Finding | Severity | Status |\n|---|---|---|\n| Closed-candle snapshot | Low | Confirmed |";
+
+    private static string CriticalRepaintMarkdown() =>
+        "# Repainting / Future-Data Bias Audit Report\n\n| Finding | Severity | Status |\n|---|---|---|\n| SQLite trade-history backtest reconstructs exits from realized P/L | Critical | Confirmed |";
+
+    private static IReadOnlyList<RealisticBacktestTradeOutcome> ReconciliationBaseline(string prefix) =>
+    [
+        ReconciliationCompleted($"{prefix}1", 100, exitMinutes: 5),
+        ReconciliationCompleted($"{prefix}2", -40, minutes: 10, exitMinutes: 15),
+        ReconciliationCompleted($"{prefix}3", 60, minutes: 20, exitMinutes: 25),
+        QualityRejected($"{prefix}R", minutes: 30)
+    ];
+
+    private static RealisticBacktestTradeOutcome ReconciliationCompleted(
+        string id,
+        double netProfitLossUsd,
+        int minutes = 0,
+        int? exitMinutes = null,
+        double totalCost = 6,
+        double spread = 2,
+        double slippage = 2,
+        double commission = 2) =>
+        QualityCompleted(
+            id,
+            netProfitLossUsd,
+            minutes: minutes,
+            exitMinutes: exitMinutes,
+            totalExecutionCostUsd: totalCost,
+            spreadCostUsd: spread,
+            slippageCostUsd: slippage,
+            commissionCostUsd: commission,
+            grossProfitLossUsd: netProfitLossUsd + totalCost);
+
+    private static DemoPaperReconciliationTolerances ReconciliationTolerances(
+        int minDemoTrades = 3,
+        double maxExpectancyDegradation = 1,
+        double maxProfitFactorDegradation = 0.10) => new()
+    {
+        MinimumDemoPaperCompletedTrades = minDemoTrades,
+        MaxAllowedExpectancyDegradationUsd = maxExpectancyDegradation,
+        MaxAllowedProfitFactorDegradation = maxProfitFactorDegradation,
+        MaxAllowedDrawdownIncreaseUsd = 5,
+        MaxAllowedAverageSpreadCostIncreaseUsd = 0.10,
+        MaxAllowedAverageSlippageCostIncreaseUsd = 0.10,
+        MaxAllowedAverageCommissionCostIncreaseUsd = 0.10
+    };
+
+    private static FinalStrategyProofPackageInput BuildStrongFinalStrategyProofInput() =>
+        BuildFinalStrategyProofInput(
+            [
+                QualityCompleted("AI1", 100, exitMinutes: 5),
+                QualityCompleted("AI2", 80, minutes: 10, exitMinutes: 15),
+                QualityCompleted("AI3", 60, minutes: 20, exitMinutes: 25),
+                QualityCompleted("D1", 30, minutes: 30, exitMinutes: 35, symbol: "GBPUSD", session: "NewYork"),
+                QualityCompleted("D2", -10, minutes: 40, exitMinutes: 45, symbol: "GBPUSD", session: "NewYork"),
+                QualityCompleted("A1", 20, minutes: 50, exitMinutes: 55)
+            ],
+            edgeVerdict: StrategyEdgeVerdicts.Pass,
+            demoReport: DemoReconciliationMatches());
+
+    private static FinalStrategyProofPackageInput BuildFinalStrategyProofInput(
+        IReadOnlyList<RealisticBacktestTradeOutcome> outcomes,
+        FinalStrategyProofCriteria? criteria = null,
+        string edgeVerdict = StrategyEdgeVerdicts.Pass,
+        DemoPaperReconciliationReport? demoReport = null,
+        string? repaintMarkdown = null)
+    {
+        var edgeInput = BuildStrategyEdgeInput(
+            outcomes,
+            StrategyEdgePassingCriteria(),
+            repaintMarkdown: repaintMarkdown ?? NoCriticalRepaintMarkdown());
+
+        return new FinalStrategyProofPackageInput
+        {
+            StrategyExtractionMarkdown = StrategyExtractionMarkdownForVerdict(),
+            RepaintLookaheadAuditMarkdown = repaintMarkdown ?? NoCriticalRepaintMarkdown(),
+            RealisticBacktestMarkdown = "# Realistic Backtest Report\n\nFixture realistic simulation summary.",
+            SignalQualityReport = edgeInput.SignalQualityReport,
+            SegmentAnalysisReport = edgeInput.SegmentAnalysisReport,
+            CostSensitivityReport = edgeInput.CostSensitivityReport,
+            RobustnessReport = edgeInput.RobustnessReport,
+            AiFilterImpactReport = edgeInput.AiFilterImpactReport,
+            DemoPaperReconciliationReport = demoReport ?? DemoReconciliationMatches(),
+            StrategyEdgeVerdictReport = new StrategyEdgeVerdictReportResult
+            {
+                Success = true,
+                Verdict = edgeVerdict,
+                Reason = "Fixture strategy edge verdict.",
+                LiveDemoReadinessScore = edgeVerdict == StrategyEdgeVerdicts.Pass ? 90 : 20
+            },
+            Criteria = criteria ?? FinalPackageCriteria(),
+            AssumptionsUsed = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["package_scope"] = "P3 proof fixture only"
+            }
+        };
+    }
+
+    private static FinalStrategyProofCriteria FinalPackageCriteria() => new()
+    {
+        MinimumCompletedRealisticBacktestTrades = 4,
+        MinimumProfitFactorAfterCosts = 1.2,
+        MinimumExpectancyAfterCostsUsd = 0,
+        MaximumDrawdownUsd = 1_000,
+        MaximumLosingStreak = 5,
+        MaximumCostSensitivityNetProfitDegradationUsd = 1_000,
+        RequireAcceptableDemoPaperReconciliation = true,
+        CriticalRepaintLookaheadFindingBlocksPositiveClassification = true
+    };
+
+    private static DemoPaperReconciliationReport DemoReconciliationMatches() =>
+        DemoPaperReconciliationAnalyzer.Analyze(new DemoPaperReconciliationInput
+        {
+            BacktestOutcomes = ReconciliationBaseline("B"),
+            DemoPaperOutcomes = ReconciliationBaseline("D"),
+            Tolerances = ReconciliationTolerances()
+        });
+
     private static BacktestExecutionCostInput CostInput(BotConfig config, double? spreadPips = null) => new()
     {
         Symbol = "EURUSD",
@@ -3415,6 +5823,295 @@ internal static class Program
         FreezeLevelPoints = freezeLevelPoints
     };
 
+    private static BacktestNoTradeFilterInput FilterInput(
+        DateTime timestampUtc,
+        BotConfig? config = null,
+        double? spreadPips = 1.0,
+        ApiIntegrationConfig? newsConfig = null,
+        IReadOnlyList<HistoricalNewsEvent>? newsEvents = null) => new()
+    {
+        TimestampUtc = timestampUtc,
+        Symbol = "EURUSD",
+        SpreadPips = spreadPips,
+        Config = config ?? Config(),
+        NewsConfig = newsConfig,
+        HistoricalNewsEvents = newsEvents
+    };
+
+    private static HistoricalNewsEvent NewsEvent(
+        DateTime timestampUtc,
+        string currency,
+        string impact,
+        string title) => new()
+    {
+        TimestampUtc = timestampUtc,
+        Currency = currency,
+        Impact = impact,
+        Title = title
+    };
+
+    private static DateTime TestUtc(int hour, int minute) =>
+        new(2026, 5, 3, hour, minute, 0, DateTimeKind.Utc);
+
+    private static IReadOnlyList<BacktestRobustnessTrade> RobustnessTrades(params double[] profitLossUsd) =>
+        profitLossUsd
+            .Select((pnl, index) => new BacktestRobustnessTrade
+            {
+                Id = $"T{index + 1}",
+                TimestampUtc = RobustnessUtc(index + 1),
+                ProfitLossUsd = pnl
+            })
+            .ToList();
+
+    private static DateTime RobustnessUtc(int day) =>
+        new(2026, 1, day, 0, 0, 0, DateTimeKind.Utc);
+
+    private static IReadOnlyList<BacktestReportTrade> ReportingTrades() =>
+    [
+        ReportTrade(100, symbol: "EURUSD", session: "London", spreadRegime: "Tight", rMultiple: 1.0),
+        ReportTrade(-50, day: 2, symbol: "EURUSD", session: "London", spreadRegime: "Wide", rMultiple: -0.5),
+        ReportTrade(-150, day: 3, symbol: "GBPUSD", session: "London", spreadRegime: "Wide", rMultiple: -1.5),
+        ReportTrade(200, day: 4, symbol: "EURUSD", session: "NewYork", spreadRegime: "Tight", rMultiple: 2.0),
+        ReportTrade(50, day: 5, symbol: "GBPUSD", session: "NewYork", spreadRegime: "Tight", rMultiple: 0.7)
+    ];
+
+    private static BacktestReportTrade ReportTrade(
+        double profitLossUsd,
+        int day = 1,
+        string symbol = "EURUSD",
+        string session = "London",
+        string spreadRegime = "Tight",
+        double? rMultiple = 1.0,
+        double? commissionUsd = 1.0,
+        double? slippageUsd = 0.5,
+        double? spreadCostUsd = 1.5) => new()
+    {
+        Id = $"R{day}",
+        TimestampUtc = RobustnessUtc(day),
+        Symbol = symbol,
+        Session = session,
+        SpreadRegime = spreadRegime,
+        ProfitLossUsd = profitLossUsd,
+        RMultiple = rMultiple,
+        CommissionUsd = commissionUsd,
+        SlippageUsd = slippageUsd,
+        SpreadCostUsd = spreadCostUsd
+    };
+
+    private static RealisticBacktestTradeOutcome QualityCompleted(
+        string id,
+        double netProfitLossUsd,
+        int minutes = 0,
+        int? exitMinutes = null,
+        string symbol = "EURUSD",
+        string session = "London",
+        string spreadRegime = "Tight",
+        double? totalExecutionCostUsd = null,
+        double? spreadCostUsd = null,
+        double? slippageCostUsd = null,
+        double? commissionCostUsd = null,
+        double? grossProfitLossUsd = null)
+    {
+        double total = totalExecutionCostUsd ?? 3;
+        double spread = spreadCostUsd ?? Math.Round(total / 3.0, 2);
+        double slippage = slippageCostUsd ?? Math.Round(total / 3.0, 2);
+        double commission = commissionCostUsd ?? Math.Round(total / 3.0, 2);
+        if (!totalExecutionCostUsd.HasValue && (spreadCostUsd.HasValue || slippageCostUsd.HasValue || commissionCostUsd.HasValue))
+            total = Math.Round(spread + slippage + commission, 2);
+
+        return new RealisticBacktestTradeOutcome
+        {
+            CandidateId = id,
+            Status = RealisticBacktestOutcomeStatus.Successful,
+            TimestampUtc = TestUtc(9, 0).AddMinutes(minutes),
+            Symbol = symbol,
+            EntryPrice = 1.1000,
+            ExitPrice = netProfitLossUsd >= 0 ? 1.1010 : 1.0990,
+            ExitTimestampUtc = exitMinutes.HasValue
+                ? TestUtc(9, 0).AddMinutes(exitMinutes.Value)
+                : null,
+            GrossProfitLossUsd = grossProfitLossUsd ?? netProfitLossUsd + total,
+            NetProfitLossUsd = netProfitLossUsd,
+            CommissionCostUsd = commission,
+            SlippageCostUsd = slippage,
+            SpreadCostUsd = spread,
+            TotalExecutionCostUsd = total,
+            Session = session,
+            SpreadRegime = spreadRegime
+        };
+    }
+
+    private static RealisticBacktestTradeOutcome QualityRejected(
+        string id,
+        int minutes = 0,
+        string symbol = "EURUSD") => new()
+    {
+        CandidateId = id,
+        Status = RealisticBacktestOutcomeStatus.Rejected,
+        TimestampUtc = TestUtc(9, 0).AddMinutes(minutes),
+        Symbol = symbol,
+        EntryPrice = 1.1000,
+        RejectionCode = "TEST_REJECTION",
+        RejectionReason = "Test rejection"
+    };
+
+    private static RealisticBacktestTradeOutcome QualityOpen(
+        string id,
+        int minutes = 0,
+        string symbol = "EURUSD") => new()
+    {
+        CandidateId = id,
+        Status = RealisticBacktestOutcomeStatus.Open,
+        TimestampUtc = TestUtc(9, 0).AddMinutes(minutes),
+        Symbol = symbol,
+        EntryPrice = 1.1000
+    };
+
+    private static IReadOnlyDictionary<string, string> SourceMap(params (string Id, string Source)[] sources) =>
+        sources.ToDictionary(s => s.Id, s => s.Source, StringComparer.OrdinalIgnoreCase);
+
+    private static IReadOnlyDictionary<string, double> RMap(params (string Id, double RMultiple)[] values) =>
+        values.ToDictionary(v => v.Id, v => v.RMultiple, StringComparer.OrdinalIgnoreCase);
+
+    private static IReadOnlyDictionary<string, double> ConfidenceMap(params (string Id, double Confidence)[] values) =>
+        values.ToDictionary(v => v.Id, v => v.Confidence, StringComparer.OrdinalIgnoreCase);
+
+    private static IReadOnlyDictionary<string, double> DoubleMap(params (string Id, double Value)[] values) =>
+        values.ToDictionary(v => v.Id, v => v.Value, StringComparer.OrdinalIgnoreCase);
+
+    private static StrategyRobustnessInput RobustnessInput(
+        IReadOnlyList<double> netProfitLossUsd,
+        OutOfSampleSplitConfig? split = null,
+        MonteCarloConfig? monteCarlo = null,
+        StrategyRobustnessThresholds? thresholds = null,
+        WalkForwardConfig? walkForward = null) => new()
+    {
+        Outcomes = netProfitLossUsd
+            .Select((pnl, index) => QualityCompleted(
+                $"ROB{index + 1}",
+                pnl,
+                minutes: index * 10,
+                exitMinutes: index * 10 + 5,
+                grossProfitLossUsd: pnl + 3))
+            .ToList(),
+        SplitConfig = split ?? new OutOfSampleSplitConfig { InSampleRatio = 0.50 },
+        MonteCarloConfig = monteCarlo ?? new MonteCarloConfig { StartingEquity = 10_000, Iterations = 20, Seed = 4 },
+        Thresholds = thresholds ?? LenientRobustnessThresholds(),
+        WalkForwardConfig = walkForward,
+        AssumptionsUsed = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["robustness_scope"] = "completed realistic outcomes"
+        }
+    };
+
+    private static StrategyRobustnessThresholds LenientRobustnessThresholds(
+        double maxOosDegradation = 1_000) => new()
+    {
+        MinimumTotalTrades = 1,
+        MinimumOutOfSampleTrades = 1,
+        MaximumOosExpectancyDegradationUsd = maxOosDegradation,
+        MaximumMonteCarloDrawdownUsd = 10_000,
+        MaximumMonteCarloLosingStreak = 100
+    };
+
+    private static WalkForwardConfig RobustnessWalkForwardConfig() => new()
+    {
+        StartUtc = TestUtc(9, 0),
+        EndUtc = TestUtc(10, 20),
+        TrainingPeriod = TimeSpan.FromMinutes(20),
+        TestingPeriod = TimeSpan.FromMinutes(20),
+        StepSize = TimeSpan.FromMinutes(10)
+    };
+
+    private static AiFilterImpactThresholds TinyAiThresholds() => new()
+    {
+        MinimumAiConfirmedTrades = 1,
+        MinimumNonAiTrades = 1,
+        MinimumExpectancyDeltaUsd = 0
+    };
+
+    private static StrategySegmentGroup SegmentGroup(StrategySegmentAnalysisReport report, string name) =>
+        report.SegmentGroups.Single(g => g.Name == name);
+
+    private static StrategySegmentMetrics Segment(StrategySegmentGroup group, string key) =>
+        group.Segments.Single(s => s.Key == key);
+
+    private static RealisticBacktestTradeCandidate RealisticCandidate(
+        string id = "C1",
+        DateTime? timestampUtc = null,
+        string symbol = "EURUSD",
+        TradeType direction = TradeType.BUY,
+        double entryPrice = 1.1000,
+        double stopLoss = 1.0990,
+        double takeProfit = 1.1010,
+        double lotSize = 0.10,
+        string session = "London",
+        string spreadRegime = "Tight",
+        double? spreadPips = null) => new()
+    {
+        Id = id,
+        TimestampUtc = timestampUtc ?? TestUtc(10, 0),
+        Symbol = symbol,
+        Direction = direction,
+        EntryPrice = entryPrice,
+        EntryRulePlaceholder = "external-candidate",
+        StopLoss = stopLoss,
+        TakeProfit = takeProfit,
+        LotSize = lotSize,
+        Session = session,
+        SpreadRegime = spreadRegime,
+        SpreadPips = spreadPips
+    };
+
+    private static MarketSignal StrategySignal(
+        SignalDirection direction,
+        double entryPrice = 1.1000,
+        double stopLoss = 1.0990,
+        double takeProfit = 1.1010) => new()
+    {
+        Id = "SIG1",
+        Pair = "EURUSD",
+        Direction = direction,
+        EntryPrice = entryPrice,
+        StopLoss = stopLoss,
+        TakeProfit = takeProfit,
+        Reason = "momentum signal",
+        CreatedAt = TestUtc(9, 15)
+    };
+
+    private static RealisticBacktestRunInput RealisticInput(
+        IReadOnlyList<RealisticBacktestTradeCandidate> candidates,
+        IReadOnlyList<BacktestTick>? ticks = null,
+        IReadOnlyList<BacktestOhlcCandle>? candles = null,
+        BotConfig? config = null,
+        SymbolInfo? symbolInfo = null) => new()
+    {
+        Candidates = candidates,
+        Ticks = ticks ?? [],
+        Candles = candles ?? [],
+        Config = config ?? Config(),
+        SymbolInfoBySymbol = new Dictionary<string, SymbolInfo>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["EURUSD"] = symbolInfo ?? BacktestBrokerSymbol(
+                stopLevelPoints: 0,
+                freezeLevelPoints: 0,
+                volumeLimit: 0)
+        },
+        AssumptionsUsed = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["execution_model"] = "P2 realistic runner skeleton"
+        }
+    };
+
+    private static IReadOnlyList<BacktestTick> RunnerTicks(params (int Seconds, double Bid, double Ask)[] ticks) =>
+        ticks.Select(t => new BacktestTick
+        {
+            TimestampUtc = TestUtc(10, 0).AddSeconds(t.Seconds),
+            Symbol = "EURUSD",
+            Bid = t.Bid,
+            Ask = t.Ask
+        }).ToList();
+
     private static IReadOnlyList<BacktestTick> TickSeries(params (int Seconds, double Bid, double Ask)[] ticks) =>
         ticks.Select(t => new BacktestTick
         {
@@ -3458,6 +6155,19 @@ internal static class Program
         AssertFalse(result.Approved, $"Broker-rule simulation should reject with {expectedCode}.");
         AssertEqual(expectedCode, result.RejectionCode, "Broker-rule rejection should include a clear code.");
         AssertContains(expectedReasonFragment, result.RejectionReason);
+    }
+
+    private static void AssertFilterReject(
+        BacktestNoTradeFilterResult result,
+        string expectedCode,
+        string expectedFilterName,
+        string expectedFilterType)
+    {
+        AssertFalse(result.Allowed, $"Backtest filter should reject with {expectedCode}.");
+        AssertEqual(expectedCode, result.RejectionCode, "Filter rejection should include a clear code.");
+        AssertEqual(expectedFilterName, result.MatchedFilterName, "Filter rejection should include the matched filter name.");
+        AssertEqual(expectedFilterType, result.MatchedFilterType, "Filter rejection should include the matched filter type.");
+        AssertTrue(!string.IsNullOrWhiteSpace(result.RejectionReason), "Filter rejection should include a reason.");
     }
 
     private sealed class FakeTradeRepository : ITradeRepository
