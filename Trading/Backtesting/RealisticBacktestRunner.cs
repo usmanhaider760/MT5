@@ -236,17 +236,35 @@ namespace MT5TradingBot.Modules.Backtesting
             if (ticks.Count > 0)
                 return IntrabarExitSimulator.SimulateTickExit(candidate.Direction, candidate.StopLoss, candidate.TakeProfit, ticks);
 
-            var candle = input.Candles
+            var candles = input.Candles
                 .Where(c => SymbolEquals(c.Symbol, candidate.Symbol) && EnsureUtc(c.TimestampUtc) >= timestampUtc)
                 .OrderBy(c => c.TimestampUtc)
-                .FirstOrDefault();
-            return candle == null
-                ? new IntrabarExitResult
+                .ToList();
+            if (candles.Count == 0)
+            {
+                return new IntrabarExitResult
                 {
                     ExitTriggered = false,
                     Explanation = "No tick or OHLC candle data was available to resolve SL/TP."
-                }
-                : IntrabarExitSimulator.SimulateOhlcExit(candidate.Direction, candidate.StopLoss, candidate.TakeProfit, candle);
+                };
+            }
+
+            foreach (var candle in candles)
+            {
+                var exit = IntrabarExitSimulator.SimulateOhlcExit(
+                    candidate.Direction,
+                    candidate.StopLoss,
+                    candidate.TakeProfit,
+                    candle);
+                if (exit.ExitTriggered)
+                    return exit;
+            }
+
+            return new IntrabarExitResult
+            {
+                ExitTriggered = false,
+                Explanation = "Future OHLC candles found no SL/TP hit."
+            };
         }
 
         private static BacktestExecutionCostResult EstimateCost(

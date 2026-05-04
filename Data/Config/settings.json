@@ -96,8 +96,8 @@
     "update_on_startup": false,
     "tick_retention_days": 60,
     "ohlc_retention_days": 365,
-    "max_days_per_update": 7,
-    "max_rows_per_update": 5000,
+    "max_days_per_update": 60,
+    "max_rows_per_update": 100000,
     "allow_sync_during_trading": false,
     "scalping": {
       "max_trades": 20,

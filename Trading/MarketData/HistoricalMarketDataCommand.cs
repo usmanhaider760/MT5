@@ -5,14 +5,17 @@ namespace MT5TradingBot.Modules.MarketData
     public sealed class HistoricalMarketDataCommand
     {
         private readonly Func<HistoricalMarketDataUpdater> _updaterFactory;
+        private readonly Func<Task<bool>>? _mt5AvailabilityCheck;
         private readonly TextWriter _output;
 
         public HistoricalMarketDataCommand(
             Func<HistoricalMarketDataUpdater> updaterFactory,
-            TextWriter output)
+            TextWriter output,
+            Func<Task<bool>>? mt5AvailabilityCheck = null)
         {
             _updaterFactory = updaterFactory;
             _output = output;
+            _mt5AvailabilityCheck = mt5AvailabilityCheck;
         }
 
         public async Task<int> RunUpdateAsync(
@@ -34,6 +37,13 @@ namespace MT5TradingBot.Modules.MarketData
             {
                 _output.WriteLine("MARKET_DATA_UPDATER_NOT_AVAILABLE");
                 _output.WriteLine($"failure reason: {ex.Message}");
+                return 1;
+            }
+
+            if (_mt5AvailabilityCheck != null && !await IsMt5AvailableAsync().ConfigureAwait(false))
+            {
+                _output.WriteLine(MarketDataSyncStatusText.Mt5Unavailable);
+                WriteUnavailableSummary(request);
                 return 1;
             }
 
@@ -103,6 +113,41 @@ namespace MT5TradingBot.Modules.MarketData
             _output.WriteLine($"parsed data type: {request.PreferredDataType}");
             _output.WriteLine($"parsed data dir: {request.DataDirectory}");
             _output.WriteLine($"lookback days: {request.LookbackDays}");
+            _output.WriteLine($"backfill: {(request.Backfill ? "yes" : "no")}");
         }
+
+        private async Task<bool> IsMt5AvailableAsync()
+        {
+            try
+            {
+                return _mt5AvailabilityCheck != null && await _mt5AvailabilityCheck().ConfigureAwait(false);
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        private void WriteUnavailableSummary(HistoricalMarketDataUpdateRequest request)
+        {
+            foreach (string symbol in request.Symbols)
+            {
+                string normalized = symbol.Trim().Replace("/", "", StringComparison.Ordinal).ToUpperInvariant();
+                _output.WriteLine($"{normalized}: type={request.PreferredDataType}, rows before=0, fetched=0, after=0, removed by retention=0, fallback=no");
+                _output.WriteLine($"  output={ExpectedOutputPath(request.DataDirectory, normalized, request.PreferredDataType)}");
+                _output.WriteLine($"  mt5_rows_returned=0");
+                _output.WriteLine($"  diagnostic=MT5 bridge ping failed before historical data request.");
+                _output.WriteLine($"  error={MarketDataSyncStatusText.Mt5Unavailable}");
+                _output.WriteLine($"  failure reason: {MarketDataSyncStatusText.Mt5Unavailable}");
+            }
+        }
+
+        private static string ExpectedOutputPath(
+            string dataDirectory,
+            string symbol,
+            MarketDataUpdateType updateType) =>
+            updateType == MarketDataUpdateType.Tick
+                ? Path.Combine(dataDirectory, $"{symbol}_ticks.csv")
+                : Path.Combine(dataDirectory, $"{symbol}_M1.csv");
     }
 }

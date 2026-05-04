@@ -12,6 +12,7 @@ namespace MT5TradingBot.Modules.LiveReadiness
         public string? TickCsvPath { get; init; }
         public string? OhlcCsvPath { get; init; }
         public bool UseSampleFixture { get; init; }
+        public BotConfig Config { get; init; } = new();
     }
 
     public sealed record EvidencePackageCommandResult
@@ -91,7 +92,7 @@ namespace MT5TradingBot.Modules.LiveReadiness
             }
             else
             {
-                generation = new EvidenceStrategyCandidateGenerator().Generate(ticks, candles);
+                generation = new EvidenceStrategyCandidateGenerator().Generate(ticks, candles, request.Config);
                 realisticRequest = new RealisticBacktestReportRequest
                 {
                     OutputPath = Path.Combine(outputDirectory, RealisticBacktestReportCommand.DefaultReportFileName),
@@ -99,6 +100,7 @@ namespace MT5TradingBot.Modules.LiveReadiness
                     Candles = candles,
                     Candidates = generation.Candidates,
                     SymbolInfoBySymbol = BuildSymbolInfo(ticks, candles),
+                    Config = request.Config,
                     AssumptionsUsed = WithEvidenceAssumptions(
                         new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
                         hasRealMarketData,

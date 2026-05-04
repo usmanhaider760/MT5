@@ -8,7 +8,7 @@ It does not enable live trading and does not place orders.
 | Item | Status | Notes |
 | --- | --- | --- |
 | Market data source | Configured CSV | External CSV path was supplied. |
-| Strategy edge verdict | Fail | Failed objective criteria: Profit factor after costs 0 is below required 1.2. Expectancy after costs $0 is below required $0.01. Critical repaint/lookahead audit finding is present. |
+| Strategy edge verdict | Fail | Failed objective criteria: Profit factor after costs 0.72 is below required 1.2. Expectancy after costs $-0.81 is below required $0.01. Critical repaint/lookahead audit finding is present. |
 | Strategy evidence classification | Inconclusive | block live trading |
 | Live readiness gate | Missing | P4 live gate evidence was not supplied to this package command. |
 | Demo forward-test gate | Missing | Demo/paper forward-test evidence was not supplied. |

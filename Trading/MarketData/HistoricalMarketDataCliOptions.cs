@@ -8,6 +8,7 @@ namespace MT5TradingBot.Modules.MarketData
         public int? LookbackDays { get; init; }
         public string? DataDirectory { get; init; }
         public MarketDataUpdateType? PreferredDataType { get; init; }
+        public bool Backfill { get; init; }
 
         public static HistoricalMarketDataCliOptions Parse(string[] args)
         {
@@ -16,7 +17,8 @@ namespace MT5TradingBot.Modules.MarketData
                 Symbols = SplitSymbols(Value(args, "--symbols")),
                 LookbackDays = int.TryParse(Value(args, "--lookback-days"), out int days) ? days : null,
                 DataDirectory = Value(args, "--data-dir"),
-                PreferredDataType = ParseType(Value(args, "--type"))
+                PreferredDataType = ParseType(Value(args, "--type")),
+                Backfill = HasArg(args, "--backfill") || HasArg(args, "--full-window")
             };
         }
 
@@ -54,5 +56,8 @@ namespace MT5TradingBot.Modules.MarketData
 
             return null;
         }
+
+        private static bool HasArg(string[] args, string name) =>
+            args.Any(a => string.Equals(a, name, StringComparison.OrdinalIgnoreCase));
     }
 }

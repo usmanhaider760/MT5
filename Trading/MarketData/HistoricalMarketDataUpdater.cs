@@ -26,6 +26,7 @@ namespace MT5TradingBot.Modules.MarketData
         public int TickRetentionDays { get; init; } = 60;
         public int OhlcRetentionDays { get; init; } = 365;
         public DateTime? NowUtc { get; init; }
+        public bool Backfill { get; init; }
     }
 
     public sealed record HistoricalMarketDataUpdateSummary
@@ -160,7 +161,9 @@ namespace MT5TradingBot.Modules.MarketData
 
             int lookbackDays = Math.Max(1, request.LookbackDays);
             int maxRows = Math.Max(1, request.MaxRowsPerUpdate);
-            int maxDays = Math.Max(1, request.MaxDaysPerUpdate);
+            int maxDays = request.Backfill
+                ? Math.Max(1, lookbackDays)
+                : Math.Max(1, request.MaxDaysPerUpdate);
             DateTime toUtc = EnsureUtc(request.NowUtc ?? DateTime.UtcNow);
             Directory.CreateDirectory(request.DataDirectory);
 
@@ -181,13 +184,13 @@ namespace MT5TradingBot.Modules.MarketData
                 var result = request.PreferredDataType switch
                 {
                     MarketDataUpdateType.Tick => await UpdateTicksAsync(
-                        symbol, request.DataDirectory, lookbackDays, maxDays, maxRows, request.TickRetentionDays, toUtc, fallbackUsed: false, cancellationToken)
+                        symbol, request.DataDirectory, lookbackDays, maxDays, maxRows, request.TickRetentionDays, toUtc, request.Backfill, fallbackUsed: false, cancellationToken)
                         .ConfigureAwait(false),
                     MarketDataUpdateType.OHLC => await UpdateOhlcAsync(
-                        symbol, request.DataDirectory, lookbackDays, maxDays, maxRows, request.OhlcRetentionDays, toUtc, fallbackUsed: false, cancellationToken)
+                        symbol, request.DataDirectory, lookbackDays, maxDays, maxRows, request.OhlcRetentionDays, toUtc, request.Backfill, fallbackUsed: false, cancellationToken)
                         .ConfigureAwait(false),
                     _ => await UpdateTickThenOhlcAsync(
-                        symbol, request.DataDirectory, lookbackDays, maxDays, maxRows, request.TickRetentionDays, request.OhlcRetentionDays, toUtc, cancellationToken)
+                        symbol, request.DataDirectory, lookbackDays, maxDays, maxRows, request.TickRetentionDays, request.OhlcRetentionDays, toUtc, request.Backfill, cancellationToken)
                         .ConfigureAwait(false)
                 };
 
@@ -233,7 +236,8 @@ namespace MT5TradingBot.Modules.MarketData
                 MaxRowsPerUpdate = config.MaxRowsPerUpdate,
                 MaxDaysPerUpdate = config.MaxDaysPerUpdate,
                 TickRetentionDays = config.TickRetentionDays,
-                OhlcRetentionDays = config.OhlcRetentionDays
+                OhlcRetentionDays = config.OhlcRetentionDays,
+                Backfill = cliOptions?.Backfill ?? false
             };
 
         private async Task<HistoricalMarketDataSymbolResult> UpdateTickThenOhlcAsync(
@@ -245,17 +249,18 @@ namespace MT5TradingBot.Modules.MarketData
             int tickRetentionDays,
             int ohlcRetentionDays,
             DateTime toUtc,
+            bool backfill,
             CancellationToken cancellationToken)
         {
             var tickResult = await UpdateTicksAsync(
-                symbol, dataDirectory, lookbackDays, maxDays, maxRows, tickRetentionDays, toUtc, fallbackUsed: false, cancellationToken)
+                symbol, dataDirectory, lookbackDays, maxDays, maxRows, tickRetentionDays, toUtc, backfill, fallbackUsed: false, cancellationToken)
                 .ConfigureAwait(false);
 
             if (tickResult.Errors.Count == 0 && tickResult.RowsFetched > 0)
                 return tickResult;
 
             var ohlcResult = await UpdateOhlcAsync(
-                symbol, dataDirectory, lookbackDays, maxDays, maxRows, ohlcRetentionDays, toUtc, fallbackUsed: true, cancellationToken)
+                symbol, dataDirectory, lookbackDays, maxDays, maxRows, ohlcRetentionDays, toUtc, backfill, fallbackUsed: true, cancellationToken)
                 .ConfigureAwait(false);
 
             var warnings = new List<string>(tickResult.Warnings);
@@ -287,12 +292,13 @@ namespace MT5TradingBot.Modules.MarketData
             int maxRows,
             int retentionDays,
             DateTime toUtc,
+            bool backfill,
             bool fallbackUsed,
             CancellationToken cancellationToken)
         {
             string outputPath = TickPath(dataDirectory, symbol);
             var existing = LoadExistingTicks(outputPath);
-            DateTime fromUtc = ResolveFromUtc(existing.Select(t => t.TimestampUtc), lookbackDays, maxDays, toUtc);
+            DateTime fromUtc = ResolveFromUtc(existing.Select(t => t.TimestampUtc), lookbackDays, maxDays, toUtc, backfill);
             var fetched = await _provider.GetTicksAsync(symbol, fromUtc, toUtc, maxRows, cancellationToken)
                 .ConfigureAwait(false);
 
@@ -349,12 +355,13 @@ namespace MT5TradingBot.Modules.MarketData
             int maxRows,
             int retentionDays,
             DateTime toUtc,
+            bool backfill,
             bool fallbackUsed,
             CancellationToken cancellationToken)
         {
             string outputPath = OhlcPath(dataDirectory, symbol);
             var existing = LoadExistingOhlc(outputPath);
-            DateTime fromUtc = ResolveFromUtc(existing.Select(c => c.TimestampUtc), lookbackDays, maxDays, toUtc);
+            DateTime fromUtc = ResolveFromUtc(existing.Select(c => c.TimestampUtc), lookbackDays, maxDays, toUtc, backfill);
             var fetched = await _provider.GetOhlcM1Async(symbol, fromUtc, toUtc, maxRows, cancellationToken)
                 .ConfigureAwait(false);
 
@@ -506,11 +513,19 @@ namespace MT5TradingBot.Modules.MarketData
             return lines.Length <= 1 || lines.Skip(1).All(string.IsNullOrWhiteSpace);
         }
 
-        private static DateTime ResolveFromUtc(IEnumerable<DateTime> timestampsUtc, int lookbackDays, int maxDays, DateTime toUtc)
+        private static DateTime ResolveFromUtc(
+            IEnumerable<DateTime> timestampsUtc,
+            int lookbackDays,
+            int maxDays,
+            DateTime toUtc,
+            bool backfill)
         {
-            DateTime? last = timestampsUtc.OrderByDescending(t => t).FirstOrDefault();
-            if (last.HasValue && last.Value != default)
-                return EnsureUtc(last.Value).AddMilliseconds(1);
+            if (!backfill)
+            {
+                DateTime? last = timestampsUtc.OrderByDescending(t => t).FirstOrDefault();
+                if (last.HasValue && last.Value != default)
+                    return EnsureUtc(last.Value).AddMilliseconds(1);
+            }
 
             int days = Math.Min(Math.Max(1, lookbackDays), Math.Max(1, maxDays));
             return toUtc.AddDays(-days);

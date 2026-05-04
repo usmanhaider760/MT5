@@ -5,7 +5,7 @@ Scope: P3 strategy proof reporting only. This report does not change strategy lo
 ## Executive Verdict
 
 - Verdict: Fail
-- Reason for verdict: Failed objective criteria: Profit factor after costs 0 is below required 1.2. Expectancy after costs $0 is below required $0.01. Critical repaint/lookahead audit finding is present.
+- Reason for verdict: Failed objective criteria: Profit factor after costs 0.72 is below required 1.2. Expectancy after costs $-0.81 is below required $0.01. Critical repaint/lookahead audit finding is present.
 - Report file: `STRATEGY_EDGE_VERDICT_REPORT.md`
 - Live-demo readiness score: 0/100
 
@@ -19,12 +19,12 @@ Scope: P3 strategy proof reporting only. This report does not change strategy lo
 
 | Metric | Value |
 |---|---:|
-| Sample size / completed trades | 0 |
-| Total signals | 0 |
-| Profit factor after costs | 0 |
-| Expectancy after costs | $0 |
-| Max drawdown | $0 |
-| Worst losing streak | 0 |
+| Sample size / completed trades | 20 |
+| Total signals | 20 |
+| Profit factor after costs | 0.72 |
+| Expectancy after costs | $-0.81 |
+| Max drawdown | $20.88 |
+| Worst losing streak | 2 |
 
 ## Component Verdicts
 
@@ -43,18 +43,18 @@ Scope: P3 strategy proof reporting only. This report does not change strategy lo
 
 ## Failed Criteria
 
-- Profit factor after costs 0 is below required 1.2.
-- Expectancy after costs $0 is below required $0.01.
+- Profit factor after costs 0.72 is below required 1.2.
+- Expectancy after costs $-0.81 is below required $0.01.
 - Critical repaint/lookahead audit finding is present.
 
 ## Key Risks
 
-- No signals or realistic backtest outcomes were supplied for signal-quality metrics.
 - Cost sensitivity analysis is missing.
 - Strategy robustness analysis is missing.
 - AI filter impact analysis is missing; AI should remain outside edge proof.
-- Signal-quality metrics are unavailable.
-- Completed trade sample is too small: 0 < required 300.
+- Completed trade sample is too small: 20 < required 300.
+- One or more outcomes are missing signal source metadata and were grouped as unknown.
+- R-multiple data is unavailable; average R multiple was not calculated.
 - Backtest-positive results can still fail in demo due to broker spread, slippage, commission, latency, rejection rate, and execution path differences.
 
 ## Missing Evidence
@@ -68,11 +68,11 @@ Scope: P3 strategy proof reporting only. This report does not change strategy lo
 
 - ai_disabled_reason: AI disabled: no historical AI decisions were supplied and offline evidence generation must not call external AI APIs.
 - broker_connection: No MT5 or live broker connection required
-- candidates_generated_from_real_data: 0
-- candidate_generation_diagnostic: REAL_MARKET_DATA_LOADED_BUT_NO_STRATEGY_CANDIDATES
+- candidates_generated_from_real_data: 20
+- candidate_generation_diagnostic: OFFLINE_AUTO_SCALPING_PRICE_MOVEMENT_CANDIDATES_GENERATED
 - candidate_generation_source: offline-auto-scalping-price-movement
-- candidate_source: No candidates supplied
-- candles_loaded: 1376
+- candidate_source: Externally provided candidates
+- candles_loaded: 643
 - evidence_package_scope: Configured CSV market data was supplied; still not live proof.
 - execution_costs: BacktestExecutionCostModel spread, commission, and slippage estimates
 - incomplete_signals: 0
@@ -80,8 +80,8 @@ Scope: P3 strategy proof reporting only. This report does not change strategy lo
 - market_data: CSV/provided OHLC candles
 - market_data_source: Configured CSV market data
 - offline_live_logic_differences: Offline mirror uses the live auto-scalping price-movement fallback only. It does not call MT5 GetMarketSnapshot, does not use live M5/M15/H1 indicator snapshot scoring, does not call AI confirmation, does not inspect open positions, and does not execute orders.
-- real_strategy_candidates_used: No
+- real_strategy_candidates_used: Yes
 - sample_fixture_used: No
 - simulation_type: Realistic simulation only; not live proof
-- skipped_or_hold_signals: 1376
+- skipped_or_hold_signals: 623
 - ticks_loaded: 0

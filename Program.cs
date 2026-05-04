@@ -25,7 +25,8 @@ namespace MT5TradingBot
                 using var bridge = new MT5Bridge(settings.Mt5);
                 var command = new HistoricalMarketDataCommand(
                     () => new HistoricalMarketDataUpdater(new Mt5HistoricalMarketDataProvider(bridge)),
-                    Console.Out);
+                    Console.Out,
+                    bridge.PingAsync);
 
                 Environment.ExitCode = await command.RunUpdateAsync(settings, args).ConfigureAwait(false);
                 return;
@@ -38,7 +39,8 @@ namespace MT5TradingBot
                 using var bridge = new MT5Bridge(settings.Mt5);
                 var command = new HistoricalMarketDataCommand(
                     () => new HistoricalMarketDataUpdater(new Mt5HistoricalMarketDataProvider(bridge)),
-                    Console.Out);
+                    Console.Out,
+                    bridge.PingAsync);
 
                 Environment.ExitCode = await command
                     .RunDiagnoseAsync(settings, args, bridge.PingAsync)
@@ -55,7 +57,8 @@ namespace MT5TradingBot
                     using var bridge = new MT5Bridge(settings.Mt5);
                     var command = new HistoricalMarketDataCommand(
                         () => new HistoricalMarketDataUpdater(new Mt5HistoricalMarketDataProvider(bridge)),
-                        Console.Out);
+                        Console.Out,
+                        bridge.PingAsync);
                     await command.RunUpdateAsync(settings, args).ConfigureAwait(false);
                 }
 
@@ -65,6 +68,7 @@ namespace MT5TradingBot
                         OutputDirectory = Directory.GetCurrentDirectory(),
                         TickCsvPath = ArgValue(args, "--tick-csv"),
                         OhlcCsvPath = ArgValue(args, "--ohlc-csv"),
+                        Config = settings.Bot,
                         UseSampleFixture = HasArg(args, "--use-sample-fixture")
                     })
                     .ConfigureAwait(false);

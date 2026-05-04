@@ -147,6 +147,9 @@ internal static class Program
         new("evidence package no strategy candidates returns clear diagnostic", EvidencePackageNoStrategyCandidatesReturnsClearDiagnostic),
         new("evidence package explicit sample fixture still works", EvidencePackageExplicitSampleFixtureStillWorks),
         new("evidence package report marks data source correctly", EvidencePackageReportMarksDataSourceCorrectly),
+        new("evidence package OHLC CSV generates candidates", EvidencePackageOhlcCsvGeneratesCandidates),
+        new("evidence package OHLC movement omits no-candidates diagnostic", EvidencePackageOhlcMovementOmitsNoCandidatesDiagnostic),
+        new("OHLC generated candidates produce backtest trades", OhlcGeneratedCandidatesProduceBacktestTrades),
         new("offline candidate generator tick data can produce candidates", OfflineCandidateGeneratorTickDataCanProduceCandidates),
         new("offline candidate generator HOLD signals are counted", OfflineCandidateGeneratorHoldSignalsAreCounted),
         new("offline candidate generator incomplete signals are counted", OfflineCandidateGeneratorIncompleteSignalsAreCounted),
@@ -158,6 +161,7 @@ internal static class Program
         new("market data auto sync skips during critical trading", MarketDataAutoSyncSkipsDuringCriticalTrading),
         new("market data CLI update command prints started banner", MarketDataCliUpdateCommandPrintsStartedBanner),
         new("market data CLI update command returns failure code", MarketDataCliUpdateCommandReturnsFailureCode),
+        new("market data CLI update command reports MT5 unavailable", MarketDataCliUpdateCommandReportsMt5Unavailable),
         new("market data EA historical commands parse nested payload dates", MarketDataEaHistoricalCommandsParseNestedPayloadDates),
         new("market data UI disabled status text is visible", MarketDataUiDisabledStatusTextIsVisible),
         new("market data startup sync emits progress event", MarketDataStartupSyncEmitsProgressEvent),
@@ -165,6 +169,7 @@ internal static class Program
         new("market data updater creates new tick file", MarketDataUpdaterCreatesNewTickFile),
         new("market data updater does not create generic ticks csv", MarketDataUpdaterDoesNotCreateGenericTicksCsv),
         new("market data updater appends only new rows", MarketDataUpdaterAppendsOnlyNewRows),
+        new("market data updater backfill ignores existing watermark", MarketDataUpdaterBackfillIgnoresExistingWatermark),
         new("market data updater removes duplicates", MarketDataUpdaterRemovesDuplicates),
         new("market data updater accepts broker suffix symbols", MarketDataUpdaterAcceptsBrokerSuffixSymbols),
         new("market data updater treats header-only cache as empty", MarketDataUpdaterTreatsHeaderOnlyCacheAsEmpty),
@@ -179,6 +184,7 @@ internal static class Program
         new("market data updater emits progress events", MarketDataUpdaterEmitsProgressEvents),
         new("market data auto sync cancel stops safely", MarketDataAutoSyncCancelStopsSafely),
         new("market data updater CLI parses arguments", MarketDataUpdaterCliParsesArguments),
+        new("market data updater CLI parses backfill", MarketDataUpdaterCliParsesBackfill),
         new("market data updater does not call live trade methods", MarketDataUpdaterDoesNotCallLiveTradeMethods),
         new("backtest/live mismatch report can be generated", BacktestLiveMismatchReportCanBeGenerated),
         new("backtest/live mismatch report marks commission and slippage present", BacktestLiveMismatchReportMarksCommissionAndSlippagePresent),
@@ -2494,6 +2500,78 @@ internal static class Program
         AssertContains("- Candidate generation source: offline-auto-scalping-price-movement", report);
     }
 
+    private static async Task EvidencePackageOhlcCsvGeneratesCandidates()
+    {
+        string folder = TestFolder();
+        string ohlcCsv = WriteOhlcMovementCsv();
+
+        var result = await new EvidencePackageCommand()
+            .RunAsync(new EvidencePackageCommandRequest
+            {
+                OutputDirectory = folder,
+                OhlcCsvPath = ohlcCsv,
+                Config = EvidenceConfig(maxSpreadPips: 50)
+            })
+            .ConfigureAwait(false);
+
+        AssertEqual(0, result.TicksLoaded, "OHLC-only evidence should not require ticks.");
+        AssertTrue(result.CandlesLoaded > 0, "OHLC CSV rows should be loaded.");
+        AssertTrue(result.CandidatesGenerated > 0, "Moving OHLC candles should generate offline candidates.");
+        AssertEqual(
+            "OFFLINE_AUTO_SCALPING_PRICE_MOVEMENT_CANDIDATES_GENERATED",
+            result.CandidateGenerationDiagnostic,
+            "Moving OHLC candles should use the generated-candidates diagnostic.");
+    }
+
+    private static async Task EvidencePackageOhlcMovementOmitsNoCandidatesDiagnostic()
+    {
+        string folder = TestFolder();
+        string ohlcCsv = WriteOhlcMovementCsv();
+
+        var result = await new EvidencePackageCommand()
+            .RunAsync(new EvidencePackageCommandRequest
+            {
+                OutputDirectory = folder,
+                OhlcCsvPath = ohlcCsv,
+                Config = EvidenceConfig(maxSpreadPips: 50)
+            })
+            .ConfigureAwait(false);
+
+        string report = File.ReadAllText(Path.Combine(folder, RealisticBacktestReportCommand.DefaultReportFileName));
+        AssertFalse(
+            string.Equals(
+                "REAL_MARKET_DATA_LOADED_BUT_NO_STRATEGY_CANDIDATES",
+                result.CandidateGenerationDiagnostic,
+                StringComparison.Ordinal),
+            "Moving OHLC evidence should not return the no-candidates diagnostic.");
+        AssertFalse(report.Contains("REAL_MARKET_DATA_LOADED_BUT_NO_STRATEGY_CANDIDATES", StringComparison.Ordinal),
+            "Realistic report should not include the no-candidates diagnostic when OHLC movement exists.");
+        AssertContains("OFFLINE_AUTO_SCALPING_PRICE_MOVEMENT_CANDIDATES_GENERATED", report);
+    }
+
+    private static Task OhlcGeneratedCandidatesProduceBacktestTrades()
+    {
+        var candles = OhlcMovementCandles();
+        var config = EvidenceConfig(maxSpreadPips: 50);
+        var generation = new EvidenceStrategyCandidateGenerator().Generate([], candles, config);
+
+        var result = RealisticBacktestRunner.Run(new RealisticBacktestRunInput
+        {
+            Candidates = generation.Candidates,
+            Candles = candles,
+            Config = config,
+            SymbolInfoBySymbol = new Dictionary<string, SymbolInfo>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["EURUSD"] = BacktestBrokerSymbol(stopLevelPoints: 0, freezeLevelPoints: 0, volumeLimit: 0)
+            }
+        });
+
+        AssertTrue(generation.Candidates.Count > 0, "OHLC movement should generate at least one candidate.");
+        AssertTrue(result.Success, "Realistic runner should accept OHLC-generated candidates.");
+        AssertTrue(result.SuccessfulTrades.Count > 0, "OHLC-generated candidates should resolve into completed trades.");
+        return Task.CompletedTask;
+    }
+
     private static Task OfflineCandidateGeneratorTickDataCanProduceCandidates()
     {
         var result = new EvidenceStrategyCandidateGenerator().Generate(
@@ -2719,6 +2797,44 @@ internal static class Program
         AssertContains("MT5 unavailable", text);
     }
 
+    private static async Task MarketDataCliUpdateCommandReportsMt5Unavailable()
+    {
+        string folder = TestFolder();
+        var provider = new FakeHistoricalMarketDataProvider
+        {
+            Candles =
+            [
+                new BacktestOhlcCandle
+                {
+                    TimestampUtc = new DateTime(2026, 5, 3, 10, 0, 0, DateTimeKind.Utc),
+                    Symbol = "XAUUSD",
+                    Timeframe = "M1",
+                    Open = 2300.0,
+                    High = 2301.0,
+                    Low = 2299.0,
+                    Close = 2300.5
+                }
+            ]
+        };
+        using var output = new StringWriter();
+        var command = new HistoricalMarketDataCommand(
+            () => new HistoricalMarketDataUpdater(provider),
+            output,
+            () => Task.FromResult(false));
+
+        int exitCode = await command.RunUpdateAsync(
+            new AppSettings(),
+            ["--update-market-data", "--symbols", "XAUUSD", "--type", "ohlc", "--data-dir", folder])
+            .ConfigureAwait(false);
+
+        string text = output.ToString();
+        AssertEqual(1, exitCode, "Unavailable MT5 should return non-zero.");
+        AssertContains("MARKET_DATA_UPDATE_STARTED", text);
+        AssertContains(MarketDataSyncStatusText.Mt5Unavailable, text);
+        AssertContains("diagnostic=MT5 bridge ping failed before historical data request.", text);
+        AssertEqual(0, provider.OhlcCalls, "CLI should not call historical data provider when MT5 preflight fails.");
+    }
+
     private static Task MarketDataEaHistoricalCommandsParseNestedPayloadDates()
     {
         string repo = FindRepoRoot();
@@ -2852,6 +2968,65 @@ internal static class Program
             "Incremental update should request only data after the last existing timestamp.");
         AssertEqual(2, loaded.Count, "Existing row plus one new row should remain after deduplication.");
         AssertEqual(1, summary.SymbolResults.Single().RowsBefore, "Rows before should count existing file rows.");
+    }
+
+    private static async Task MarketDataUpdaterBackfillIgnoresExistingWatermark()
+    {
+        string folder = TestFolder();
+        Directory.CreateDirectory(folder);
+        string path = Path.Combine(folder, "EURUSD_M1.csv");
+        File.WriteAllLines(path,
+        [
+            "timestamp,symbol,open,high,low,close,timeframe,spread",
+            "2026-05-03T10:00:00.000Z,EURUSD,1.1000,1.1010,1.0990,1.1005,M1,1.0"
+        ]);
+        var provider = new FakeHistoricalMarketDataProvider
+        {
+            Candles =
+            [
+                new BacktestOhlcCandle
+                {
+                    TimestampUtc = new DateTime(2026, 5, 1, 10, 0, 0, DateTimeKind.Utc),
+                    Symbol = "EURUSD",
+                    Timeframe = "M1",
+                    Open = 1.0900,
+                    High = 1.0910,
+                    Low = 1.0890,
+                    Close = 1.0905,
+                    SpreadPips = 1.0
+                },
+                new BacktestOhlcCandle
+                {
+                    TimestampUtc = new DateTime(2026, 5, 3, 10, 0, 0, DateTimeKind.Utc),
+                    Symbol = "EURUSD",
+                    Timeframe = "M1",
+                    Open = 1.1000,
+                    High = 1.1010,
+                    Low = 1.0990,
+                    Close = 1.1005,
+                    SpreadPips = 1.0
+                }
+            ]
+        };
+        var updater = new HistoricalMarketDataUpdater(provider);
+
+        var summary = await updater.UpdateAsync(new HistoricalMarketDataUpdateRequest
+        {
+            Symbols = ["EURUSD"],
+            DataDirectory = folder,
+            PreferredDataType = MarketDataUpdateType.OHLC,
+            LookbackDays = 30,
+            MaxRowsPerUpdate = 100,
+            MaxDaysPerUpdate = 7,
+            Backfill = true,
+            NowUtc = new DateTime(2026, 5, 4, 0, 0, 0, DateTimeKind.Utc)
+        }).ConfigureAwait(false);
+        var loaded = await new CsvBacktestOhlcDataLoader().LoadAsync(path, "EURUSD").ConfigureAwait(false);
+
+        AssertTrue(provider.LastOhlcFromUtc < new DateTime(2026, 5, 3, 10, 0, 0, DateTimeKind.Utc),
+            "Backfill should request from the lookback window instead of the last existing timestamp.");
+        AssertEqual(2, loaded.Count, "Backfill should merge older fetched rows with existing data.");
+        AssertEqual(2, summary.SymbolResults.Single().RowsAfter, "Rows after should include deduped backfill rows.");
     }
 
     private static async Task MarketDataUpdaterRemovesDuplicates()
@@ -3175,6 +3350,15 @@ internal static class Program
         AssertEqual(30, options.LookbackDays.GetValueOrDefault(), "CLI should parse lookback days.");
         AssertEqual(".\\data", options.DataDirectory ?? "", "CLI should parse data directory.");
         AssertEqual(MarketDataUpdateType.TickThenOHLC.ToString(), options.PreferredDataType.ToString() ?? "", "CLI should parse update type.");
+        return Task.CompletedTask;
+    }
+
+    private static Task MarketDataUpdaterCliParsesBackfill()
+    {
+        var options = HistoricalMarketDataCliOptions.Parse(
+            ["--update-market-data", "--symbols", "XAUUSD", "--lookback-days", "30", "--type", "ohlc", "--backfill"]);
+
+        AssertTrue(options.Backfill, "CLI should parse explicit backfill mode.");
         return Task.CompletedTask;
     }
 
@@ -6179,6 +6363,16 @@ internal static class Program
         };
     }
 
+    private static BotConfig EvidenceConfig(double maxSpreadPips)
+    {
+        var config = Config(maxSpreadPips: maxSpreadPips);
+        config.Scalping.MaxSpreadPips = maxSpreadPips;
+        config.Scalping.StopLossPips = 10;
+        config.Scalping.TakeProfitPips = 6;
+        config.Scalping.MaxTrades = 10;
+        return config;
+    }
+
     private static BotConfig ConfigWithFolder(
         string folder,
         int maxTradesPerDay = 5,
@@ -6687,6 +6881,50 @@ internal static class Program
         return path;
     }
 
+    private static string WriteOhlcMovementCsv() =>
+        WriteTempCsv(
+            "timestamp,symbol,timeframe,open,high,low,close,spread_pips",
+            "2026-05-03T10:00:00Z,EURUSD,M1,1.10000,1.10010,1.09990,1.10000,0.8",
+            "2026-05-03T10:01:00Z,EURUSD,M1,1.10000,1.10050,1.10000,1.10020,0.8",
+            "2026-05-03T10:02:00Z,EURUSD,M1,1.10020,1.10120,1.10020,1.10040,0.8");
+
+    private static IReadOnlyList<BacktestOhlcCandle> OhlcMovementCandles() =>
+    [
+        new()
+        {
+            TimestampUtc = new DateTime(2026, 5, 3, 10, 0, 0, DateTimeKind.Utc),
+            Symbol = "EURUSD",
+            Timeframe = "M1",
+            Open = 1.10000,
+            High = 1.10010,
+            Low = 1.09990,
+            Close = 1.10000,
+            SpreadPips = 0.8
+        },
+        new()
+        {
+            TimestampUtc = new DateTime(2026, 5, 3, 10, 1, 0, DateTimeKind.Utc),
+            Symbol = "EURUSD",
+            Timeframe = "M1",
+            Open = 1.10000,
+            High = 1.10050,
+            Low = 1.10000,
+            Close = 1.10020,
+            SpreadPips = 0.8
+        },
+        new()
+        {
+            TimestampUtc = new DateTime(2026, 5, 3, 10, 2, 0, DateTimeKind.Utc),
+            Symbol = "EURUSD",
+            Timeframe = "M1",
+            Open = 1.10020,
+            High = 1.10120,
+            Low = 1.10020,
+            Close = 1.10040,
+            SpreadPips = 0.8
+        }
+    ];
+
     private static Task<StrategyExtractionReportResult> GenerateStrategyExtractionReportForTest()
     {
         string outputPath = Path.Combine(TestFolder(), StrategyExtractionReportGenerator.DefaultReportFileName);
@@ -6706,6 +6944,7 @@ internal static class Program
         public int OhlcCalls { get; private set; }
         public int LiveTradeMethodCalls { get; private set; }
         public DateTime LastTickFromUtc { get; private set; }
+        public DateTime LastOhlcFromUtc { get; private set; }
 
         public Task<HistoricalMarketDataProviderResult<BacktestTick>> GetTicksAsync(
             string symbol,
@@ -6768,6 +7007,7 @@ internal static class Program
             CancellationToken cancellationToken = default)
         {
             OhlcCalls++;
+            LastOhlcFromUtc = fromUtc;
             OnFetchStarted?.Invoke();
             if (Delay > TimeSpan.Zero)
                 return GetOhlcDelayedAsync(symbol, fromUtc, toUtc, maxRows, cancellationToken);
