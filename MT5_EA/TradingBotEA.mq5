@@ -149,6 +149,7 @@ string ProcessRequest(string json)
    string reqId = JsonStr(json, "req_id");
 
    if(cmd == "PING")           return Ok(reqId, "{\"pong\":true,\"mt5_time\":\"" + TimeToString(TimeCurrent()) + "\"}");
+   if(cmd == "GET_EA_HEALTH")  return CmdGetEaHealth(reqId);
    if(cmd == "GET_ACCOUNT")    return CmdGetAccount(reqId);
    if(cmd == "GET_POSITIONS")  return CmdGetPositions(reqId);
    if(cmd == "OPEN_TRADE")     return CmdOpenTrade(reqId, json);
@@ -161,6 +162,22 @@ string ProcessRequest(string json)
    if(cmd == "CLOSE_ALL")      return CmdCloseAll(reqId);
 
    return Err(reqId, "UNKNOWN_CMD", "Unknown command: " + cmd);
+}
+
+//+------------------------------------------------------------------+
+//| GET_EA_HEALTH                                                     |
+//+------------------------------------------------------------------+
+string CmdGetEaHealth(string reqId)
+{
+   string d = "{";
+   d += "\"IsAlive\":true,";
+   d += "\"Version\":\"3.00\",";
+   d += "\"BuildIdentifier\":\"TradingBotEA-3.00\",";
+   d += "\"TerminalName\":\"" + Esc(TerminalInfoString(TERMINAL_NAME)) + "\",";
+   d += "\"Server\":\"" + Esc(AccountInfoString(ACCOUNT_SERVER)) + "\",";
+   d += "\"CheckedAtUtc\":\"" + TimeToString(TimeGMT(), TIME_DATE|TIME_SECONDS) + "\"";
+   d += "}";
+   return Ok(reqId, d);
 }
 
 //+------------------------------------------------------------------+

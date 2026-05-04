@@ -42,6 +42,18 @@ namespace MT5TradingBot.Modules.BrokerIntegration
             catch { SetConnected(false); return false; }
         }
 
+        public async Task<(bool Success, EaHealthInfo? Health, string Error)> TryGetEaHealthAsync()
+        {
+            var r = await SendAsync("GET_EA_HEALTH", null).ConfigureAwait(false);
+            if (r?.Success != true)
+                return (false, null, r?.Error ?? "No EA health response from MT5");
+
+            var health = Deserialize<EaHealthInfo>(r.Data);
+            return health != null
+                ? (true, health, "")
+                : (false, null, "Invalid EA health response from MT5");
+        }
+
         public async Task<TradeResult> OpenTradeAsync(TradeRequest req)
         {
             Log($"OPEN {req.TradeType} {req.Pair} Lots:{req.LotSize:F2} SL:{req.StopLoss:F5} TP:{req.TakeProfit:F5}");

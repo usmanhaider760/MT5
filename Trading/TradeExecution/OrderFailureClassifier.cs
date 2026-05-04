@@ -23,6 +23,14 @@ namespace MT5TradingBot.Modules.TradeExecution
         private static readonly HashSet<string> SafetyAndValidationCodes = new(StringComparer.OrdinalIgnoreCase)
         {
             "VALIDATION",
+            "LIVE_READINESS_GATE_BLOCKED",
+            "DEMO_FORWARD_TEST_NOT_PASSED",
+            "BROKER_READINESS_FAILED",
+            "ROLLOUT_STAGE_PAPER_ONLY",
+            "ROLLOUT_STAGE_DEMO_ONLY",
+            "ROLLOUT_STAGE_ROLLED_BACK",
+            "ROLLOUT_TINY_RISK_CAP",
+            "ROLLOUT_TINY_LOT_CAP",
             "REJECTED_CONFIG",
             "SIGNAL_EXPIRED",
             "DAILY_LIMIT",

@@ -5,8 +5,12 @@ using System.Text;
 using MT5TradingBot.Core;
 using MT5TradingBot.Data;
 using MT5TradingBot.Models;
+using MT5TradingBot.Modules.Alerts;
 using MT5TradingBot.Modules.Backtesting;
 using MT5TradingBot.Modules.BrokerIntegration;
+using MT5TradingBot.Modules.Deployment;
+using MT5TradingBot.Modules.LiveReadiness;
+using MT5TradingBot.Modules.Monitoring;
 using MT5TradingBot.Modules.NewsFilter;
 using MT5TradingBot.Modules.RiskManagement;
 using MT5TradingBot.Modules.Scalping;
@@ -60,6 +64,68 @@ internal static class Program
         new("explicit clear disables kill switch", ExplicitClearDisablesKillSwitch),
         new("failed emergency close keeps kill switch active", FailedEmergencyCloseKeepsKillSwitchActive),
         new("paper mode is separate from kill switch", PaperModeIsSeparateFromKillSwitch),
+        new("final live readiness gate blocks live by default", FinalLiveReadinessGateBlocksLiveByDefault),
+        new("missing negative or inconclusive strategy proof blocks live", MissingNegativeOrInconclusiveStrategyProofBlocksLive),
+        new("final live readiness gate reports kill switch active", FinalLiveReadinessGateReportsKillSwitchActive),
+        new("missing user live enablement blocks live", MissingUserLiveEnablementBlocksLive),
+        new("broker readiness failure blocks live", BrokerReadinessFailureBlocksLive),
+        new("all final live readiness gates passing allows validation to continue", AllFinalLiveReadinessGatesPassingAllowsValidationToContinue),
+        new("paper mode is separate from final live readiness gate", PaperModeIsSeparateFromFinalLiveReadinessGate),
+        new("demo forward test sufficient metrics pass", DemoForwardTestSufficientMetricsPass),
+        new("demo forward test too few trades is inconclusive", DemoForwardTestTooFewTradesIsInconclusive),
+        new("demo forward test too short duration is inconclusive", DemoForwardTestTooShortDurationIsInconclusive),
+        new("demo forward test poor profit factor fails", DemoForwardTestPoorProfitFactorFails),
+        new("demo forward test excessive drawdown fails", DemoForwardTestExcessiveDrawdownFails),
+        new("demo forward test excessive losing streak fails", DemoForwardTestExcessiveLosingStreakFails),
+        new("demo forward test excessive rejection rate fails", DemoForwardTestExcessiveRejectionRateFails),
+        new("demo forward test excessive spread and slippage drift fails", DemoForwardTestExcessiveSpreadAndSlippageDriftFails),
+        new("required demo forward gate blocks live readiness", RequiredDemoForwardGateBlocksLiveReadiness),
+        new("paper mode is separate from demo forward gate", PaperModeIsSeparateFromDemoForwardGate),
+        new("broker deployment checklist fully ready passes", BrokerDeploymentChecklistFullyReadyPasses),
+        new("broker deployment checklist MT5 disconnected fails", BrokerDeploymentChecklistMt5DisconnectedFails),
+        new("broker deployment checklist EA not responding fails", BrokerDeploymentChecklistEaNotRespondingFails),
+        new("broker deployment checklist missing symbol metadata fails", BrokerDeploymentChecklistMissingSymbolMetadataFails),
+        new("broker deployment checklist missing margin estimate fails", BrokerDeploymentChecklistMissingMarginEstimateFails),
+        new("broker deployment checklist missing OrderCheck fails", BrokerDeploymentChecklistMissingOrderCheckFails),
+        new("broker deployment checklist news unavailable fails when required", BrokerDeploymentChecklistNewsUnavailableFailsWhenRequired),
+        new("broker deployment checklist excessive latency fails", BrokerDeploymentChecklistExcessiveLatencyFails),
+        new("required broker readiness blocks live readiness", RequiredBrokerReadinessBlocksLiveReadiness),
+        new("paper mode is separate from broker readiness gate", PaperModeIsSeparateFromBrokerReadinessGate),
+        new("runtime health healthy snapshot returns Healthy", RuntimeHealthHealthySnapshotReturnsHealthy),
+        new("runtime health MT5 disconnected returns Critical", RuntimeHealthMt5DisconnectedReturnsCritical),
+        new("runtime health EA heartbeat failure returns Critical", RuntimeHealthEaHeartbeatFailureReturnsCritical),
+        new("runtime health excessive latency returns warning or critical", RuntimeHealthExcessiveLatencyReturnsWarningOrCritical),
+        new("runtime health spread and slippage drift returns Warning", RuntimeHealthSpreadAndSlippageDriftReturnsWarning),
+        new("runtime health high rejection rate returns warning or critical", RuntimeHealthHighRejectionRateReturnsWarningOrCritical),
+        new("runtime health critical drawdown returns Critical", RuntimeHealthCriticalDrawdownReturnsCritical),
+        new("runtime health kill switch active returns Critical", RuntimeHealthKillSwitchActiveReturnsCritical),
+        new("runtime health low margin level returns Critical", RuntimeHealthLowMarginLevelReturnsCritical),
+        new("runtime health missing data returns Warning clearly", RuntimeHealthMissingDataReturnsWarningClearly),
+        new("safety alert kill switch alert is created", SafetyAlertKillSwitchAlertIsCreated),
+        new("safety alert live readiness blocked alert is created", SafetyAlertLiveReadinessBlockedAlertIsCreated),
+        new("safety alert MT5 disconnected alert is created", SafetyAlertMt5DisconnectedAlertIsCreated),
+        new("safety alert margin critical alert is created", SafetyAlertMarginCriticalAlertIsCreated),
+        new("safety alert repeated rejection alert is created", SafetyAlertRepeatedRejectionAlertIsCreated),
+        new("safety alert deduplication works", SafetyAlertDeduplicationWorks),
+        new("safety alert can be acknowledged", SafetyAlertCanBeAcknowledged),
+        new("safety alert JSON file sink works", SafetyAlertJsonFileSinkWorks),
+        new("operational readiness report can be generated without MT5", OperationalReadinessReportCanBeGeneratedWithoutMt5),
+        new("operational readiness report ready inputs produce Ready", OperationalReadinessReportReadyInputsProduceReady),
+        new("operational readiness report failed live gate produces Not Ready", OperationalReadinessReportFailedLiveGateProducesNotReady),
+        new("operational readiness report critical runtime health produces Not Ready", OperationalReadinessReportCriticalRuntimeHealthProducesNotReady),
+        new("operational readiness report unknown broker data produces Unknown", OperationalReadinessReportUnknownBrokerDataProducesUnknown),
+        new("operational readiness report includes alerts", OperationalReadinessReportIncludesAlerts),
+        new("operational readiness report includes recommended action", OperationalReadinessReportIncludesRecommendedAction),
+        new("rollout PaperOnly blocks live", RolloutPaperOnlyBlocksLive),
+        new("rollout Demo does not allow real live orders", RolloutDemoDoesNotAllowRealLiveOrders),
+        new("rollout TinyLive allows only tiny-live capped risk", RolloutTinyLiveAllowsOnlyTinyLiveCappedRisk),
+        new("rollout scale-up criteria can recommend Advance", RolloutScaleUpCriteriaCanRecommendAdvance),
+        new("rollout poor drawdown recommends RollBack", RolloutPoorDrawdownRecommendsRollback),
+        new("rollout high losing streak recommends RollBack", RolloutHighLosingStreakRecommendsRollback),
+        new("rollout high rejection rate recommends RollBack", RolloutHighRejectionRateRecommendsRollback),
+        new("rollout critical runtime health recommends RollBack", RolloutCriticalRuntimeHealthRecommendsRollback),
+        new("rollout kill switch active recommends RollBack or Block", RolloutKillSwitchActiveRecommendsRollbackOrBlock),
+        new("rollout auto-advance does not happen without explicit user confirmation", RolloutAutoAdvanceDoesNotHappenWithoutExplicitUserConfirmation),
         new("commission is calculated correctly for lot size", CommissionIsCalculatedCorrectlyForLotSize),
         new("commission is deducted from paper trade P/L", CommissionIsDeductedFromPaperTradePnl),
         new("commission is deducted from backtest P/L", CommissionIsDeductedFromBacktestPnl),
@@ -1025,6 +1091,1069 @@ internal static class Program
 
         AssertTrue(result.IsSuccess, "Paper mode should stay explicitly separate from live kill-switch blocking.");
         AssertEqual(0, mt5.OpenTradeCalls, "Paper mode must not send broker orders.");
+    }
+
+    private static async Task FinalLiveReadinessGateBlocksLiveByDefault()
+    {
+        string folder = TestFolder();
+        Directory.CreateDirectory(folder);
+        var config = new BotConfig
+        {
+            WatchFolder = folder,
+            KillSwitchStateFile = Path.Combine(folder, "kill_switch.json")
+        };
+
+        await using var bot = new AutoBotService(
+            Bridge(),
+            config,
+            apiConfig: NewsDisabled());
+
+        var result = await bot.ExecuteTradeWithValidationAsync(BuyRequest()).ConfigureAwait(false);
+
+        AssertFalse(result.IsSuccess, "Final live gate must block default live configuration.");
+        AssertEqual(LiveReadinessCodes.Blocked, result.ErrorCode, "Default live config should use the final gate code.");
+        AssertContains(LiveReadinessCodes.TestStatusNotVerified, result.ErrorMessage);
+        AssertContains(LiveReadinessCodes.StrategyEdgeNotProven, result.ErrorMessage);
+        AssertContains(LiveReadinessCodes.UserLiveEnableRequired, result.ErrorMessage);
+    }
+
+    private static async Task MissingNegativeOrInconclusiveStrategyProofBlocksLive()
+    {
+        foreach (string classification in new[] { "", StrategyEvidenceClassifications.Inconclusive, StrategyEvidenceClassifications.NegativeEdge })
+        {
+            string folder = TestFolder();
+            Directory.CreateDirectory(folder);
+            var config = LiveReadyConfig(folder);
+            config.FinalStrategyProofPackagePath = string.IsNullOrWhiteSpace(classification)
+                ? Path.Combine(folder, "missing-proof.md")
+                : WriteStrategyProofPackage(folder, classification, DemoPaperReconciliationVerdicts.Matches);
+            config.StrategyEdgeVerdictReportPath = WriteStrategyEdgeReport(folder, StrategyEdgeVerdicts.Pass);
+
+            await using var bot = new AutoBotService(
+                Bridge(),
+                config,
+                apiConfig: NewsDisabled());
+
+            var result = await bot.ExecuteTradeWithValidationAsync(BuyRequest()).ConfigureAwait(false);
+
+            AssertFalse(result.IsSuccess, $"Strategy proof classification '{classification}' must block live trading.");
+            AssertEqual(LiveReadinessCodes.Blocked, result.ErrorCode, "Strategy proof failures should use the final gate code.");
+            AssertContains(LiveReadinessCodes.StrategyEdgeNotProven, result.ErrorMessage);
+        }
+    }
+
+    private static async Task FinalLiveReadinessGateReportsKillSwitchActive()
+    {
+        string folder = TestFolder();
+        Directory.CreateDirectory(folder);
+        WriteKillSwitchFile(folder, "P4 gate kill switch fixture");
+        var config = LiveReadyConfig(folder);
+
+        await using var bot = new AutoBotService(
+            Bridge(),
+            config,
+            apiConfig: NewsDisabled());
+
+        var result = await bot.ExecuteTradeWithValidationAsync(BuyRequest()).ConfigureAwait(false);
+
+        AssertFalse(result.IsSuccess, "Active kill switch must block through the final live gate when enabled.");
+        AssertEqual(LiveReadinessCodes.Blocked, result.ErrorCode, "Final gate should own enabled live-readiness failures.");
+        AssertContains(LiveReadinessCodes.KillSwitchActive, result.ErrorMessage);
+    }
+
+    private static async Task MissingUserLiveEnablementBlocksLive()
+    {
+        string folder = TestFolder();
+        Directory.CreateDirectory(folder);
+        var config = LiveReadyConfig(folder);
+        config.UserLiveTradingEnabled = false;
+
+        await using var bot = new AutoBotService(
+            Bridge(),
+            config,
+            apiConfig: NewsDisabled());
+
+        var result = await bot.ExecuteTradeWithValidationAsync(BuyRequest()).ConfigureAwait(false);
+
+        AssertFalse(result.IsSuccess, "Live trading must require explicit user enablement.");
+        AssertEqual(LiveReadinessCodes.Blocked, result.ErrorCode, "Missing user enablement should use the final gate code.");
+        AssertContains(LiveReadinessCodes.UserLiveEnableRequired, result.ErrorMessage);
+    }
+
+    private static async Task BrokerReadinessFailureBlocksLive()
+    {
+        string folder = TestFolder();
+        Directory.CreateDirectory(folder);
+        var config = LiveReadyConfig(folder);
+        config.BrokerEaReadinessStatus = "Failed";
+
+        await using var bot = new AutoBotService(
+            Bridge(),
+            config,
+            apiConfig: NewsDisabled());
+
+        var result = await bot.ExecuteTradeWithValidationAsync(BuyRequest()).ConfigureAwait(false);
+
+        AssertFalse(result.IsSuccess, "Explicit broker/EA readiness failure must block live trading.");
+        AssertEqual(LiveReadinessCodes.Blocked, result.ErrorCode, "Broker readiness failures should use the final gate code.");
+        AssertContains(LiveReadinessCodes.BrokerReadinessFailed, result.ErrorMessage);
+    }
+
+    private static async Task AllFinalLiveReadinessGatesPassingAllowsValidationToContinue()
+    {
+        string folder = TestFolder();
+        Directory.CreateDirectory(folder);
+        var config = LiveReadyConfig(folder);
+
+        await using var mt5 = new FakeMt5Server(
+            Account(),
+            Symbol(spreadPoints: 10),
+            marginEstimate: MarginEstimate(100),
+            orderCheckResult: OrderCheckPass());
+        await using var bot = new AutoBotService(
+            Bridge(mt5.Port),
+            config,
+            apiConfig: NewsDisabled());
+
+        var result = await bot.ExecuteTradeWithValidationAsync(BuyRequest()).ConfigureAwait(false);
+
+        AssertTrue(result.IsSuccess, "When all final live gates pass, existing live validation should continue.");
+        AssertEqual(1, mt5.OpenTradeCalls, "Passing final gate should allow the normal approved execution path.");
+    }
+
+    private static async Task PaperModeIsSeparateFromFinalLiveReadinessGate()
+    {
+        string folder = TestFolder();
+        Directory.CreateDirectory(folder);
+        var config = new BotConfig
+        {
+            WatchFolder = folder,
+            KillSwitchStateFile = Path.Combine(folder, "kill_switch.json"),
+            PaperTrading = true
+        };
+
+        await using var mt5 = new FakeMt5Server(Account(), Symbol(spreadPoints: 10));
+        await using var bot = new AutoBotService(
+            Bridge(mt5.Port),
+            config,
+            apiConfig: NewsDisabled());
+
+        var result = await bot.ExecuteTradeWithValidationAsync(BuyRequest()).ConfigureAwait(false);
+
+        AssertTrue(result.IsSuccess, "Paper mode should not be blocked by the final live gate by default.");
+        AssertEqual(0, mt5.OpenTradeCalls, "Paper mode must remain separate from broker live execution.");
+    }
+
+    private static Task DemoForwardTestSufficientMetricsPass()
+    {
+        var result = new DemoForwardTestGate().Evaluate(PassingDemoForwardTestConfig());
+
+        AssertTrue(result.Passed, "Sufficient demo/paper metrics should pass the forward-test gate.");
+        AssertEqual(DemoForwardTestVerdicts.Pass, result.Verdict, "Passing metrics should return Pass.");
+        AssertEqual(0, result.FailedCriteria.Count, "Passing metrics should have no failed criteria.");
+        AssertClose(35, result.Metrics.DurationDays, 0.0001, "Duration should be included in used metrics.");
+        AssertClose(0.10, result.Metrics.AverageSpreadDriftUsd ?? 0, 0.0001,
+            "Spread drift should be calculated from backtest comparison data.");
+        return Task.CompletedTask;
+    }
+
+    private static Task DemoForwardTestTooFewTradesIsInconclusive()
+    {
+        var config = PassingDemoForwardTestConfig();
+        config.Metrics.CompletedTrades = 40;
+        config.Metrics.TotalTrades = 42;
+
+        var result = new DemoForwardTestGate().Evaluate(config);
+
+        AssertFalse(result.Passed, "Too few demo/paper trades must not pass.");
+        AssertEqual(DemoForwardTestVerdicts.Inconclusive, result.Verdict,
+            "Too few trades should be inconclusive rather than live-ready.");
+        AssertContains(DemoForwardTestCodes.MinimumTrades, string.Join(" ", result.FailedCriteria));
+        return Task.CompletedTask;
+    }
+
+    private static Task DemoForwardTestTooShortDurationIsInconclusive()
+    {
+        var config = PassingDemoForwardTestConfig();
+        config.Metrics.DurationDays = 5;
+
+        var result = new DemoForwardTestGate().Evaluate(config);
+
+        AssertFalse(result.Passed, "Too short demo/paper duration must not pass.");
+        AssertEqual(DemoForwardTestVerdicts.Inconclusive, result.Verdict,
+            "Too short duration should be inconclusive rather than live-ready.");
+        AssertContains(DemoForwardTestCodes.MinimumDuration, string.Join(" ", result.FailedCriteria));
+        return Task.CompletedTask;
+    }
+
+    private static Task DemoForwardTestPoorProfitFactorFails()
+    {
+        var config = PassingDemoForwardTestConfig();
+        config.Metrics.ProfitFactor = 0.95;
+
+        var result = new DemoForwardTestGate().Evaluate(config);
+
+        AssertFalse(result.Passed, "Poor demo/paper profit factor must fail.");
+        AssertEqual(DemoForwardTestVerdicts.Fail, result.Verdict, "Poor profit factor should return Fail.");
+        AssertContains(DemoForwardTestCodes.ProfitFactor, string.Join(" ", result.FailedCriteria));
+        return Task.CompletedTask;
+    }
+
+    private static Task DemoForwardTestExcessiveDrawdownFails()
+    {
+        var config = PassingDemoForwardTestConfig();
+        config.Metrics.MaximumDrawdownUsd = 650;
+
+        var result = new DemoForwardTestGate().Evaluate(config);
+
+        AssertFalse(result.Passed, "Excessive demo/paper drawdown must fail.");
+        AssertEqual(DemoForwardTestVerdicts.Fail, result.Verdict, "Excessive drawdown should return Fail.");
+        AssertContains(DemoForwardTestCodes.Drawdown, string.Join(" ", result.FailedCriteria));
+        return Task.CompletedTask;
+    }
+
+    private static Task DemoForwardTestExcessiveLosingStreakFails()
+    {
+        var config = PassingDemoForwardTestConfig();
+        config.Metrics.WorstLosingStreak = 6;
+
+        var result = new DemoForwardTestGate().Evaluate(config);
+
+        AssertFalse(result.Passed, "Excessive demo/paper losing streak must fail.");
+        AssertEqual(DemoForwardTestVerdicts.Fail, result.Verdict, "Excessive losing streak should return Fail.");
+        AssertContains(DemoForwardTestCodes.LosingStreak, string.Join(" ", result.FailedCriteria));
+        return Task.CompletedTask;
+    }
+
+    private static Task DemoForwardTestExcessiveRejectionRateFails()
+    {
+        var config = PassingDemoForwardTestConfig();
+        config.Metrics.RejectionRatePercent = 9;
+
+        var result = new DemoForwardTestGate().Evaluate(config);
+
+        AssertFalse(result.Passed, "Excessive demo/paper rejection rate must fail.");
+        AssertEqual(DemoForwardTestVerdicts.Fail, result.Verdict, "Excessive rejection rate should return Fail.");
+        AssertContains(DemoForwardTestCodes.RejectionRate, string.Join(" ", result.FailedCriteria));
+        return Task.CompletedTask;
+    }
+
+    private static Task DemoForwardTestExcessiveSpreadAndSlippageDriftFails()
+    {
+        var config = PassingDemoForwardTestConfig();
+        config.Metrics.AverageSpreadCostUsd = 4.00;
+        config.Metrics.AverageSlippageCostUsd = 3.00;
+
+        var result = new DemoForwardTestGate().Evaluate(config);
+
+        AssertFalse(result.Passed, "Excessive demo/paper execution drift must fail.");
+        AssertEqual(DemoForwardTestVerdicts.Fail, result.Verdict, "Excessive drift should return Fail.");
+        AssertContains(DemoForwardTestCodes.SpreadDrift, string.Join(" ", result.FailedCriteria));
+        AssertContains(DemoForwardTestCodes.SlippageDrift, string.Join(" ", result.FailedCriteria));
+        return Task.CompletedTask;
+    }
+
+    private static async Task RequiredDemoForwardGateBlocksLiveReadiness()
+    {
+        string folder = TestFolder();
+        Directory.CreateDirectory(folder);
+        var config = LiveReadyConfig(folder);
+        config.DemoForwardTest.Metrics.CompletedTrades = 10;
+        config.DemoForwardTest.Metrics.TotalTrades = 10;
+
+        await using var bot = new AutoBotService(
+            Bridge(),
+            config,
+            apiConfig: NewsDisabled());
+
+        var result = await bot.ExecuteTradeWithValidationAsync(BuyRequest()).ConfigureAwait(false);
+
+        AssertFalse(result.IsSuccess, "Required demo forward-test gate must block live readiness when not passed.");
+        AssertEqual(LiveReadinessCodes.Blocked, result.ErrorCode, "Live readiness should keep the P4 gate error code.");
+        AssertContains(LiveReadinessCodes.DemoForwardTestNotPassed, result.ErrorMessage);
+    }
+
+    private static async Task PaperModeIsSeparateFromDemoForwardGate()
+    {
+        string folder = TestFolder();
+        Directory.CreateDirectory(folder);
+        var config = LiveReadyConfig(folder);
+        config.PaperTrading = true;
+        config.DemoForwardTest.Metrics.CompletedTrades = 0;
+        config.DemoForwardTest.Metrics.TotalTrades = 0;
+
+        await using var mt5 = new FakeMt5Server(Account(), Symbol(spreadPoints: 10));
+        await using var bot = new AutoBotService(
+            Bridge(mt5.Port),
+            config,
+            apiConfig: NewsDisabled());
+
+        var result = await bot.ExecuteTradeWithValidationAsync(BuyRequest()).ConfigureAwait(false);
+
+        AssertTrue(result.IsSuccess, "Paper mode should stay separate from the demo forward-test live gate.");
+        AssertEqual(0, mt5.OpenTradeCalls, "Paper mode must not send a broker order.");
+    }
+
+    private static async Task BrokerDeploymentChecklistFullyReadyPasses()
+    {
+        await using var mt5 = new FakeMt5Server(
+            Account(),
+            Symbol(spreadPoints: 10),
+            marginEstimate: MarginEstimate(100),
+            orderCheckResult: OrderCheckPass());
+
+        var result = await BrokerChecklist(Bridge(mt5.Port)).CheckAsync(
+            BuyRequest(),
+            BrokerReadyConfig())
+            .ConfigureAwait(false);
+
+        AssertTrue(result.Passed, "Fully ready broker/EA environment should pass.");
+        AssertEqual(BrokerDeploymentVerdicts.Pass, result.Verdict, "Fully ready broker should return Pass.");
+        AssertTrue(result.CheckedItems.Count > 0, "Checklist should return checked items.");
+        AssertEqual("3.00", result.EaVersion, "EA version should be captured when available.");
+    }
+
+    private static async Task BrokerDeploymentChecklistMt5DisconnectedFails()
+    {
+        var result = await BrokerChecklist(Bridge()).CheckAsync(
+            BuyRequest(),
+            BrokerReadyConfig())
+            .ConfigureAwait(false);
+
+        AssertFalse(result.Passed, "Disconnected MT5 bridge should fail broker readiness.");
+        AssertEqual(BrokerDeploymentVerdicts.Fail, result.Verdict, "Disconnected MT5 should return Fail.");
+        AssertContains(BrokerDeploymentCodes.Mt5Disconnected, string.Join(" ", result.FailedCriteria));
+    }
+
+    private static async Task BrokerDeploymentChecklistEaNotRespondingFails()
+    {
+        await using var mt5 = new FakeMt5Server(
+            Account(),
+            Symbol(spreadPoints: 10),
+            marginEstimate: MarginEstimate(100),
+            orderCheckResult: OrderCheckPass(),
+            eaHealthAvailable: false);
+
+        var result = await BrokerChecklist(Bridge(mt5.Port)).CheckAsync(
+            BuyRequest(),
+            BrokerReadyConfig())
+            .ConfigureAwait(false);
+
+        AssertFalse(result.Passed, "Missing EA health response should fail broker readiness.");
+        AssertContains(BrokerDeploymentCodes.EaNotResponding, string.Join(" ", result.FailedCriteria));
+    }
+
+    private static async Task BrokerDeploymentChecklistMissingSymbolMetadataFails()
+    {
+        await using var mt5 = new FakeMt5Server(
+            Account(),
+            symbol: null,
+            marginEstimate: MarginEstimate(100),
+            orderCheckResult: OrderCheckPass());
+
+        var result = await BrokerChecklist(Bridge(mt5.Port)).CheckAsync(
+            BuyRequest(),
+            BrokerReadyConfig())
+            .ConfigureAwait(false);
+
+        AssertFalse(result.Passed, "Missing symbol metadata should fail broker readiness.");
+        AssertContains(BrokerDeploymentCodes.SymbolMetadataUnavailable, string.Join(" ", result.FailedCriteria));
+    }
+
+    private static async Task BrokerDeploymentChecklistMissingMarginEstimateFails()
+    {
+        await using var mt5 = new FakeMt5Server(
+            Account(),
+            Symbol(spreadPoints: 10),
+            marginEstimateAvailable: false,
+            orderCheckResult: OrderCheckPass());
+
+        var result = await BrokerChecklist(Bridge(mt5.Port)).CheckAsync(
+            BuyRequest(),
+            BrokerReadyConfig())
+            .ConfigureAwait(false);
+
+        AssertFalse(result.Passed, "Missing margin estimate should fail broker readiness.");
+        AssertContains(BrokerDeploymentCodes.MarginEstimateUnavailable, string.Join(" ", result.FailedCriteria));
+    }
+
+    private static async Task BrokerDeploymentChecklistMissingOrderCheckFails()
+    {
+        await using var mt5 = new FakeMt5Server(
+            Account(),
+            Symbol(spreadPoints: 10),
+            marginEstimate: MarginEstimate(100),
+            orderCheckAvailable: false);
+
+        var result = await BrokerChecklist(Bridge(mt5.Port)).CheckAsync(
+            BuyRequest(),
+            BrokerReadyConfig())
+            .ConfigureAwait(false);
+
+        AssertFalse(result.Passed, "Unavailable OrderCheck should fail broker readiness.");
+        AssertContains(BrokerDeploymentCodes.OrderCheckUnavailable, string.Join(" ", result.FailedCriteria));
+    }
+
+    private static async Task BrokerDeploymentChecklistNewsUnavailableFailsWhenRequired()
+    {
+        await using var mt5 = new FakeMt5Server(
+            Account(),
+            Symbol(spreadPoints: 10),
+            marginEstimate: MarginEstimate(100),
+            orderCheckResult: OrderCheckPass());
+
+        var result = await BrokerChecklist(
+                Bridge(mt5.Port),
+                new UnavailableNewsCalendar(),
+                NewsRequired())
+            .CheckAsync(BuyRequest(), BrokerReadyConfig())
+            .ConfigureAwait(false);
+
+        AssertFalse(result.Passed, "Unavailable configured news provider should fail broker readiness.");
+        AssertContains(BrokerDeploymentCodes.NewsUnavailable, string.Join(" ", result.FailedCriteria));
+    }
+
+    private static async Task BrokerDeploymentChecklistExcessiveLatencyFails()
+    {
+        await using var mt5 = new FakeMt5Server(
+            Account(),
+            Symbol(spreadPoints: 10),
+            marginEstimate: MarginEstimate(100),
+            orderCheckResult: OrderCheckPass(),
+            responseDelayMs: 50);
+        var config = BrokerReadyConfig();
+        config.BrokerDeployment.MaxLatencyMs = 1;
+
+        var result = await BrokerChecklist(Bridge(mt5.Port)).CheckAsync(
+            BuyRequest(),
+            config)
+            .ConfigureAwait(false);
+
+        AssertFalse(result.Passed, "Latency above configured threshold should fail broker readiness.");
+        AssertContains(BrokerDeploymentCodes.LatencyTooHigh, string.Join(" ", result.FailedCriteria));
+    }
+
+    private static async Task RequiredBrokerReadinessBlocksLiveReadiness()
+    {
+        string folder = TestFolder();
+        Directory.CreateDirectory(folder);
+        var config = LiveReadyConfig(folder);
+
+        await using var bot = new AutoBotService(
+            Bridge(),
+            config,
+            apiConfig: NewsDisabled());
+
+        var result = await bot.ExecuteTradeWithValidationAsync(BuyRequest()).ConfigureAwait(false);
+
+        AssertFalse(result.IsSuccess, "Required broker readiness must block live when broker/EA checks fail.");
+        AssertEqual(LiveReadinessCodes.Blocked, result.ErrorCode, "Live readiness should keep the P4 gate error code.");
+        AssertContains(LiveReadinessCodes.BrokerReadinessFailed, result.ErrorMessage);
+    }
+
+    private static async Task PaperModeIsSeparateFromBrokerReadinessGate()
+    {
+        string folder = TestFolder();
+        Directory.CreateDirectory(folder);
+        var config = LiveReadyConfig(folder);
+        config.PaperTrading = true;
+
+        await using var mt5 = new FakeMt5Server(Account(), Symbol(spreadPoints: 10));
+        await using var bot = new AutoBotService(
+            Bridge(mt5.Port),
+            config,
+            apiConfig: NewsDisabled());
+
+        var result = await bot.ExecuteTradeWithValidationAsync(BuyRequest()).ConfigureAwait(false);
+
+        AssertTrue(result.IsSuccess, "Paper mode should stay separate from broker deployment live readiness.");
+    }
+
+    private static async Task RuntimeHealthHealthySnapshotReturnsHealthy()
+    {
+        await using var mt5 = HealthyRuntimeMt5();
+        var snapshot = await RuntimeMonitor(Bridge(mt5.Port)).CaptureAsync(HealthyRuntimeInput())
+            .ConfigureAwait(false);
+
+        AssertEqual(RuntimeHealthStatuses.Healthy, snapshot.OverallStatus,
+            "Healthy dependencies and metrics should return Healthy.");
+        AssertFalse(snapshot.HasCriticalIssues, "Healthy snapshot should not expose critical issues.");
+        AssertTrue(snapshot.TimestampUtc > DateTime.MinValue, "Snapshot should include a UTC timestamp.");
+        AssertTrue(snapshot.Metrics.Mt5Connected == true, "MT5 connection metric should be true.");
+    }
+
+    private static async Task RuntimeHealthMt5DisconnectedReturnsCritical()
+    {
+        var snapshot = await RuntimeMonitor(Bridge()).CaptureAsync(HealthyRuntimeInput())
+            .ConfigureAwait(false);
+
+        AssertEqual(RuntimeHealthStatuses.Critical, snapshot.OverallStatus,
+            "Disconnected MT5 should be critical.");
+        AssertContains(RuntimeHealthCodes.Mt5Disconnected, string.Join(" ", snapshot.CriticalIssues));
+        AssertTrue(snapshot.HasCriticalIssues, "Critical MT5 disconnect should set the critical flag.");
+    }
+
+    private static async Task RuntimeHealthEaHeartbeatFailureReturnsCritical()
+    {
+        await using var mt5 = HealthyRuntimeMt5(eaHealthAvailable: false);
+        var snapshot = await RuntimeMonitor(Bridge(mt5.Port)).CaptureAsync(HealthyRuntimeInput())
+            .ConfigureAwait(false);
+
+        AssertEqual(RuntimeHealthStatuses.Critical, snapshot.OverallStatus,
+            "EA heartbeat failure should be critical.");
+        AssertContains(RuntimeHealthCodes.EaHeartbeatFailed, string.Join(" ", snapshot.CriticalIssues));
+    }
+
+    private static async Task RuntimeHealthExcessiveLatencyReturnsWarningOrCritical()
+    {
+        await using var warningMt5 = HealthyRuntimeMt5(responseDelayMs: 30);
+        var warningInput = HealthyRuntimeInput();
+        warningInput.Config.RuntimeHealth.MaxLatencyMs = 1;
+        warningInput.Config.RuntimeHealth.CriticalLatencyMs = 1_000;
+        var warning = await RuntimeMonitor(Bridge(warningMt5.Port)).CaptureAsync(warningInput)
+            .ConfigureAwait(false);
+
+        AssertEqual(RuntimeHealthStatuses.Warning, warning.OverallStatus,
+            "Latency above warning threshold should return Warning.");
+        AssertContains(RuntimeHealthCodes.LatencyHigh, string.Join(" ", warning.Warnings));
+
+        await using var criticalMt5 = HealthyRuntimeMt5(responseDelayMs: 30);
+        var criticalInput = HealthyRuntimeInput();
+        criticalInput.Config.RuntimeHealth.MaxLatencyMs = 1;
+        criticalInput.Config.RuntimeHealth.CriticalLatencyMs = 1;
+        var critical = await RuntimeMonitor(Bridge(criticalMt5.Port)).CaptureAsync(criticalInput)
+            .ConfigureAwait(false);
+
+        AssertEqual(RuntimeHealthStatuses.Critical, critical.OverallStatus,
+            "Latency above critical threshold should return Critical.");
+        AssertContains(RuntimeHealthCodes.LatencyCritical, string.Join(" ", critical.CriticalIssues));
+    }
+
+    private static async Task RuntimeHealthSpreadAndSlippageDriftReturnsWarning()
+    {
+        await using var mt5 = HealthyRuntimeMt5();
+        var input = HealthyRuntimeInput() with
+        {
+            SpreadDriftPips = 3.0,
+            SlippageDriftPips = 3.5
+        };
+
+        var snapshot = await RuntimeMonitor(Bridge(mt5.Port)).CaptureAsync(input)
+            .ConfigureAwait(false);
+
+        AssertEqual(RuntimeHealthStatuses.Warning, snapshot.OverallStatus,
+            "High spread/slippage drift should return Warning.");
+        AssertContains(RuntimeHealthCodes.SpreadDriftHigh, string.Join(" ", snapshot.Warnings));
+        AssertContains(RuntimeHealthCodes.SlippageDriftHigh, string.Join(" ", snapshot.Warnings));
+    }
+
+    private static async Task RuntimeHealthHighRejectionRateReturnsWarningOrCritical()
+    {
+        await using var warningMt5 = HealthyRuntimeMt5();
+        var warning = await RuntimeMonitor(Bridge(warningMt5.Port)).CaptureAsync(
+                HealthyRuntimeInput() with { OrderRejectionRatePercent = 15 })
+            .ConfigureAwait(false);
+
+        AssertEqual(RuntimeHealthStatuses.Warning, warning.OverallStatus,
+            "High rejection rate should return Warning.");
+        AssertContains(RuntimeHealthCodes.OrderRejectionRateHigh, string.Join(" ", warning.Warnings));
+
+        await using var criticalMt5 = HealthyRuntimeMt5();
+        var critical = await RuntimeMonitor(Bridge(criticalMt5.Port)).CaptureAsync(
+                HealthyRuntimeInput() with { OrderRejectionRatePercent = 30 })
+            .ConfigureAwait(false);
+
+        AssertEqual(RuntimeHealthStatuses.Critical, critical.OverallStatus,
+            "Critical rejection rate should return Critical.");
+        AssertContains(RuntimeHealthCodes.OrderRejectionRateCritical, string.Join(" ", critical.CriticalIssues));
+    }
+
+    private static async Task RuntimeHealthCriticalDrawdownReturnsCritical()
+    {
+        await using var mt5 = HealthyRuntimeMt5();
+        var snapshot = await RuntimeMonitor(Bridge(mt5.Port)).CaptureAsync(
+                HealthyRuntimeInput() with { DrawdownPercent = 12 })
+            .ConfigureAwait(false);
+
+        AssertEqual(RuntimeHealthStatuses.Critical, snapshot.OverallStatus,
+            "Critical drawdown should return Critical.");
+        AssertContains(RuntimeHealthCodes.DrawdownCritical, string.Join(" ", snapshot.CriticalIssues));
+    }
+
+    private static async Task RuntimeHealthKillSwitchActiveReturnsCritical()
+    {
+        await using var mt5 = HealthyRuntimeMt5();
+        var snapshot = await RuntimeMonitor(Bridge(mt5.Port)).CaptureAsync(
+                HealthyRuntimeInput() with { KillSwitchActive = true })
+            .ConfigureAwait(false);
+
+        AssertEqual(RuntimeHealthStatuses.Critical, snapshot.OverallStatus,
+            "Active kill switch should return Critical.");
+        AssertContains(RuntimeHealthCodes.KillSwitchActive, string.Join(" ", snapshot.CriticalIssues));
+    }
+
+    private static async Task RuntimeHealthLowMarginLevelReturnsCritical()
+    {
+        await using var mt5 = new FakeMt5Server(
+            Account(margin: 1_000, marginLevel: 150),
+            Symbol(spreadPoints: 10),
+            marginEstimate: MarginEstimate(100),
+            orderCheckResult: OrderCheckPass());
+        var snapshot = await RuntimeMonitor(Bridge(mt5.Port)).CaptureAsync(HealthyRuntimeInput())
+            .ConfigureAwait(false);
+
+        AssertEqual(RuntimeHealthStatuses.Critical, snapshot.OverallStatus,
+            "Low margin level should return Critical.");
+        AssertContains(RuntimeHealthCodes.MarginLevelCritical, string.Join(" ", snapshot.CriticalIssues));
+    }
+
+    private static async Task RuntimeHealthMissingDataReturnsWarningClearly()
+    {
+        await using var mt5 = new FakeMt5Server(
+            account: null,
+            symbol: null,
+            positionsAvailable: false,
+            marginEstimate: MarginEstimate(100),
+            orderCheckResult: OrderCheckPass());
+        var snapshot = await RuntimeMonitor(Bridge(mt5.Port)).CaptureAsync(HealthyRuntimeInput())
+            .ConfigureAwait(false);
+
+        AssertEqual(RuntimeHealthStatuses.Warning, snapshot.OverallStatus,
+            "Missing non-connection runtime data should return Warning clearly.");
+        AssertContains(RuntimeHealthCodes.MissingAccountData, string.Join(" ", snapshot.Warnings));
+        AssertContains(RuntimeHealthCodes.MissingSymbolData, string.Join(" ", snapshot.Warnings));
+        AssertContains(RuntimeHealthCodes.MissingPositionData, string.Join(" ", snapshot.Warnings));
+    }
+
+    private static async Task SafetyAlertKillSwitchAlertIsCreated()
+    {
+        var service = CreateAlertService();
+
+        var alert = await service.AlertKillSwitchTriggeredAsync("Emergency drawdown kill switch triggered.")
+            .ConfigureAwait(false);
+
+        AssertNotNull(alert, "Kill-switch alert should be created.");
+        AssertEqual(SafetyAlertSeverities.Critical, alert!.Severity, "Kill-switch alert should be critical.");
+        AssertEqual(SafetyAlertCategories.KillSwitch, alert.Category, "Kill-switch alert should use safety category.");
+        AssertEqual(SafetyAlertCodes.KillSwitchActive, alert.RelatedCode, "Kill-switch alert should carry code.");
+        AssertFalse(alert.Acknowledged, "New alert should start unacknowledged.");
+    }
+
+    private static async Task SafetyAlertLiveReadinessBlockedAlertIsCreated()
+    {
+        var service = CreateAlertService();
+
+        var alert = await service.AlertLiveReadinessBlockedAsync(
+                "Final live readiness gate blocked live trading.",
+                [LiveReadinessCodes.UserLiveEnableRequired])
+            .ConfigureAwait(false);
+
+        AssertNotNull(alert, "Live-readiness blocked alert should be created.");
+        AssertEqual(SafetyAlertSeverities.Critical, alert!.Severity, "Live-readiness blocked alert should be critical.");
+        AssertEqual(SafetyAlertCategories.LiveReadiness, alert.Category, "Live-readiness category should be used.");
+        AssertEqual(SafetyAlertCodes.LiveReadinessGateBlocked, alert.RelatedCode, "Live-readiness code should be used.");
+        AssertContains(LiveReadinessCodes.UserLiveEnableRequired, alert.Message);
+    }
+
+    private static async Task SafetyAlertMt5DisconnectedAlertIsCreated()
+    {
+        var service = CreateAlertService();
+        var snapshot = RuntimeSnapshot(
+            criticalIssues: [RuntimeHealthCodes.Mt5Disconnected],
+            warnings: []);
+
+        var alerts = await service.RaiseRuntimeHealthAlertsAsync(snapshot).ConfigureAwait(false);
+
+        AssertEqual(1, alerts.Count, "MT5 disconnect should create one alert.");
+        AssertEqual(SafetyAlertSeverities.Critical, alerts[0].Severity, "MT5 disconnect alert should be critical.");
+        AssertEqual(SafetyAlertCodes.Mt5Disconnected, alerts[0].RelatedCode, "MT5 disconnect code should be mapped.");
+    }
+
+    private static async Task SafetyAlertMarginCriticalAlertIsCreated()
+    {
+        var service = CreateAlertService();
+        var snapshot = RuntimeSnapshot(
+            criticalIssues: [RuntimeHealthCodes.MarginLevelCritical],
+            warnings: [],
+            metrics: new RuntimeHealthMetricValues { MarginLevelPercent = 120 });
+
+        var alerts = await service.RaiseRuntimeHealthAlertsAsync(snapshot).ConfigureAwait(false);
+
+        AssertEqual(1, alerts.Count, "Critical margin level should create one alert.");
+        AssertEqual(SafetyAlertCategories.Margin, alerts[0].Category, "Margin alert category should be used.");
+        AssertEqual(SafetyAlertCodes.MarginLevelCritical, alerts[0].RelatedCode, "Margin alert code should be used.");
+    }
+
+    private static async Task SafetyAlertRepeatedRejectionAlertIsCreated()
+    {
+        var service = CreateAlertService(new SafetyAlertingConfig
+        {
+            Enabled = true,
+            DedupCooldownSeconds = 300,
+            RepeatedOrderRejectionThreshold = 2
+        });
+
+        var ignored = await service.AlertRepeatedOrderRejectionAsync(
+                "BROKER_REQUOTE",
+                "Broker rejected recent orders.",
+                recentRejectionCount: 1)
+            .ConfigureAwait(false);
+        var alert = await service.AlertRepeatedOrderRejectionAsync(
+                "BROKER_REQUOTE",
+                "Broker rejected recent orders.",
+                recentRejectionCount: 2)
+            .ConfigureAwait(false);
+
+        AssertTrue(ignored == null, "Below-threshold order rejections should not alert.");
+        AssertNotNull(alert, "Repeated order rejection should create an alert once threshold is reached.");
+        AssertEqual(SafetyAlertCategories.OrderRejection, alert!.Category, "Order rejection category should be used.");
+        AssertEqual("BROKER_REQUOTE", alert.RelatedCode, "Broker rejection code should be retained.");
+    }
+
+    private static async Task SafetyAlertDeduplicationWorks()
+    {
+        var service = CreateAlertService(new SafetyAlertingConfig
+        {
+            Enabled = true,
+            DedupCooldownSeconds = 300
+        });
+
+        var first = await service.AlertKillSwitchTriggeredAsync("Kill switch triggered.")
+            .ConfigureAwait(false);
+        var second = await service.AlertKillSwitchTriggeredAsync("Kill switch still active.")
+            .ConfigureAwait(false);
+        var alerts = await service.GetAlertsAsync().ConfigureAwait(false);
+
+        AssertNotNull(first, "First alert should be created.");
+        AssertNotNull(second, "Second deduped alert should be returned.");
+        AssertEqual(first!.AlertId, second!.AlertId, "Deduped alert should keep the same id.");
+        AssertEqual(1, alerts.Count, "Deduplication should keep one stored alert.");
+        AssertEqual(2, alerts[0].OccurrenceCount, "Deduplication should increment occurrence count.");
+        AssertContains("still active", alerts[0].Message);
+    }
+
+    private static async Task SafetyAlertCanBeAcknowledged()
+    {
+        var service = CreateAlertService();
+        var alert = await service.AlertKillSwitchTriggeredAsync("Kill switch active.")
+            .ConfigureAwait(false);
+
+        bool acknowledged = await service.AcknowledgeAsync(alert!.AlertId).ConfigureAwait(false);
+        var alerts = await service.GetAlertsAsync().ConfigureAwait(false);
+
+        AssertTrue(acknowledged, "Acknowledging an existing alert should succeed.");
+        AssertTrue(alerts[0].Acknowledged, "Acknowledged alert should be persisted.");
+    }
+
+    private static async Task SafetyAlertJsonFileSinkWorks()
+    {
+        string folder = TestFolder();
+        string path = Path.Combine(folder, "alerts.json");
+        var service = CreateAlertService(
+            new SafetyAlertingConfig { Enabled = true, DedupCooldownSeconds = 300 },
+            new JsonFileAlertSink(path));
+
+        var alert = await service.AlertLiveReadinessBlockedAsync("Live readiness blocked.")
+            .ConfigureAwait(false);
+        var persisted = await new JsonFileAlertSink(path).LoadAsync().ConfigureAwait(false);
+
+        AssertNotNull(alert, "File sink alert should be created.");
+        AssertTrue(File.Exists(path), "JSON alert file should exist.");
+        AssertEqual(1, persisted.Count, "JSON alert sink should persist one alert.");
+        AssertEqual(alert!.AlertId, persisted[0].AlertId, "Persisted alert id should match.");
+        AssertEqual(SafetyAlertCodes.LiveReadinessGateBlocked, persisted[0].RelatedCode,
+            "Persisted alert should keep related code.");
+    }
+
+    private static async Task OperationalReadinessReportCanBeGeneratedWithoutMt5()
+    {
+        string folder = TestFolder();
+        var result = await new OperationalReadinessReportService().GenerateAsync(
+                new OperationalReadinessReportInput
+                {
+                    OutputDirectory = folder,
+                    Config = Config(),
+                    KillSwitch = new KillSwitchState { KillSwitchActive = false }
+                })
+            .ConfigureAwait(false);
+
+        AssertEqual(OperationalReadinessReportService.ReportFileName, Path.GetFileName(result.ReportPath),
+            "Operational report should use the required filename.");
+        AssertTrue(File.Exists(result.ReportPath), "Operational report should be written without MT5.");
+        AssertEqual(OperationalReadinessStatuses.Unknown, result.OverallReadiness,
+            "Missing live data should be marked Unknown, not ready.");
+        AssertContains("Runtime health snapshot was not supplied", result.Markdown);
+        AssertContains("BROKER_DEPLOYMENT_UNKNOWN", string.Join(" ", result.Warnings));
+    }
+
+    private static async Task OperationalReadinessReportReadyInputsProduceReady()
+    {
+        string folder = TestFolder();
+        var result = await GenerateOperationalReportAsync(folder, ReadyOperationalInput(folder))
+            .ConfigureAwait(false);
+
+        AssertEqual(OperationalReadinessStatuses.Ready, result.OverallReadiness,
+            "Fully passing supplied inputs should produce Ready.");
+        AssertContains("Overall readiness: Ready", result.Markdown);
+        AssertContains("Final Live Readiness Gate", result.Markdown);
+        AssertContains("Demo Forward-Test Gate", result.Markdown);
+        AssertContains("Broker / EA Deployment Checklist", result.Markdown);
+        AssertContains("Strategy evidence classification", result.Markdown);
+    }
+
+    private static async Task OperationalReadinessReportFailedLiveGateProducesNotReady()
+    {
+        string folder = TestFolder();
+        var input = ReadyOperationalInput(folder) with
+        {
+            LiveReadiness = new LiveReadinessResult
+            {
+                IsAllowed = false,
+                FailedCriteria = [LiveReadinessCodes.UserLiveEnableRequired],
+                EvidenceClassification = StrategyEvidenceClassifications.ProvenPositiveEdge,
+                StrategyEdgeVerdict = StrategyEdgeVerdicts.Pass,
+                DemoReconciliationVerdict = DemoPaperReconciliationVerdicts.Matches
+            }
+        };
+
+        var result = await GenerateOperationalReportAsync(folder, input).ConfigureAwait(false);
+
+        AssertEqual(OperationalReadinessStatuses.NotReady, result.OverallReadiness,
+            "Failed final live gate should produce Not Ready.");
+        AssertContains(LiveReadinessCodes.UserLiveEnableRequired, result.Markdown);
+        AssertContains("Do not enable live trading", result.RecommendedAction);
+    }
+
+    private static async Task OperationalReadinessReportCriticalRuntimeHealthProducesNotReady()
+    {
+        string folder = TestFolder();
+        var input = ReadyOperationalInput(folder) with
+        {
+            RuntimeHealth = RuntimeSnapshot(
+                criticalIssues: [RuntimeHealthCodes.Mt5Disconnected],
+                warnings: [],
+                metrics: ReadyRuntimeMetrics())
+        };
+
+        var result = await GenerateOperationalReportAsync(folder, input).ConfigureAwait(false);
+
+        AssertEqual(OperationalReadinessStatuses.NotReady, result.OverallReadiness,
+            "Critical runtime health should produce Not Ready.");
+        AssertContains(RuntimeHealthCodes.Mt5Disconnected, result.Markdown);
+    }
+
+    private static async Task OperationalReadinessReportUnknownBrokerDataProducesUnknown()
+    {
+        string folder = TestFolder();
+        var input = ReadyOperationalInput(folder) with { BrokerDeployment = null };
+
+        var result = await GenerateOperationalReportAsync(folder, input).ConfigureAwait(false);
+
+        AssertEqual(OperationalReadinessStatuses.Unknown, result.OverallReadiness,
+            "Missing broker data should produce Unknown when no hard failures exist.");
+        AssertContains("BROKER_DEPLOYMENT_UNKNOWN", string.Join(" ", result.Warnings));
+        AssertContains("Broker/EA checklist result was not supplied", result.Markdown);
+    }
+
+    private static async Task OperationalReadinessReportIncludesAlerts()
+    {
+        string folder = TestFolder();
+        var input = ReadyOperationalInput(folder) with
+        {
+            RecentAlerts =
+            [
+                new SafetyAlert
+                {
+                    Severity = SafetyAlertSeverities.Warning,
+                    Category = SafetyAlertCategories.ExecutionQuality,
+                    RelatedCode = SafetyAlertCodes.HighSpreadDrift,
+                    Message = "Spread drift high.",
+                    TimestampUtc = DateTime.UtcNow,
+                    LastSeenUtc = DateTime.UtcNow,
+                    OccurrenceCount = 2
+                }
+            ]
+        };
+
+        var result = await GenerateOperationalReportAsync(folder, input).ConfigureAwait(false);
+
+        AssertContains("Recent Safety Alerts", result.Markdown);
+        AssertContains(SafetyAlertCodes.HighSpreadDrift, result.Markdown);
+        AssertContains("Spread drift high", result.Markdown);
+    }
+
+    private static async Task OperationalReadinessReportIncludesRecommendedAction()
+    {
+        string folder = TestFolder();
+        var result = await GenerateOperationalReportAsync(folder, ReadyOperationalInput(folder))
+            .ConfigureAwait(false);
+
+        AssertTrue(!string.IsNullOrWhiteSpace(result.RecommendedAction),
+            "Operational readiness result should expose recommended action metadata.");
+        AssertContains("Recommended next action", result.Markdown);
+    }
+
+    private static async Task RolloutPaperOnlyBlocksLive()
+    {
+        string folder = TestFolder();
+        var config = RolloutReadyLiveConfig(folder, RolloutStages.PaperOnly);
+        await using var bot = new AutoBotService(
+            Bridge(),
+            config,
+            apiConfig: NewsDisabled());
+
+        var result = await bot.ExecuteTradeWithValidationAsync(BuyRequest()).ConfigureAwait(false);
+
+        AssertFalse(result.IsSuccess, "PaperOnly rollout stage must block real live trades.");
+        AssertEqual(LiveReadinessCodes.Blocked, result.ErrorCode, "Rollout stage block should flow through final gate.");
+        AssertContains(RolloutCodes.StagePaperOnly, result.ErrorMessage);
+    }
+
+    private static async Task RolloutDemoDoesNotAllowRealLiveOrders()
+    {
+        string folder = TestFolder();
+        var config = RolloutReadyLiveConfig(folder, RolloutStages.Demo);
+        await using var mt5 = new FakeMt5Server(Account(), Symbol(spreadPoints: 10));
+        await using var bot = new AutoBotService(
+            Bridge(mt5.Port),
+            config,
+            apiConfig: NewsDisabled());
+
+        var result = await bot.ExecuteTradeWithValidationAsync(BuyRequest()).ConfigureAwait(false);
+
+        AssertFalse(result.IsSuccess, "Demo rollout stage must not send real live orders.");
+        AssertContains(RolloutCodes.StageDemoOnly, result.ErrorMessage);
+        AssertEqual(0, mt5.OpenTradeCalls, "Demo rollout block should prevent broker execution.");
+    }
+
+    private static async Task RolloutTinyLiveAllowsOnlyTinyLiveCappedRisk()
+    {
+        string folder = TestFolder();
+        var config = RolloutReadyLiveConfig(folder, RolloutStages.TinyLive);
+        config.MaxTinyLiveRiskPercent = 0.25;
+        config.MaxTinyLiveLotMultiplier = 1.0;
+
+        await using var blockedMt5 = new FakeMt5Server(
+            Account(),
+            Symbol(spreadPoints: 10),
+            marginEstimate: MarginEstimate(100),
+            orderCheckResult: OrderCheckPass());
+        await using var blockedBot = new AutoBotService(
+            Bridge(blockedMt5.Port),
+            config,
+            apiConfig: NewsDisabled(),
+            riskManager: new FixedRiskManager(riskPercent: 0.50, lotSize: 0.10));
+
+        var blocked = await blockedBot.ExecuteTradeWithValidationAsync(BuyRequest()).ConfigureAwait(false);
+        AssertFalse(blocked.IsSuccess, "TinyLive risk above tiny cap must block.");
+        AssertEqual(RolloutCodes.TinyRiskCap, blocked.ErrorCode, "TinyLive risk cap should use rollout code.");
+        AssertEqual(0, blockedMt5.OpenTradeCalls, "TinyLive risk cap should prevent broker execution.");
+
+        await using var allowedMt5 = new FakeMt5Server(
+            Account(),
+            Symbol(spreadPoints: 10),
+            marginEstimate: MarginEstimate(100),
+            orderCheckResult: OrderCheckPass());
+        await using var allowedBot = new AutoBotService(
+            Bridge(allowedMt5.Port),
+            config,
+            apiConfig: NewsDisabled(),
+            riskManager: new FixedRiskManager(riskPercent: 0.20, lotSize: 0.10));
+
+        var allowed = await allowedBot.ExecuteTradeWithValidationAsync(BuyRequest()).ConfigureAwait(false);
+        AssertTrue(allowed.IsSuccess, "TinyLive risk within cap should allow normal live validation to continue.");
+        AssertEqual(1, allowedMt5.OpenTradeCalls, "TinyLive capped risk should still go through approved execution.");
+    }
+
+    private static Task RolloutScaleUpCriteriaCanRecommendAdvance()
+    {
+        var result = new RolloutStateMachine().Evaluate(RolloutInput(
+            RolloutStages.TinyLive,
+            completedTrades: 80,
+            durationDays: 21,
+            profitFactor: 1.30,
+            userConfirmedScaleUp: true));
+
+        AssertEqual(RolloutActions.Advance, result.Action, "Passing criteria with confirmation should recommend advance.");
+        AssertEqual(RolloutStages.ScaledLive, result.RecommendedStage, "Scale-up target should be ScaledLive.");
+        return Task.CompletedTask;
+    }
+
+    private static Task RolloutPoorDrawdownRecommendsRollback()
+    {
+        var result = new RolloutStateMachine().Evaluate(RolloutInput(
+            RolloutStages.TinyLive,
+            drawdownPercent: 6));
+
+        AssertEqual(RolloutActions.RollBack, result.Action, "Poor drawdown should recommend rollback.");
+        AssertEqual(RolloutStages.RolledBack, result.RecommendedStage, "Rollback target should be RolledBack.");
+        AssertContains(RolloutCodes.RollbackDrawdown, string.Join(" ", result.FailedCriteria));
+        return Task.CompletedTask;
+    }
+
+    private static Task RolloutHighLosingStreakRecommendsRollback()
+    {
+        var result = new RolloutStateMachine().Evaluate(RolloutInput(
+            RolloutStages.TinyLive,
+            losingStreak: 5));
+
+        AssertEqual(RolloutActions.RollBack, result.Action, "High losing streak should recommend rollback.");
+        AssertContains(RolloutCodes.RollbackLosingStreak, string.Join(" ", result.FailedCriteria));
+        return Task.CompletedTask;
+    }
+
+    private static Task RolloutHighRejectionRateRecommendsRollback()
+    {
+        var result = new RolloutStateMachine().Evaluate(RolloutInput(
+            RolloutStages.TinyLive,
+            rejectionRatePercent: 12));
+
+        AssertEqual(RolloutActions.RollBack, result.Action, "High rejection rate should recommend rollback.");
+        AssertContains(RolloutCodes.RollbackRejectionRate, string.Join(" ", result.FailedCriteria));
+        return Task.CompletedTask;
+    }
+
+    private static Task RolloutCriticalRuntimeHealthRecommendsRollback()
+    {
+        var result = new RolloutStateMachine().Evaluate(RolloutInput(
+            RolloutStages.TinyLive,
+            runtimeHealth: RuntimeSnapshot(
+                criticalIssues: [RuntimeHealthCodes.Mt5Disconnected],
+                warnings: [])));
+
+        AssertEqual(RolloutActions.RollBack, result.Action, "Critical runtime health should recommend rollback.");
+        AssertContains(RolloutCodes.RollbackRuntimeCritical, string.Join(" ", result.FailedCriteria));
+        return Task.CompletedTask;
+    }
+
+    private static Task RolloutKillSwitchActiveRecommendsRollbackOrBlock()
+    {
+        var live = new RolloutStateMachine().Evaluate(RolloutInput(
+            RolloutStages.TinyLive,
+            killSwitchActive: true));
+        var paper = new RolloutStateMachine().Evaluate(RolloutInput(
+            RolloutStages.PaperOnly,
+            killSwitchActive: true));
+
+        AssertEqual(RolloutActions.RollBack, live.Action, "Kill switch in TinyLive should recommend rollback.");
+        AssertEqual(RolloutActions.Block, paper.Action, "Kill switch in PaperOnly should block rollout.");
+        AssertContains(RolloutCodes.RollbackKillSwitch, string.Join(" ", live.FailedCriteria));
+        return Task.CompletedTask;
+    }
+
+    private static Task RolloutAutoAdvanceDoesNotHappenWithoutExplicitUserConfirmation()
+    {
+        var result = new RolloutStateMachine().Evaluate(RolloutInput(
+            RolloutStages.TinyLive,
+            completedTrades: 80,
+            durationDays: 21,
+            profitFactor: 1.30,
+            userConfirmedScaleUp: false));
+
+        AssertEqual(RolloutActions.Stay, result.Action, "Scale-up must not auto-advance without confirmation.");
+        AssertEqual(RolloutStages.TinyLive, result.RecommendedStage, "No-confirmation scale-up should stay TinyLive.");
+        AssertContains(RolloutCodes.ScaleUpNeedsConfirmation, string.Join(" ", result.Warnings));
+        return Task.CompletedTask;
     }
 
     private static Task CommissionIsCalculatedCorrectlyForLotSize()
@@ -5060,8 +6189,346 @@ internal static class Program
             EnforceRR = true,
             AutoLotCalculation = true,
             MagicNumber = 999001,
-            RetryOnFail = false
+            RetryOnFail = false,
+            EnableFinalLiveReadinessGate = false
         };
+    }
+
+    private static BotConfig LiveReadyConfig(string folder)
+    {
+        var config = ConfigWithFolder(folder);
+        config.EnableFinalLiveReadinessGate = true;
+        config.P0SafetyReadinessVerified = true;
+        config.P1ExecutionReadinessVerified = true;
+        config.RequireProvenEdgeForLive = true;
+        config.RequireDemoReconciliationForLive = true;
+        config.RequireUserLiveEnablement = true;
+        config.UserLiveTradingEnabled = true;
+        config.BrokerEaReadinessStatus = "Passed";
+        config.RequireBrokerReadinessForLive = true;
+        config.BrokerDeployment = BrokerReadyConfig().BrokerDeployment;
+        config.FinalStrategyProofPackagePath = WriteStrategyProofPackage(
+            folder,
+            StrategyEvidenceClassifications.ProvenPositiveEdge,
+            DemoPaperReconciliationVerdicts.Matches);
+        config.StrategyEdgeVerdictReportPath = WriteStrategyEdgeReport(folder, StrategyEdgeVerdicts.Pass);
+        config.DemoForwardTest = PassingDemoForwardTestConfig();
+        return config;
+    }
+
+    private static BrokerDeploymentChecklist BrokerChecklist(
+        MT5Bridge bridge,
+        INewsCalendarService? newsCalendar = null,
+        ApiIntegrationConfig? apiConfig = null) =>
+        new(bridge, newsCalendar, apiConfig ?? NewsDisabled());
+
+    private static RuntimeHealthMonitor RuntimeMonitor(
+        MT5Bridge bridge,
+        INewsCalendarService? newsCalendar = null,
+        ApiIntegrationConfig? apiConfig = null) =>
+        new(bridge, newsCalendar, apiConfig ?? NewsDisabled());
+
+    private static AlertService CreateAlertService(
+        SafetyAlertingConfig? config = null,
+        ISafetyAlertSink? sink = null,
+        Func<DateTime>? utcNow = null) =>
+        new(sink ?? new InMemoryAlertSink(), config ?? new SafetyAlertingConfig(), utcNow);
+
+    private static RuntimeHealthSnapshot RuntimeSnapshot(
+        IReadOnlyList<string> criticalIssues,
+        IReadOnlyList<string> warnings,
+        RuntimeHealthMetricValues? metrics = null) => new()
+    {
+        OverallStatus = criticalIssues.Count > 0
+            ? RuntimeHealthStatuses.Critical
+            : warnings.Count > 0
+                ? RuntimeHealthStatuses.Warning
+                : RuntimeHealthStatuses.Healthy,
+        TimestampUtc = DateTime.UtcNow,
+        Metrics = metrics ?? new RuntimeHealthMetricValues(),
+        CriticalIssues = criticalIssues,
+        Warnings = warnings,
+        RecommendedAction = "Test snapshot action."
+    };
+
+    private static async Task<OperationalReadinessReportResult> GenerateOperationalReportAsync(
+        string folder,
+        OperationalReadinessReportInput input) =>
+        await new OperationalReadinessReportService().GenerateAsync(
+            input with { OutputDirectory = folder },
+            CancellationToken.None).ConfigureAwait(false);
+
+    private static OperationalReadinessReportInput ReadyOperationalInput(string folder)
+    {
+        Directory.CreateDirectory(folder);
+        var demo = new DemoForwardTestGate().Evaluate(PassingDemoForwardTestConfig());
+        var broker = new BrokerDeploymentChecklistResult
+        {
+            Passed = true,
+            Verdict = BrokerDeploymentVerdicts.Pass,
+            TimestampUtc = DateTime.UtcNow,
+            LatencyMs = 25,
+            EaVersion = "3.00",
+            EaBuildIdentifier = "TradingBotEA-3.00",
+            CheckedItems =
+            [
+                new BrokerDeploymentCheckItem
+                {
+                    Name = "MT5 bridge reachable",
+                    Passed = true,
+                    Code = "OK",
+                    Message = "Ready"
+                }
+            ]
+        };
+        var runtime = RuntimeSnapshot(
+            criticalIssues: [],
+            warnings: [],
+            metrics: ReadyRuntimeMetrics());
+        var live = new LiveReadinessResult
+        {
+            IsAllowed = true,
+            EvidenceClassification = StrategyEvidenceClassifications.ProvenPositiveEdge,
+            StrategyEdgeVerdict = StrategyEdgeVerdicts.Pass,
+            DemoReconciliationVerdict = DemoPaperReconciliationVerdicts.Matches,
+            DemoForwardTestResult = demo,
+            BrokerDeploymentResult = broker
+        };
+
+        return new OperationalReadinessReportInput
+        {
+            OutputDirectory = folder,
+            Config = LiveReadyConfig(folder),
+            LiveReadiness = live,
+            DemoForwardTest = demo,
+            BrokerDeployment = broker,
+            RuntimeHealth = runtime,
+            KillSwitch = new KillSwitchState { KillSwitchActive = false },
+            RecentTrades =
+            [
+                ClosedTrade(profitUsd: 12.5),
+                new TradeRecord
+                {
+                    RequestId = "REJ1",
+                    Pair = "EURUSD",
+                    Direction = "BUY",
+                    Status = TradeStatus.Rejected.ToString(),
+                    ErrorCode = "NO_SYMBOL_DATA",
+                    ErrorMessage = "missing symbol",
+                    ExecutedAt = DateTime.UtcNow
+                }
+            ],
+            RecentAlerts = [],
+            StrategyEvidenceClassification = StrategyEvidenceClassifications.ProvenPositiveEdge,
+            ModeRecommendation = "Paper/demo remain available; live requires explicit final enablement.",
+            TimestampUtc = DateTime.UtcNow
+        };
+    }
+
+    private static RuntimeHealthMetricValues ReadyRuntimeMetrics() => new()
+    {
+        Mt5Connected = true,
+        EaHealthy = true,
+        LatencyMs = 25,
+        SpreadPips = 1.0,
+        SpreadDriftPips = 0.2,
+        SlippageDriftPips = 0.1,
+        OrderRejectionRatePercent = 1,
+        DrawdownPercent = 1,
+        KillSwitchActive = false,
+        DailyLossUsagePercent = 10,
+        WeeklyLossUsagePercent = 12,
+        SymbolExposureUsagePercent = 15,
+        MarginLevelPercent = 500,
+        OpenPositionCount = 1,
+        NewsProviderHealthy = true,
+        EaVersion = "3.00",
+        EaBuildIdentifier = "TradingBotEA-3.00"
+    };
+
+    private static BotConfig RolloutReadyLiveConfig(string folder, string stage)
+    {
+        Directory.CreateDirectory(folder);
+        var config = LiveReadyConfig(folder);
+        config.RequireBrokerReadinessForLive = false;
+        config.EnableStagedRollout = true;
+        config.CurrentRolloutStage = stage;
+        config.MaxTinyLiveRiskPercent = 0.25;
+        config.MaxTinyLiveLotMultiplier = 1.0;
+        return config;
+    }
+
+    private static RolloutEvaluationInput RolloutInput(
+        string stage,
+        int completedTrades = 80,
+        double durationDays = 21,
+        double profitFactor = 1.30,
+        double drawdownPercent = 1,
+        int losingStreak = 1,
+        double rejectionRatePercent = 1,
+        double spreadDriftPips = 0.2,
+        double slippageDriftPips = 0.2,
+        bool killSwitchActive = false,
+        bool userConfirmedScaleUp = false,
+        RuntimeHealthSnapshot? runtimeHealth = null)
+    {
+        var config = Config();
+        config.EnableStagedRollout = true;
+        config.CurrentRolloutStage = stage;
+        config.MinTradesBeforeScaleUp = 50;
+        config.MinDaysBeforeScaleUp = 14;
+        config.MinProfitFactorBeforeScaleUp = 1.15;
+        config.MaxDrawdownBeforeRollback = 5;
+        config.MaxLosingStreakBeforeRollback = 5;
+        config.MaxRejectionRateBeforeRollback = 10;
+        config.MaxSpreadDriftBeforeRollback = 2;
+        config.MaxSlippageDriftBeforeRollback = 2;
+        config.AutoRollbackEnabled = true;
+
+        return new RolloutEvaluationInput
+        {
+            Config = config,
+            LiveReadiness = new LiveReadinessResult { IsAllowed = true },
+            RuntimeHealth = runtimeHealth ?? RuntimeSnapshot(criticalIssues: [], warnings: [], metrics: ReadyRuntimeMetrics()),
+            CompletedTrades = completedTrades,
+            DurationDays = durationDays,
+            ProfitFactor = profitFactor,
+            DrawdownPercent = drawdownPercent,
+            LosingStreak = losingStreak,
+            RejectionRatePercent = rejectionRatePercent,
+            SpreadDriftPips = spreadDriftPips,
+            SlippageDriftPips = slippageDriftPips,
+            KillSwitchActive = killSwitchActive,
+            UserConfirmedScaleUp = userConfirmedScaleUp,
+            TimestampUtc = DateTime.UtcNow
+        };
+    }
+
+    private static FakeMt5Server HealthyRuntimeMt5(
+        bool eaHealthAvailable = true,
+        int responseDelayMs = 0) => new(
+        Account(),
+        Symbol(spreadPoints: 10),
+        positions: [],
+        marginEstimate: MarginEstimate(100),
+        orderCheckResult: OrderCheckPass(),
+        eaHealthAvailable: eaHealthAvailable,
+        responseDelayMs: responseDelayMs);
+
+    private static RuntimeHealthInput HealthyRuntimeInput()
+    {
+        var config = Config();
+        config.RuntimeHealth = new RuntimeHealthMonitorConfig
+        {
+            MaxLatencyMs = 1_000,
+            CriticalLatencyMs = 3_000,
+            MaxSpreadDriftPips = 2,
+            MaxSlippageDriftPips = 2,
+            MaxOrderRejectionRatePercent = 10,
+            CriticalOrderRejectionRatePercent = 25,
+            WarningDrawdownPercent = 5,
+            CriticalDrawdownPercent = 10,
+            MinMarginLevelPercent = 200,
+            DailyLossWarningPercent = 75,
+            WeeklyLossWarningPercent = 75,
+            SymbolExposureWarningPercent = 75
+        };
+        return new RuntimeHealthInput
+        {
+            ProbeRequest = BuyRequest(),
+            Config = config,
+            IsLiveMode = false,
+            KillSwitchActive = false,
+            SpreadDriftPips = 0.5,
+            SlippageDriftPips = 0.5,
+            OrderRejectionRatePercent = 0,
+            DrawdownPercent = 1,
+            DailyLossUsagePercent = 10,
+            WeeklyLossUsagePercent = 10,
+            SymbolExposureUsagePercent = 10
+        };
+    }
+
+    private static BotConfig BrokerReadyConfig()
+    {
+        var config = Config();
+        config.EnableFinalLiveReadinessGate = false;
+        config.AllowedPairs = [];
+        config.BrokerDeployment = new BrokerDeploymentReadinessConfig
+        {
+            RequireEaHealth = true,
+            RequireSymbolMetadata = true,
+            RequireMarginEstimate = true,
+            RequireOrderCheck = true,
+            RequireNewsProviderWhenConfigured = true,
+            MaxLatencyMs = 1_000,
+            ProbeLotSize = 0.10
+        };
+        return config;
+    }
+
+    private static DemoForwardTestConfig PassingDemoForwardTestConfig() => new()
+    {
+        MinimumCompletedTrades = 100,
+        MinimumDurationDays = 28,
+        MinimumProfitFactor = 1.15,
+        MinimumExpectancyUsd = 0.01,
+        MaximumDrawdownUsd = 500,
+        MaximumLosingStreak = 5,
+        MaximumRejectionRatePercent = 5,
+        MaximumAverageSpreadDriftUsd = 0.50,
+        MaximumAverageSlippageDriftUsd = 0.50,
+        RequireCostData = true,
+        Metrics = new DemoForwardTestMetricsConfig
+        {
+            TotalTrades = 125,
+            CompletedTrades = 120,
+            RejectedTrades = 5,
+            DurationDays = 35,
+            ProfitFactor = 1.35,
+            ExpectancyUsd = 4.25,
+            MaximumDrawdownUsd = 250,
+            WorstLosingStreak = 3,
+            RejectionRatePercent = 4,
+            AverageSpreadCostUsd = 1.10,
+            AverageSlippageCostUsd = 0.60,
+            AverageCommissionCostUsd = 0.35,
+            CostDataAvailable = true,
+            BacktestAverageSpreadCostUsd = 1.00,
+            BacktestAverageSlippageCostUsd = 0.50,
+            BacktestComparisonDataAvailable = true
+        }
+    };
+
+    private static string WriteStrategyProofPackage(
+        string folder,
+        string classification,
+        string demoReconciliationVerdict)
+    {
+        string path = Path.Combine(folder, FinalStrategyProofPackageGenerator.DefaultReportFileName);
+        File.WriteAllText(
+            path,
+            "# Final Strategy Proof Package\n\n" +
+            "## Executive Classification\n\n" +
+            $"- Evidence classification: {classification}\n" +
+            "- Readiness recommendation: proceed to tiny live test\n\n" +
+            "## Go/No-Go Criteria\n\n" +
+            "| Criterion | Required | Current Evidence | Status |\n" +
+            "|---|---:|---:|---|\n" +
+            $"| Acceptable demo/paper reconciliation | Matches | {demoReconciliationVerdict} | Go |\n");
+        return path;
+    }
+
+    private static string WriteStrategyEdgeReport(string folder, string verdict)
+    {
+        string path = Path.Combine(folder, "STRATEGY_EDGE_VERDICT_REPORT.md");
+        File.WriteAllText(
+            path,
+            "# Strategy Edge Verdict Report\n\n" +
+            "## Executive Verdict\n\n" +
+            $"- Verdict: {verdict}\n" +
+            "- Reason for verdict: unit-test fixture.\n");
+        return path;
     }
 
     private static BotConfig ConfigWithFolder(
@@ -6251,6 +7718,8 @@ internal static class Program
         private readonly bool _marginEstimateAvailable;
         private readonly OrderCheckResult? _orderCheckResult;
         private readonly bool _orderCheckAvailable;
+        private readonly bool _eaHealthAvailable;
+        private readonly int _responseDelayMs;
         private readonly IReadOnlyList<IpcResponse> _openTradeResponses;
         private readonly HashSet<long> _closeFailureTickets;
         private int _openTradeCalls;
@@ -6268,6 +7737,8 @@ internal static class Program
             bool marginEstimateAvailable = true,
             OrderCheckResult? orderCheckResult = null,
             bool orderCheckAvailable = true,
+            bool eaHealthAvailable = true,
+            int responseDelayMs = 0,
             IReadOnlyList<SymbolInfo?>? symbolSequence = null,
             IReadOnlyList<IpcResponse>? openTradeResponses = null,
             IReadOnlySet<long>? closeFailureTickets = null)
@@ -6281,6 +7752,8 @@ internal static class Program
             _marginEstimateAvailable = marginEstimateAvailable;
             _orderCheckResult = orderCheckResult;
             _orderCheckAvailable = orderCheckAvailable;
+            _eaHealthAvailable = eaHealthAvailable;
+            _responseDelayMs = responseDelayMs;
             _openTradeResponses = openTradeResponses ?? [];
             _closeFailureTickets = closeFailureTickets != null
                 ? new HashSet<long>(closeFailureTickets)
@@ -6338,6 +7811,8 @@ internal static class Program
                 var msg = JObject.Parse(Encoding.UTF8.GetString(payload));
                 string command = msg.Value<string>("cmd") ?? "";
                 string requestId = msg.Value<string>("req_id") ?? "";
+                if (_responseDelayMs > 0)
+                    await Task.Delay(_responseDelayMs, _cts.Token).ConfigureAwait(false);
                 var response = CreateResponse(command, requestId, msg);
 
                 byte[] responsePayload = Encoding.UTF8.GetBytes(JsonConvert.SerializeObject(response, Formatting.None));
@@ -6350,6 +7825,17 @@ internal static class Program
             command switch
             {
                 "PING" => Success(requestId, new { pong = true }),
+                "GET_EA_HEALTH" => _eaHealthAvailable
+                    ? Success(requestId, new EaHealthInfo
+                    {
+                        IsAlive = true,
+                        Version = "3.00",
+                        BuildIdentifier = "TradingBotEA-3.00",
+                        TerminalName = "Fake MT5",
+                        Server = "Fake Broker",
+                        CheckedAtUtc = DateTime.UtcNow
+                    })
+                    : Error(requestId, "EA health unavailable"),
                 "GET_ACCOUNT" => _account == null
                     ? Error(requestId, "no account")
                     : Success(requestId, _account),
@@ -6488,6 +7974,37 @@ internal static class Program
             BotConfig config,
             CancellationToken cancellationToken = default) =>
             throw new InvalidOperationException("risk data source unavailable");
+    }
+
+    private sealed class FixedRiskManager : IRiskManager
+    {
+        private readonly double _riskPercent;
+        private readonly double _lotSize;
+
+        public FixedRiskManager(double riskPercent, double lotSize)
+        {
+            _riskPercent = riskPercent;
+            _lotSize = lotSize;
+        }
+
+        public Task<RiskValidationResult> ValidateAsync(
+            TradeRequest request,
+            AccountInfo account,
+            SymbolInfo? symbolInfo,
+            IReadOnlyList<LivePosition> openPositions,
+            BotConfig config,
+            CancellationToken cancellationToken = default) =>
+            Task.FromResult(new RiskValidationResult
+            {
+                IsApproved = true,
+                Reason = "fixed risk approved",
+                ReferenceEntryPrice = 1.1000,
+                ValidatedLotSize = _lotSize,
+                RiskPercent = _riskPercent,
+                DollarRisk = 10,
+                RiskRewardRatio = 2.0,
+                SpreadPips = 1.0
+            });
     }
 
     private sealed class IncompleteRiskManager : IRiskManager
