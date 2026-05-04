@@ -56,21 +56,6 @@ namespace MT5TradingBot.Modules.LiveReadiness
             if (config.RequireUserLiveEnablement && !config.UserLiveTradingEnabled)
                 failed.Add(LiveReadinessCodes.UserLiveEnableRequired);
 
-            RolloutEvaluationResult? rollout = context.RolloutEvaluation;
-            if (config.EnableStagedRollout && context.IsLiveMode)
-            {
-                rollout ??= new RolloutStateMachine().Evaluate(new RolloutEvaluationInput
-                {
-                    Config = config,
-                    KillSwitchActive = context.KillSwitchActive || context.EmergencyStopActive
-                });
-
-                if (rollout.Action is RolloutActions.Block or RolloutActions.RollBack)
-                    failed.AddRange(rollout.FailedCriteria.Count > 0
-                        ? rollout.FailedCriteria
-                        : [LiveReadinessCodes.RolloutStageBlocked]);
-            }
-
             return new LiveReadinessResult
             {
                 IsAllowed = failed.Count == 0,
@@ -80,7 +65,7 @@ namespace MT5TradingBot.Modules.LiveReadiness
                 DemoReconciliationVerdict = evidence.DemoReconciliationVerdict,
                 DemoForwardTestResult = demoForwardTest,
                 BrokerDeploymentResult = context.BrokerDeploymentResult,
-                RolloutEvaluation = rollout
+                RolloutEvaluation = context.RolloutEvaluation
             };
         }
 

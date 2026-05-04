@@ -260,6 +260,16 @@ namespace MT5TradingBot.Models
         public string TradeType { get; set; } = "";
     }
 
+    public sealed class EaHealthInfo
+    {
+        public bool IsAlive { get; set; }
+        public string Version { get; set; } = "";
+        public string BuildIdentifier { get; set; } = "";
+        public string TerminalName { get; set; } = "";
+        public string Server { get; set; } = "";
+        public DateTime CheckedAtUtc { get; set; } = DateTime.UtcNow;
+    }
+
     // ══════════════════════════════════════════════════════════════
     //  BOT CONFIGURATION
     // ══════════════════════════════════════════════════════════════
@@ -497,6 +507,63 @@ namespace MT5TradingBot.Models
         [JsonProperty("paper_trading")]
         public bool PaperTrading { get; set; } = false;
 
+        [JsonProperty("enable_final_live_readiness_gate")]
+        public bool EnableFinalLiveReadinessGate { get; set; } = true;
+
+        [JsonProperty("require_proven_edge_for_live")]
+        public bool RequireProvenEdgeForLive { get; set; } = true;
+
+        [JsonProperty("require_demo_reconciliation_for_live")]
+        public bool RequireDemoReconciliationForLive { get; set; } = true;
+
+        [JsonProperty("require_user_live_enablement")]
+        public bool RequireUserLiveEnablement { get; set; } = true;
+
+        [JsonProperty("user_live_trading_enabled")]
+        public bool UserLiveTradingEnabled { get; set; } = false;
+
+        [JsonProperty("allow_inconclusive_edge_for_demo_only")]
+        public bool AllowInconclusiveEdgeForDemoOnly { get; set; } = true;
+
+        [JsonProperty("p0_safety_readiness_verified")]
+        public bool P0SafetyReadinessVerified { get; set; } = false;
+
+        [JsonProperty("p1_execution_readiness_verified")]
+        public bool P1ExecutionReadinessVerified { get; set; } = false;
+
+        [JsonProperty("p0_p1_readiness_marker_file")]
+        public string P0P1ReadinessMarkerFile { get; set; } = "";
+
+        [JsonProperty("final_strategy_proof_package_path")]
+        public string FinalStrategyProofPackagePath { get; set; } = "";
+
+        [JsonProperty("strategy_edge_verdict_report_path")]
+        public string StrategyEdgeVerdictReportPath { get; set; } = "";
+
+        [JsonProperty("demo_paper_reconciliation_verdict")]
+        public string DemoPaperReconciliationVerdict { get; set; } = "";
+
+        [JsonProperty("require_demo_forward_test_for_live")]
+        public bool RequireDemoForwardTestForLive { get; set; } = true;
+
+        [JsonProperty("demo_forward_test")]
+        public DemoForwardTestConfig DemoForwardTest { get; set; } = new();
+
+        [JsonProperty("broker_ea_readiness_status")]
+        public string BrokerEaReadinessStatus { get; set; } = "";
+
+        [JsonProperty("require_broker_readiness_for_live")]
+        public bool RequireBrokerReadinessForLive { get; set; } = true;
+
+        [JsonProperty("broker_deployment")]
+        public BrokerDeploymentReadinessConfig BrokerDeployment { get; set; } = new();
+
+        [JsonProperty("runtime_health")]
+        public RuntimeHealthMonitorConfig RuntimeHealth { get; set; } = new();
+
+        [JsonProperty("safety_alerts")]
+        public SafetyAlertingConfig SafetyAlerts { get; set; } = new();
+
         [JsonProperty("enable_staged_rollout")]
         public bool EnableStagedRollout { get; set; } = false;
 
@@ -580,6 +647,180 @@ namespace MT5TradingBot.Models
 
         [JsonProperty("scalping_by_pair")]
         public Dictionary<string, ScalpingConfig> ScalpingByPair { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+    }
+
+    public sealed class DemoForwardTestConfig
+    {
+        [JsonProperty("minimum_completed_trades")]
+        public int MinimumCompletedTrades { get; set; } = 100;
+
+        [JsonProperty("minimum_duration_days")]
+        public int MinimumDurationDays { get; set; } = 28;
+
+        [JsonProperty("minimum_profit_factor")]
+        public double MinimumProfitFactor { get; set; } = 1.15;
+
+        [JsonProperty("minimum_expectancy_usd")]
+        public double MinimumExpectancyUsd { get; set; } = 0.01;
+
+        [JsonProperty("maximum_drawdown_usd")]
+        public double MaximumDrawdownUsd { get; set; }
+
+        [JsonProperty("maximum_losing_streak")]
+        public int MaximumLosingStreak { get; set; }
+
+        [JsonProperty("maximum_rejection_rate_percent")]
+        public double MaximumRejectionRatePercent { get; set; }
+
+        [JsonProperty("maximum_average_spread_drift_usd")]
+        public double MaximumAverageSpreadDriftUsd { get; set; }
+
+        [JsonProperty("maximum_average_slippage_drift_usd")]
+        public double MaximumAverageSlippageDriftUsd { get; set; }
+
+        [JsonProperty("require_cost_data")]
+        public bool RequireCostData { get; set; } = true;
+
+        [JsonProperty("metrics")]
+        public DemoForwardTestMetricsConfig Metrics { get; set; } = new();
+    }
+
+    public sealed class BrokerDeploymentReadinessConfig
+    {
+        [JsonProperty("require_ea_health")]
+        public bool RequireEaHealth { get; set; } = true;
+
+        [JsonProperty("require_symbol_metadata")]
+        public bool RequireSymbolMetadata { get; set; } = true;
+
+        [JsonProperty("require_margin_estimate")]
+        public bool RequireMarginEstimate { get; set; } = true;
+
+        [JsonProperty("require_order_check")]
+        public bool RequireOrderCheck { get; set; } = true;
+
+        [JsonProperty("require_news_provider_when_configured")]
+        public bool RequireNewsProviderWhenConfigured { get; set; } = true;
+
+        [JsonProperty("max_latency_ms")]
+        public int MaxLatencyMs { get; set; } = 1_000;
+
+        [JsonProperty("probe_lot_size")]
+        public double ProbeLotSize { get; set; } = 0.10;
+    }
+
+    public sealed class RuntimeHealthMonitorConfig
+    {
+        [JsonProperty("max_latency_ms")]
+        public int MaxLatencyMs { get; set; } = 1_000;
+
+        [JsonProperty("critical_latency_ms")]
+        public int CriticalLatencyMs { get; set; } = 3_000;
+
+        [JsonProperty("max_spread_drift_pips")]
+        public double MaxSpreadDriftPips { get; set; } = 2.0;
+
+        [JsonProperty("max_slippage_drift_pips")]
+        public double MaxSlippageDriftPips { get; set; } = 2.0;
+
+        [JsonProperty("max_order_rejection_rate_percent")]
+        public double MaxOrderRejectionRatePercent { get; set; } = 10.0;
+
+        [JsonProperty("critical_order_rejection_rate_percent")]
+        public double CriticalOrderRejectionRatePercent { get; set; } = 25.0;
+
+        [JsonProperty("warning_drawdown_percent")]
+        public double WarningDrawdownPercent { get; set; } = 5.0;
+
+        [JsonProperty("critical_drawdown_percent")]
+        public double CriticalDrawdownPercent { get; set; } = 10.0;
+
+        [JsonProperty("min_margin_level_percent")]
+        public double MinMarginLevelPercent { get; set; } = 200.0;
+
+        [JsonProperty("daily_loss_warning_percent")]
+        public double DailyLossWarningPercent { get; set; } = 75.0;
+
+        [JsonProperty("weekly_loss_warning_percent")]
+        public double WeeklyLossWarningPercent { get; set; } = 75.0;
+
+        [JsonProperty("symbol_exposure_warning_percent")]
+        public double SymbolExposureWarningPercent { get; set; } = 75.0;
+    }
+
+    public sealed class SafetyAlertingConfig
+    {
+        [JsonProperty("enabled")]
+        public bool Enabled { get; set; } = true;
+
+        [JsonProperty("dedup_cooldown_seconds")]
+        public int DedupCooldownSeconds { get; set; } = 300;
+
+        [JsonProperty("repeated_order_rejection_threshold")]
+        public int RepeatedOrderRejectionThreshold { get; set; } = 3;
+
+        [JsonProperty("alert_history_file")]
+        public string AlertHistoryFile { get; set; } = "";
+    }
+
+    public sealed class DemoForwardTestMetricsConfig
+    {
+        [JsonProperty("total_trades")]
+        public int TotalTrades { get; set; }
+
+        [JsonProperty("completed_trades")]
+        public int CompletedTrades { get; set; }
+
+        [JsonProperty("rejected_trades")]
+        public int RejectedTrades { get; set; }
+
+        [JsonProperty("first_trade_at_utc")]
+        public DateTime? FirstTradeAtUtc { get; set; }
+
+        [JsonProperty("last_trade_at_utc")]
+        public DateTime? LastTradeAtUtc { get; set; }
+
+        [JsonProperty("duration_days")]
+        public double DurationDays { get; set; }
+
+        [JsonProperty("profit_factor")]
+        public double ProfitFactor { get; set; }
+
+        [JsonProperty("profit_factor_unlimited")]
+        public bool ProfitFactorUnlimited { get; set; }
+
+        [JsonProperty("expectancy_usd")]
+        public double ExpectancyUsd { get; set; }
+
+        [JsonProperty("maximum_drawdown_usd")]
+        public double MaximumDrawdownUsd { get; set; }
+
+        [JsonProperty("worst_losing_streak")]
+        public int WorstLosingStreak { get; set; }
+
+        [JsonProperty("rejection_rate_percent")]
+        public double RejectionRatePercent { get; set; }
+
+        [JsonProperty("average_spread_cost_usd")]
+        public double AverageSpreadCostUsd { get; set; }
+
+        [JsonProperty("average_slippage_cost_usd")]
+        public double AverageSlippageCostUsd { get; set; }
+
+        [JsonProperty("average_commission_cost_usd")]
+        public double AverageCommissionCostUsd { get; set; }
+
+        [JsonProperty("cost_data_available")]
+        public bool CostDataAvailable { get; set; }
+
+        [JsonProperty("backtest_average_spread_cost_usd")]
+        public double? BacktestAverageSpreadCostUsd { get; set; }
+
+        [JsonProperty("backtest_average_slippage_cost_usd")]
+        public double? BacktestAverageSlippageCostUsd { get; set; }
+
+        [JsonProperty("backtest_comparison_data_available")]
+        public bool BacktestComparisonDataAvailable { get; set; }
     }
 
     public sealed class NoTradeWindowConfig
