@@ -506,6 +506,22 @@
       "USD",
       "GBP",
       "EUR",
+      "JPY",
+      "USD",
+      "GBP",
+      "EUR",
+      "JPY",
+      "USD",
+      "GBP",
+      "EUR",
+      "JPY",
+      "USD",
+      "GBP",
+      "EUR",
+      "JPY",
+      "USD",
+      "GBP",
+      "EUR",
       "JPY"
     ],
     "news_impact_filter": "High only",
@@ -523,5 +539,5 @@
   },
   "Theme": "Dark",
   "AutoConnectOnLaunch": true,
-  "LastSaved": "2026-05-04T11:56:05.8618902Z"
+  "LastSaved": "2026-05-04T12:25:17.5730607Z"
 }

@@ -1,11 +1,11 @@
 {
-  "deployed_at": "2026-05-04T12:18:02.2330742Z",
+  "deployed_at": "2026-05-04T12:24:39.7934720Z",
   "source": "D:\\Repo\\MT5TradingBotPro\\MT5_EA\\TradingBotEA.mq5",
   "source_ex5": "D:\\Repo\\MT5TradingBotPro\\MT5_EA\\TradingBotEA.ex5",
   "terminal_data_path": "C:\\Users\\A\\AppData\\Roaming\\MetaQuotes\\Terminal\\D0E8209F77C8CF37AD8BF550E51FF075",
   "mq5_path": "C:\\Users\\A\\AppData\\Roaming\\MetaQuotes\\Terminal\\D0E8209F77C8CF37AD8BF550E51FF075\\MQL5\\Experts\\TradingBotEA.mq5",
   "ex5_path": "C:\\Users\\A\\AppData\\Roaming\\MetaQuotes\\Terminal\\D0E8209F77C8CF37AD8BF550E51FF075\\MQL5\\Experts\\TradingBotEA.ex5",
   "compile_result": "Repository EX5 copied by startup EA deployment check.",
-  "needs_mt5_reload": false,
-  "message": "EA files already matched the repository version."
+  "needs_mt5_reload": true,
+  "message": "EA files were updated. Remove and re-attach TradingBotEA on the MT5 chart, or restart MT5."
 }

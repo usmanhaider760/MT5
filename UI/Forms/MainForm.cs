@@ -5089,7 +5089,7 @@ SAFETY RULES:
 
             foreach (var binding in bindings)
             {
-                var token = snapshot.SelectToken(binding.Path);
+                var token = ResolveReviewDisplayToken(snapshot, binding.Path);
                 binding.Value.Text = FormatReviewValue(token, binding.Format);
                 string stylePath = binding.Path;
                 JToken? styleToken = token;
@@ -5103,6 +5103,23 @@ SAFETY RULES:
                 binding.Value.ForeColor = fg;
                 binding.Value.BackColor = bg;
             }
+        }
+
+        private static JToken? ResolveReviewDisplayToken(JObject snapshot, string path)
+        {
+            var token = snapshot.SelectToken(path);
+            if (token != null && token.Type != JTokenType.Null)
+                return token;
+
+            string rootName = path.Split('.', 2)[0];
+            if (snapshot[rootName] is JObject root &&
+                root.Value<bool?>("available") == false)
+            {
+                string reason = root.Value<string>("reason") ?? "Data source did not return this section.";
+                return new JValue($"Unavailable: {reason}");
+            }
+
+            return token;
         }
 
         private static void NormalizeReviewSnapshotForDisplay(JObject snapshot)
@@ -5126,7 +5143,12 @@ SAFETY RULES:
                 return token.ToString(Formatting.None).Trim('"');
 
             if (format == "bool")
-                return token.Type == JTokenType.Boolean && token.Value<bool>() ? "Yes" : "No";
+            {
+                if (token.Type == JTokenType.Boolean)
+                    return token.Value<bool>() ? "Yes" : "No";
+
+                return token.ToString(Formatting.None).Trim('"');
+            }
 
             if (format == "plain")
                 return token.ToString(Formatting.None).Trim('"');
@@ -5431,6 +5453,9 @@ SAFETY RULES:
             string raw     = token.ToString(Formatting.None).Trim('"');
             bool   boolVal = token.Type == JTokenType.Boolean && token.Value<bool>();
             bool   isNum   = double.TryParse(raw, NumberStyles.Any, CultureInfo.InvariantCulture, out double num);
+
+            if (raw.StartsWith("Unavailable:", StringComparison.OrdinalIgnoreCase))
+                return (dimFg, dimBg);
 
             if (path.StartsWith("execution_barriers.", StringComparison.OrdinalIgnoreCase) &&
                 token.Type == JTokenType.Boolean)
@@ -5758,10 +5783,10 @@ SAFETY RULES:
                     ["daily_range_pips"] = null,
                     ["prev_day_high"]    = null
                 },
-                ["candles"] = Unavailable("Current EA does not expose candle snapshots yet"),
-                ["indicators"] = Unavailable("Current EA does not expose RSI/MACD/EMA/ADX yet"),
-                ["structure"] = Unavailable("Structure engine not wired to live EA snapshot yet"),
-                ["levels"] = Unavailable("Support/resistance snapshot not exposed yet"),
+                ["candles"] = Unavailable("GET_MARKET_SNAPSHOT did not return candle data. Reload/re-attach the latest TradingBotEA in MT5 or wait for the context refresh."),
+                ["indicators"] = Unavailable("GET_MARKET_SNAPSHOT did not return indicator data. Reload/re-attach the latest TradingBotEA in MT5 or wait for the context refresh."),
+                ["structure"] = Unavailable("GET_MARKET_SNAPSHOT did not return market-structure data. Reload/re-attach the latest TradingBotEA in MT5 or wait for the context refresh."),
+                ["levels"] = Unavailable("GET_MARKET_SNAPSHOT did not return support/resistance data. Reload/re-attach the latest TradingBotEA in MT5 or wait for the context refresh."),
                 ["positions"] = new JObject
                 {
                     ["total_open"] = positions.Count,
