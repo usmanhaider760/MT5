@@ -4,9 +4,10 @@ Scope: P3 strategy proof reporting only. This report does not change strategy lo
 
 ## Executive Verdict
 
-- Verdict: Inconclusive
-- Reason for verdict: The strategy edge verdict report foundation exists, but this repository artifact is not backed by a full historical realistic-backtest edge dataset.
-- Live-demo readiness score: 0/100 until a real P3 dataset is supplied.
+- Verdict: Fail
+- Reason for verdict: Failed objective criteria: Profit factor after costs 0.72 is below required 1.2. Expectancy after costs $-0.81 is below required $0.01. Critical repaint/lookahead audit finding is present.
+- Report file: `STRATEGY_EDGE_VERDICT_REPORT.md`
+- Live-demo readiness score: 0/100
 
 ## Required Proof Warnings
 
@@ -18,46 +19,69 @@ Scope: P3 strategy proof reporting only. This report does not change strategy lo
 
 | Metric | Value |
 |---|---:|
-| Sample size / completed trades | 0 |
-| Total signals | 0 |
-| Profit factor after costs | Not verified |
-| Expectancy after costs | Not verified |
-| Max drawdown | Not verified |
-| Worst losing streak | Not verified |
+| Sample size / completed trades | 20 |
+| Total signals | 20 |
+| Profit factor after costs | 0.72 |
+| Expectancy after costs | $-0.81 |
+| Max drawdown | $20.88 |
+| Worst losing streak | 2 |
 
 ## Component Verdicts
 
 | Component | Verdict | Notes |
 |---|---|---|
-| Signal quality metrics | Inconclusive | Requires completed realistic backtest trade outcomes. |
-| Segmented performance analysis | Inconclusive | Requires symbol/session/spread/source metadata from completed realistic outcomes. |
-| Cost sensitivity verdict | Inconclusive | Requires completed realistic outcomes with execution-cost components. |
-| Robustness verdict | Inconclusive | Requires sufficient completed realistic outcomes for OOS, walk-forward, and Monte Carlo analysis. |
-| AI filter verdict | Inconclusive | Requires frozen AI-confirmed and non-AI comparison data. |
-| Repaint/lookahead audit summary | Warning | Current audit includes a Critical old trade-summary backtest limitation; do not use old trade summaries as signal-edge proof. |
-| Strategy extraction summary | Available | Current extraction report says the base deterministic strategy itself produces mostly HOLD. |
+| Cost sensitivity verdict | Inconclusive | Cost sensitivity analysis is missing. |
+| Robustness verdict | Inconclusive | Strategy robustness analysis is missing. |
+| AI filter verdict | Inconclusive | AI filter impact analysis is missing. |
+| Repaint/lookahead audit summary | Fail | Critical repaint/lookahead audit finding is present. |
+| Strategy extraction summary | Available | Extraction summary says the base strategy itself produces mostly HOLD. |
 
 ## Best/Worst Segments
 
 - Best segment: Not verified
 - Worst segment: Not verified
 
+## Failed Criteria
+
+- Profit factor after costs 0.72 is below required 1.2.
+- Expectancy after costs $-0.81 is below required $0.01.
+- Critical repaint/lookahead audit finding is present.
+
 ## Key Risks
 
-- No full P3 completed-trade sample has been supplied to this repository artifact.
-- Critical trade-summary backtest limitations remain if old closed-trade summaries are treated as edge proof.
-- AI impact is not proven unless AI-confirmed results outperform non-AI results on frozen historical fixtures.
+- Cost sensitivity analysis is missing.
+- Strategy robustness analysis is missing.
+- AI filter impact analysis is missing; AI should remain outside edge proof.
+- Completed trade sample is too small: 20 < required 300.
+- One or more outcomes are missing signal source metadata and were grouped as unknown.
+- R-multiple data is unavailable; average R multiple was not calculated.
+- Backtest-positive results can still fail in demo due to broker spread, slippage, commission, latency, rejection rate, and execution path differences.
 
 ## Missing Evidence
 
-- Completed realistic backtest edge dataset.
-- Signal-quality report from completed realistic outcomes.
-- Segmented performance report across symbol, session, spread regime, AI confidence, and signal source.
-- Cost-sensitivity report across worse broker conditions.
-- Robustness report with out-of-sample, walk-forward, and Monte Carlo summaries.
-- AI filter impact report with frozen AI outputs or counterfactual blocked-signal fixtures.
+- Segmented performance analysis is unavailable or failed.
+- Cost sensitivity analysis is unavailable or failed.
+- Strategy robustness analysis is unavailable or failed.
+- AI filter impact analysis is unavailable or failed.
 
 ## Assumptions
 
-- This file is a rerunnable report target for the new `StrategyEdgeVerdictReportBuilder`.
-- The final verdict must be regenerated from real P3 analytics inputs before any demo-readiness claim.
+- ai_disabled_reason: AI disabled: no historical AI decisions were supplied and offline evidence generation must not call external AI APIs.
+- broker_connection: No MT5 or live broker connection required
+- candidates_generated_from_real_data: 20
+- candidate_generation_diagnostic: OFFLINE_AUTO_SCALPING_PRICE_MOVEMENT_CANDIDATES_GENERATED
+- candidate_generation_source: offline-auto-scalping-price-movement
+- candidate_source: Externally provided candidates
+- candles_loaded: 643
+- evidence_package_scope: Configured CSV market data was supplied; still not live proof.
+- execution_costs: BacktestExecutionCostModel spread, commission, and slippage estimates
+- incomplete_signals: 0
+- live_trading: Not enabled; no live orders are placed by this command.
+- market_data: CSV/provided OHLC candles
+- market_data_source: Configured CSV market data
+- offline_live_logic_differences: Offline mirror uses the live auto-scalping price-movement fallback only. It does not call MT5 GetMarketSnapshot, does not use live M5/M15/H1 indicator snapshot scoring, does not call AI confirmation, does not inspect open positions, and does not execute orders.
+- real_strategy_candidates_used: Yes
+- sample_fixture_used: No
+- simulation_type: Realistic simulation only; not live proof
+- skipped_or_hold_signals: 623
+- ticks_loaded: 0

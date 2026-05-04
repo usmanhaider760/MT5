@@ -9,6 +9,11 @@ namespace MT5TradingBot.Modules.Scalping
 {
     public sealed class ScalpingSessionService : IScalpingSessionService
     {
+        private const int ProfessionalMaxScalpsPerSession = 6;
+        private const int ProfessionalMinDecisionScore = 6;
+        private const double ProfessionalMinRiskReward = 1.5;
+        private const double ProfessionalMaxSpreadPercentOfTp = 20.0;
+
         private readonly MT5Bridge _bridge;
         private readonly INewsCalendarService? _newsCalendar;
         private readonly ApiIntegrationConfig _apiConfig;
@@ -136,12 +141,22 @@ namespace MT5TradingBot.Modules.Scalping
                         continue;
                     }
 
-                    if (symbol.SpreadPips > cfg.MaxSpreadPips)
+                    var liveConfig = ResolveLiveScalpingConfig(cfg, symbol, snapshot: null);
+                    if (!liveConfig.CanTrade)
+                    {
+                        LogScalpSeparator();
+                        Log($"[SCALP] Waiting: {liveConfig.Reason} {BuildPriceSummary(request, liveConfig.Config, symbol)}");
+                        await Delay(cfg, ct).ConfigureAwait(false);
+                        continue;
+                    }
+
+                    var effectiveCfg = liveConfig.Config;
+                    if (symbol.SpreadPips > effectiveCfg.MaxSpreadPips)
                     {
                         LogScalpSeparator();
                         Log(
-                            $"[SCALP] Waiting: spread is too high ({symbol.SpreadPips:F1} pips, allowed {cfg.MaxSpreadPips:F1}). " +
-                            BuildPriceSummary(request, cfg, symbol));
+                            $"[SCALP] Waiting: spread is too high ({symbol.SpreadPips:F1} pips, allowed {effectiveCfg.MaxSpreadPips:F1}). " +
+                            BuildPriceSummary(request, effectiveCfg, symbol));
                         await Delay(cfg, ct).ConfigureAwait(false);
                         continue;
                     }
@@ -180,22 +195,45 @@ namespace MT5TradingBot.Modules.Scalping
                     }
 
                     double mid = (symbol.Ask + symbol.Bid) / 2.0;
-                    TradeType probeDirection = ResolveProbeDirection(cfg.DirectionMode, request.SignalDirection);
-                    var probe = BuildRequest(request, cfg, symbol, probeDirection);
+                    TradeType probeDirection = ResolveProbeDirection(effectiveCfg.DirectionMode, request.SignalDirection);
+                    var probe = BuildRequest(request, effectiveCfg, symbol, probeDirection);
                     JObject? snapshot = null;
-                    if (cfg.DirectionMode == ScalpingDirectionMode.Auto || cfg.RequireSnapshotConfirmation || request.ConfirmWithAiAsync != null)
+                    if (effectiveCfg.DirectionMode == ScalpingDirectionMode.Auto || effectiveCfg.RequireSnapshotConfirmation || request.ConfirmWithAiAsync != null)
                     {
-                        try { snapshot = await _bridge.GetMarketSnapshotAsync(probe, new BotConfig { MaxSpreadPips = cfg.MaxSpreadPips }).ConfigureAwait(false); }
+                        try { snapshot = await _bridge.GetMarketSnapshotAsync(probe, new BotConfig { MaxSpreadPips = effectiveCfg.MaxSpreadPips }).ConfigureAwait(false); }
                         catch (Exception ex) { Log($"[SCALP] Snapshot unavailable: {ex.Message}"); }
                     }
 
+                    if (snapshot != null)
+                    {
+                        liveConfig = ResolveLiveScalpingConfig(cfg, symbol, snapshot);
+                        if (!liveConfig.CanTrade)
+                        {
+                            LogScalpSeparator();
+                            Log($"[SCALP] Waiting: {liveConfig.Reason} {BuildPriceSummary(request, liveConfig.Config, symbol)}");
+                            await Delay(cfg, ct).ConfigureAwait(false);
+                            continue;
+                        }
+
+                        effectiveCfg = liveConfig.Config;
+                    }
+
+                    if (LiveValuesChanged(cfg, effectiveCfg))
+                    {
+                        Log(
+                            $"[SCALP] Live values adjusted from saved settings: " +
+                            $"SL {cfg.StopLossPips:F1}->{effectiveCfg.StopLossPips:F1} pips, " +
+                            $"TP {cfg.TakeProfitPips:F1}->{effectiveCfg.TakeProfitPips:F1} pips, " +
+                            $"max spread {cfg.MaxSpreadPips:F1}->{effectiveCfg.MaxSpreadPips:F1} pips.");
+                    }
+
                     var decision = snapshot != null
-                        ? ResolveScalpingDecision(snapshot, cfg, probeDirection)
-                        : ResolvePriceMovementDecision(cfg, probeDirection, mid, lastMid);
+                        ? ResolveScalpingDecision(snapshot, effectiveCfg, probeDirection)
+                        : ResolvePriceMovementDecision(effectiveCfg, probeDirection, mid, lastMid);
                     lastMid = mid;
 
                     LogScalpSeparator();
-                    Log(BuildDecisionTrace(request, cfg, symbol, decision, snapshot));
+                    Log(BuildDecisionTrace(request, effectiveCfg, symbol, decision, snapshot));
 
                     if (!decision.Approved)
                     {
@@ -204,7 +242,7 @@ namespace MT5TradingBot.Modules.Scalping
                         continue;
                     }
 
-                    if (cfg.UseAiConfirmation && snapshot != null && request.ConfirmWithAiAsync != null)
+                    if (effectiveCfg.UseAiConfirmation && snapshot != null && request.ConfirmWithAiAsync != null)
                     {
                         var ai = await request.ConfirmWithAiAsync(snapshot, decision.Direction).ConfigureAwait(false);
                         if (!ai.Approved)
@@ -216,9 +254,9 @@ namespace MT5TradingBot.Modules.Scalping
                         Log($"[SCALP] AI agreed with the trade: {ai.Reason}");
                     }
 
-                    var trade = BuildRequest(request, cfg, symbol, decision.Direction, decision);
+                    var trade = BuildRequest(request, effectiveCfg, symbol, decision.Direction, decision);
                     Log(
-                        $"[SCALP] Trying trade {openedTrades + 1}/{cfg.MaxTrades}: {trade.TradeType} {trade.Pair}, " +
+                        $"[SCALP] Trying trade {openedTrades + 1}/{effectiveCfg.MaxTrades}: {trade.TradeType} {trade.Pair}, " +
                         $"lot {trade.LotSize:F2}, entry around {(trade.TradeType == TradeType.BUY ? symbol.Ask : symbol.Bid):F5}, " +
                         $"stop loss {trade.StopLoss:F5}, take profit {trade.TakeProfit:F5}.");
                     var result = await request.ExecuteAsync(trade).ConfigureAwait(false);
@@ -257,22 +295,218 @@ namespace MT5TradingBot.Modules.Scalping
 
         private static ScalpingConfig Normalize(ScalpingConfig cfg) => new()
         {
-            MaxTrades = Math.Clamp(cfg.MaxTrades, 1, 50),
-            MaxMinutes = Math.Clamp(cfg.MaxMinutes, 1, 240),
+            MaxTrades = Math.Clamp(cfg.MaxTrades, 1, ProfessionalMaxScalpsPerSession),
+            MaxMinutes = Math.Clamp(cfg.MaxMinutes, 1, 90),
             MaxSessionLossUsd = Math.Max(0, cfg.MaxSessionLossUsd),
             ProfitTargetUsd = Math.Max(0, cfg.ProfitTargetUsd),
             StopLossPips = Math.Max(1, cfg.StopLossPips),
             TakeProfitPips = Math.Max(1, cfg.TakeProfitPips),
             MaxSpreadPips = Math.Max(0.1, cfg.MaxSpreadPips),
+            DynamicValuesEnabled = cfg.DynamicValuesEnabled,
+            MinStopLossPips = Math.Max(0, cfg.MinStopLossPips),
+            MaxStopLossPips = Math.Max(0, cfg.MaxStopLossPips),
+            MinTakeProfitPips = Math.Max(0, cfg.MinTakeProfitPips),
+            MaxTakeProfitPips = Math.Max(0, cfg.MaxTakeProfitPips),
             PollIntervalMs = Math.Clamp(cfg.PollIntervalMs, 500, 10000),
             CooldownSeconds = Math.Clamp(cfg.CooldownSeconds, 1, 600),
             DirectionMode = cfg.DirectionMode,
             AllowPyramiding = cfg.AllowPyramiding
             ,
             RequireSnapshotConfirmation = cfg.RequireSnapshotConfirmation,
-            MinDecisionScore = Math.Clamp(cfg.MinDecisionScore, 1, 10),
+            MinDecisionScore = Math.Clamp(Math.Max(cfg.MinDecisionScore, ProfessionalMinDecisionScore), 1, 10),
             UseAiConfirmation = cfg.UseAiConfirmation
         };
+
+        private static LiveScalpingConfigResult ResolveLiveScalpingConfig(
+            ScalpingConfig cfg,
+            SymbolInfo symbol,
+            JObject? snapshot)
+        {
+            if (!cfg.DynamicValuesEnabled)
+                return new LiveScalpingConfigResult(cfg, true, "");
+
+            double spread = IsFinitePositive(symbol.SpreadPips) ? symbol.SpreadPips : 0;
+            if (spread > cfg.MaxSpreadPips)
+            {
+                return new LiveScalpingConfigResult(
+                    cfg,
+                    false,
+                    $"spread {spread:F1} pips is above the user ceiling {cfg.MaxSpreadPips:F1} pips.");
+            }
+
+            var brokerLevels = ResolveBrokerLevelPips(symbol, snapshot);
+            if (!brokerLevels.HasCompleteData && snapshot != null)
+            {
+                return new LiveScalpingConfigResult(
+                    cfg,
+                    false,
+                    "broker stop/freeze-level data is unavailable from symbol info and market snapshot.");
+            }
+
+            double minSl = cfg.MinStopLossPips > 0
+                ? cfg.MinStopLossPips
+                : Math.Max(1, Math.Min(cfg.StopLossPips, Math.Max(1, spread * 2.0)));
+            double maxSl = cfg.MaxStopLossPips >= minSl
+                ? cfg.MaxStopLossPips
+                : Math.Max(minSl, cfg.StopLossPips);
+            double minTp = cfg.MinTakeProfitPips > 0
+                ? cfg.MinTakeProfitPips
+                : Math.Max(1, Math.Min(cfg.TakeProfitPips, minSl));
+            double maxTp = cfg.MaxTakeProfitPips >= minTp
+                ? cfg.MaxTakeProfitPips
+                : Math.Max(minTp, Math.Max(cfg.TakeProfitPips, cfg.MaxStopLossPips > 0 ? cfg.MaxStopLossPips : cfg.TakeProfitPips));
+
+            double brokerMinimum = brokerLevels.HasCompleteData
+                ? Math.Max(brokerLevels.StopLevelPips, brokerLevels.FreezeLevelPips) + 1.0
+                : 0;
+            double atrPips = ReadAtrPips(snapshot, symbol);
+            double requiredSl = Math.Max(minSl, Math.Max(spread * 2.5, brokerMinimum));
+            if (IsFinitePositive(atrPips))
+                requiredSl = Math.Max(requiredSl, atrPips);
+
+            if (requiredSl > maxSl + 1e-9)
+            {
+                string reason = IsFinitePositive(atrPips) && atrPips >= requiredSl - 1e-9
+                    ? $"market volatility is too high for scalping: ATR needs about {requiredSl:F1} SL pips, above the guardrail {maxSl:F1} pips"
+                    : $"live conditions require about {requiredSl:F1} SL pips, above the guardrail {maxSl:F1} pips";
+                return new LiveScalpingConfigResult(
+                    cfg,
+                    false,
+                    reason + ".");
+            }
+
+            double slPips = RoundHalfPip(Math.Clamp(requiredSl, minSl, maxSl));
+            double preferredRr = cfg.StopLossPips > 0
+                ? Math.Max(ProfessionalMinRiskReward, cfg.TakeProfitPips / cfg.StopLossPips)
+                : ProfessionalMinRiskReward;
+            double requiredTp = Math.Max(
+                minTp,
+                Math.Max(slPips * preferredRr, spread * (100.0 / ProfessionalMaxSpreadPercentOfTp)));
+            if (requiredTp > maxTp + 1e-9)
+            {
+                return new LiveScalpingConfigResult(
+                    cfg,
+                    false,
+                    $"live conditions require about {requiredTp:F1} TP pips to preserve spread/R:R rules, above the guardrail {maxTp:F1} pips.");
+            }
+
+            double tpPips = RoundHalfPip(Math.Clamp(requiredTp, minTp, maxTp));
+            double maxSpreadPips = RoundHalfPip(Math.Min(
+                cfg.MaxSpreadPips,
+                Math.Min(
+                    tpPips * ProfessionalMaxSpreadPercentOfTp / 100.0,
+                    Math.Max(spread + 1.0, spread * 1.25))));
+
+            var effective = CopyScalpingConfig(cfg);
+            effective.StopLossPips = slPips;
+            effective.TakeProfitPips = tpPips;
+            effective.MaxSpreadPips = Math.Max(0.1, maxSpreadPips);
+
+            return new LiveScalpingConfigResult(effective, true, "");
+        }
+
+        private static ScalpingConfig CopyScalpingConfig(ScalpingConfig cfg) => new()
+        {
+            MaxTrades = cfg.MaxTrades,
+            MaxMinutes = cfg.MaxMinutes,
+            MaxSessionLossUsd = cfg.MaxSessionLossUsd,
+            ProfitTargetUsd = cfg.ProfitTargetUsd,
+            StopLossPips = cfg.StopLossPips,
+            TakeProfitPips = cfg.TakeProfitPips,
+            MaxSpreadPips = cfg.MaxSpreadPips,
+            DynamicValuesEnabled = cfg.DynamicValuesEnabled,
+            MinStopLossPips = cfg.MinStopLossPips,
+            MaxStopLossPips = cfg.MaxStopLossPips,
+            MinTakeProfitPips = cfg.MinTakeProfitPips,
+            MaxTakeProfitPips = cfg.MaxTakeProfitPips,
+            PollIntervalMs = cfg.PollIntervalMs,
+            CooldownSeconds = cfg.CooldownSeconds,
+            DirectionMode = cfg.DirectionMode,
+            AllowPyramiding = cfg.AllowPyramiding,
+            RequireSnapshotConfirmation = cfg.RequireSnapshotConfirmation,
+            MinDecisionScore = cfg.MinDecisionScore,
+            UseAiConfirmation = cfg.UseAiConfirmation
+        };
+
+        private static double ReadAtrPips(JObject? snapshot, SymbolInfo symbol)
+        {
+            if (snapshot == null)
+                return double.NaN;
+
+            double atr = ReadNumber(snapshot, "indicators.m5.atr");
+            if (!IsFinitePositive(atr))
+                atr = ReadNumber(snapshot, "indicators.m15.atr");
+            if (!IsFinitePositive(atr))
+                return double.NaN;
+
+            double? pointSize = symbol.EffectivePointSize;
+            if (!pointSize.HasValue || pointSize.Value <= 0)
+                return double.NaN;
+
+            double pipSize = symbol.Digits is 3 or 5
+                ? pointSize.Value * 10.0
+                : pointSize.Value;
+
+            return pipSize > 0 ? atr / pipSize : double.NaN;
+        }
+
+        private static BrokerLevelPips ResolveBrokerLevelPips(SymbolInfo symbol, JObject? snapshot)
+        {
+            double? stopPips = symbol.StopLevelPips;
+            double? freezePips = symbol.FreezeLevelPips;
+            double symbolStopPips = stopPips.GetValueOrDefault(double.NaN);
+            double symbolFreezePips = freezePips.GetValueOrDefault(double.NaN);
+            if (IsFiniteNonNegative(symbolStopPips) &&
+                IsFiniteNonNegative(symbolFreezePips))
+            {
+                return new BrokerLevelPips(symbolStopPips, symbolFreezePips, true);
+            }
+
+            if (snapshot == null)
+                return new BrokerLevelPips(0, 0, false);
+
+            double stopPoints = ReadNumber(snapshot, "symbol.stop_level");
+            double freezePoints = ReadNumber(snapshot, "symbol.freeze_level");
+            double pointSize = ReadNumber(snapshot, "symbol.point_size");
+            double pipSize = ReadNumber(snapshot, "symbol.pip_size");
+
+            if (!IsFinitePositive(pointSize))
+                pointSize = symbol.EffectivePointSize ?? double.NaN;
+            if (!IsFinitePositive(pipSize))
+            {
+                double fallbackPoint = symbol.EffectivePointSize ?? double.NaN;
+                pipSize = symbol.Digits is 3 or 5
+                    ? fallbackPoint * 10.0
+                    : fallbackPoint;
+            }
+
+            if (!IsFiniteNonNegative(stopPoints) ||
+                !IsFiniteNonNegative(freezePoints) ||
+                !IsFinitePositive(pointSize) ||
+                !IsFinitePositive(pipSize))
+            {
+                return new BrokerLevelPips(0, 0, false);
+            }
+
+            return new BrokerLevelPips(
+                stopPoints * pointSize / pipSize,
+                freezePoints * pointSize / pipSize,
+                true);
+        }
+
+        private static bool LiveValuesChanged(ScalpingConfig saved, ScalpingConfig effective) =>
+            Math.Abs(saved.StopLossPips - effective.StopLossPips) > 0.05 ||
+            Math.Abs(saved.TakeProfitPips - effective.TakeProfitPips) > 0.05 ||
+            Math.Abs(saved.MaxSpreadPips - effective.MaxSpreadPips) > 0.05;
+
+        private static double RoundHalfPip(double value) =>
+            Math.Round(value * 2.0, MidpointRounding.AwayFromZero) / 2.0;
+
+        private static bool IsFinitePositive(double value) =>
+            !double.IsNaN(value) && !double.IsInfinity(value) && value > 0;
+
+        private static bool IsFiniteNonNegative(double value) =>
+            !double.IsNaN(value) && !double.IsInfinity(value) && value >= 0;
 
         private static bool IsSessionStoppingError(string? errorCode) =>
             string.Equals(errorCode, "DAILY_LIMIT", StringComparison.OrdinalIgnoreCase);
@@ -373,11 +607,21 @@ namespace MT5TradingBot.Modules.Scalping
             double currentMid,
             double? previousMid)
         {
+            if (cfg.RequireSnapshotConfirmation)
+            {
+                return new ScalpingDecision(
+                    false,
+                    0,
+                    probeDirection,
+                    "full market snapshot confirmation is required before scalping",
+                    $"Current middle price {currentMid:F5}; snapshot unavailable");
+            }
+
             if (previousMid == null)
             {
                 return new ScalpingDecision(
-                    true,
-                    cfg.MinDecisionScore,
+                    false,
+                    0,
                     probeDirection,
                     "waiting for one more price update to compare direction",
                     $"Current middle price {currentMid:F5}; previous middle price not available");
@@ -467,12 +711,18 @@ namespace MT5TradingBot.Modules.Scalping
 
             double supportDist = ReadNumber(snapshot, "levels.distance_to_support_pips");
             double resistanceDist = ReadNumber(snapshot, "levels.distance_to_resistance_pips");
-            if (buy && !double.IsNaN(resistanceDist) && resistanceDist > cfg.TakeProfitPips * 1.2)
+            double targetRoomMultiplier = 1.2;
+            if (buy && !double.IsNaN(resistanceDist) && resistanceDist <= cfg.TakeProfitPips * targetRoomMultiplier)
+                return new ScalpingDecision(false, score, direction, "not enough room to resistance for the required TP", BuildSnapshotTrace(snapshot, cfg, direction, score, reasons));
+            if (!buy && !double.IsNaN(supportDist) && supportDist <= cfg.TakeProfitPips * targetRoomMultiplier)
+                return new ScalpingDecision(false, score, direction, "not enough room to support for the required TP", BuildSnapshotTrace(snapshot, cfg, direction, score, reasons));
+
+            if (buy && !double.IsNaN(resistanceDist))
             {
                 score++;
                 reasons.Add("room to resistance");
             }
-            if (!buy && !double.IsNaN(supportDist) && supportDist > cfg.TakeProfitPips * 1.2)
+            if (!buy && !double.IsNaN(supportDist))
             {
                 score++;
                 reasons.Add("room to support");
@@ -518,7 +768,7 @@ namespace MT5TradingBot.Modules.Scalping
 
         private static string BuildPriceSummary(ScalpingSessionRequest request, ScalpingConfig cfg, SymbolInfo symbol)
         {
-            double pipValue = LotCalculator.GetPipValuePerLot(request.Pair.ToUpperInvariant()) * Math.Max(0.01, request.LotSize);
+            double pipValue = EstimatePipValuePerLot(request.Pair, symbol) * Math.Max(0.01, request.LotSize);
             double slPips = Math.Max(1, cfg.StopLossPips);
             double tpPips = Math.Max(1, cfg.TakeProfitPips);
             return
@@ -527,6 +777,22 @@ namespace MT5TradingBot.Modules.Scalping
                 $"Lot {request.LotSize:F2}; each pip about ${pipValue:F2}. " +
                 $"Risk if SL hits: {slPips:F1} pips / about ${slPips * pipValue:F2}. " +
                 $"Profit target: {tpPips:F1} pips / about ${tpPips * pipValue:F2}.";
+        }
+
+        private static double EstimatePipValuePerLot(string pair, SymbolInfo symbol)
+        {
+            double pipSize = symbol.Digits is 3 or 5
+                ? (symbol.EffectivePointSize ?? LotCalculator.GetPipSize(pair)) * 10.0
+                : symbol.EffectivePointSize ?? LotCalculator.GetPipSize(pair);
+
+            if (IsFinitePositive(symbol.TickValue.GetValueOrDefault()) &&
+                IsFinitePositive(symbol.TickSize.GetValueOrDefault()) &&
+                IsFinitePositive(pipSize))
+            {
+                return symbol.TickValue!.Value * pipSize / symbol.TickSize!.Value;
+            }
+
+            return LotCalculator.GetPipValuePerLot(pair.ToUpperInvariant());
         }
 
         private static string BuildSnapshotTrace(
@@ -631,5 +897,15 @@ namespace MT5TradingBot.Modules.Scalping
 
         private void Log(string message) => OnLog?.Invoke(message);
         private void Status(string status) => OnStatusChanged?.Invoke(status);
+
+        private readonly record struct LiveScalpingConfigResult(
+            ScalpingConfig Config,
+            bool CanTrade,
+            string Reason);
+
+        private readonly record struct BrokerLevelPips(
+            double StopLevelPips,
+            double FreezeLevelPips,
+            bool HasCompleteData);
     }
 }

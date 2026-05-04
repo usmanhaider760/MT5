@@ -1,10 +1,8 @@
 using MT5TradingBot.Core;
 using MT5TradingBot.Data;
 using MT5TradingBot.Models;
-using MT5TradingBot.Modules.Alerts;
 using MT5TradingBot.Modules.BrokerIntegration;
 using MT5TradingBot.Modules.Deployment;
-using MT5TradingBot.Modules.LiveReadiness;
 using MT5TradingBot.Modules.NewsFilter;
 using MT5TradingBot.Modules.PairSettings;
 using MT5TradingBot.Modules.RiskManagement;
@@ -39,9 +37,6 @@ namespace MT5TradingBot.Services
         private ApiIntegrationConfig _apiConfig;
         private readonly IRiskManager _riskManager;
         private readonly ITradeExecutionService _tradeExecution;
-        private readonly ILiveReadinessGate _liveReadinessGate;
-        private readonly IBrokerDeploymentChecklist _brokerDeploymentChecklist;
-        private readonly IAlertService? _alertService;
         private readonly ITelegramService _telegram;
         private readonly ITradeRepository? _tradeDb;
         private readonly Func<DateTime> _utcNow;
@@ -152,11 +147,8 @@ namespace MT5TradingBot.Services
             ApiIntegrationConfig? apiConfig = null,
             IRiskManager? riskManager = null,
             ITradeExecutionService? tradeExecution = null,
-            ILiveReadinessGate? liveReadinessGate = null,
-            IBrokerDeploymentChecklist? brokerDeploymentChecklist = null,
             ITradeRepository? tradeRepository = null,
-            Func<DateTime>? utcNowProvider = null,
-            IAlertService? alertService = null)
+            Func<DateTime>? utcNowProvider = null)
         {
             _bridge = bridge;
             _cfg = cfg;
@@ -165,10 +157,6 @@ namespace MT5TradingBot.Services
             _apiConfig = apiConfig ?? new ApiIntegrationConfig();
             _riskManager = riskManager ?? new RiskManager(_pairSettings);
             _tradeExecution = tradeExecution ?? new TradeExecutionService(bridge);
-            _liveReadinessGate = liveReadinessGate ?? new LiveReadinessGate();
-            _brokerDeploymentChecklist = brokerDeploymentChecklist ??
-                new BrokerDeploymentChecklist(bridge, _newsCalendar, _apiConfig);
-            _alertService = alertService ?? CreateConfiguredAlertService(cfg);
             _tradeDb = tradeRepository;
             _utcNow = utcNowProvider ?? (() => DateTime.UtcNow);
             _telegram = (!string.IsNullOrWhiteSpace(_apiConfig.TelegramBotToken) &&
@@ -769,7 +757,6 @@ namespace MT5TradingBot.Services
 
         private async Task<TradeResult> ExecuteTradeWithValidationCoreAsync(TradeRequest request)
         {
-            double requestedLotBeforeRisk = request.LotSize;
             if (_edgePaused)
             {
                 return new TradeResult
@@ -783,42 +770,11 @@ namespace MT5TradingBot.Services
             }
 
             EnsureKillSwitchLoaded();
-            bool liveReadinessApplies = _cfg.EnableFinalLiveReadinessGate &&
-                (!_cfg.PaperTrading || _cfg.ApplyFinalLiveReadinessGateToPaper);
-            BrokerDeploymentChecklistResult? brokerDeployment = null;
-            if (liveReadinessApplies && _cfg.RequireBrokerReadinessForLive)
-            {
-                brokerDeployment = await _brokerDeploymentChecklist
-                    .CheckAsync(request, _cfg, _cts.Token)
-                    .ConfigureAwait(false);
-            }
-
-            var liveReadiness = _liveReadinessGate.Evaluate(_cfg, new LiveReadinessContext
-            {
-                IsLiveMode = !_cfg.PaperTrading,
-                KillSwitchActive = _killSwitchState.KillSwitchActive,
-                EmergencyStopActive = _emergencyStopFired,
-                BrokerDeploymentResult = brokerDeployment
-            });
-            if (!liveReadiness.IsAllowed)
-            {
-                Log($"[SAFETY] Live readiness gate blocked {request.Id}: " +
-                    string.Join(", ", liveReadiness.FailedCriteria));
-                await TryRaiseSafetyAlertAsync((alerts, ct) =>
-                    alerts.AlertLiveReadinessBlockedAsync(
-                        $"Live readiness gate blocked trade {request.Id}.",
-                        liveReadiness.FailedCriteria,
-                        ct)).ConfigureAwait(false);
-                return Fail(request.Id, LiveReadinessCodes.Blocked, liveReadiness.FailureMessage);
-            }
-
             if (!_cfg.PaperTrading && (_killSwitchState.KillSwitchActive || _emergencyStopFired))
             {
                 string reason = string.IsNullOrWhiteSpace(_killSwitchState.KillSwitchReason)
                     ? "Kill switch is active after emergency drawdown."
                     : _killSwitchState.KillSwitchReason;
-                await TryRaiseSafetyAlertAsync((alerts, ct) =>
-                    alerts.AlertKillSwitchTriggeredAsync(reason, ct)).ConfigureAwait(false);
                 return Fail(request.Id, "KILL_SWITCH_ACTIVE", reason);
             }
 
@@ -826,6 +782,10 @@ namespace MT5TradingBot.Services
             try
             {
                 bool liveMode = !_cfg.PaperTrading;
+                var rolloutBlock = CheckRolloutStage(request.Id, liveMode);
+                if (rolloutBlock != null)
+                    return rolloutBlock;
+
                 var noTradeWindowBlock = CheckNoTradeWindow(request.Id, liveMode);
                 if (noTradeWindowBlock != null)
                     return noTradeWindowBlock;
@@ -1054,15 +1014,6 @@ namespace MT5TradingBot.Services
                 request.LotSize = riskResult.ValidatedLotSize >= 0.01
                     ? riskResult.ValidatedLotSize
                     : request.LotSize;
-
-                var rolloutCapBlock = CheckTinyLiveRiskCaps(
-                    request.Id,
-                    riskResult,
-                    requestedLotBeforeRisk,
-                    request.LotSize,
-                    liveMode);
-                if (rolloutCapBlock != null)
-                    return rolloutCapBlock;
 
                 var lotSizeBlock = CheckBrokerLotSize(
                     request.Id,
@@ -1512,8 +1463,6 @@ namespace MT5TradingBot.Services
             {
                 string reason = $"Emergency drawdown {drawdownPct:F1}% exceeded limit {_cfg.EmergencyCloseDrawdownPct:F1}%.";
                 ActivateKillSwitch(reason, drawdownPct, account);
-                await TryRaiseSafetyAlertAsync((alerts, ct) =>
-                    alerts.AlertKillSwitchTriggeredAsync(reason, ct)).ConfigureAwait(false);
                 Log($"🚨 EMERGENCY STOP: Drawdown {drawdownPct:F1}% exceeded limit " +
                     $"{_cfg.EmergencyCloseDrawdownPct:F1}% — CLOSING ALL POSITIONS");
 
@@ -1552,13 +1501,6 @@ namespace MT5TradingBot.Services
                 Log(anyCloseFailed
                     ? "[SAFETY] Emergency close-all had failures. Kill switch remains active."
                     : "[SAFETY] Kill switch remains active until explicit clear.");
-                await TryRaiseSafetyAlertAsync((alerts, ct) =>
-                    alerts.AlertEmergencyCloseAsync(
-                        anyCloseFailed,
-                        anyCloseFailed
-                            ? "Emergency close-all completed with one or more failed close attempts."
-                            : "Emergency close-all attempts completed.",
-                        ct)).ConfigureAwait(false);
                 OnBotStatusChanged?.Invoke(false);
             }
         }
@@ -1837,42 +1779,6 @@ namespace MT5TradingBot.Services
             return Fail(requestId, code, check.Message);
         }
 
-        private TradeResult? CheckTinyLiveRiskCaps(
-            string requestId,
-            RiskValidationResult riskResult,
-            double requestedLotBeforeRisk,
-            double validatedLotSize,
-            bool liveMode)
-        {
-            if (!liveMode || !_cfg.EnableStagedRollout ||
-                !string.Equals(
-                    RolloutStateMachine.NormalizeStage(_cfg.CurrentRolloutStage),
-                    RolloutStages.TinyLive,
-                    StringComparison.Ordinal))
-            {
-                return null;
-            }
-
-            if (_cfg.MaxTinyLiveRiskPercent > 0 &&
-                riskResult.RiskPercent > _cfg.MaxTinyLiveRiskPercent)
-            {
-                return Fail(requestId, RolloutCodes.TinyRiskCap,
-                    $"TinyLive risk cap exceeded: {riskResult.RiskPercent:F2}% > {_cfg.MaxTinyLiveRiskPercent:F2}%.");
-            }
-
-            if (_cfg.MaxTinyLiveLotMultiplier > 0 && IsFinitePositive(requestedLotBeforeRisk))
-            {
-                double maxTinyLot = requestedLotBeforeRisk * _cfg.MaxTinyLiveLotMultiplier;
-                if (validatedLotSize > maxTinyLot + 0.0000001)
-                {
-                    return Fail(requestId, RolloutCodes.TinyLotCap,
-                        $"TinyLive lot cap exceeded: {validatedLotSize:F2} > {maxTinyLot:F2}.");
-                }
-            }
-
-            return null;
-        }
-
         private TradeResult? CheckNoTradeWindow(string requestId, bool liveMode)
         {
             if (!liveMode)
@@ -1886,6 +1792,30 @@ namespace MT5TradingBot.Services
                 ? "NO_TRADE_WINDOW_CONFIG_INVALID"
                 : "ROLLOVER_NO_TRADE_WINDOW";
             return Fail(requestId, code, check.Message);
+        }
+
+        private TradeResult? CheckRolloutStage(string requestId, bool liveMode)
+        {
+            if (!liveMode || !_cfg.EnableStagedRollout)
+                return null;
+
+            var result = new RolloutEvaluator().Evaluate(new RolloutEvaluationInput
+            {
+                Config = _cfg,
+                IsLiveOrderRequested = true,
+                LiveReadinessGatePassed = true,
+                ExplicitUserConfirmation = true,
+                KillSwitchActive = _killSwitchState.KillSwitchActive || _emergencyStopFired
+            });
+
+            if (result.Action != RolloutAction.Block)
+                return null;
+
+            string detail = result.FailedCriteria.Count > 0
+                ? string.Join(" ", result.FailedCriteria)
+                : result.Reason;
+            Log($"[SAFETY] Rollout stage blocked live order: {detail}");
+            return Fail(requestId, "ROLLOUT_STAGE_BLOCKED", detail);
         }
 
         private TradeResult? CheckSessionSpread(
@@ -2494,33 +2424,6 @@ namespace MT5TradingBot.Services
             Log_Static($"🚫 [{code}] {msg}");
             return new TradeResult { RequestId = reqId, Status = TradeStatus.Rejected,
                 ErrorCode = code, ErrorMessage = msg };
-        }
-
-        private static IAlertService? CreateConfiguredAlertService(BotConfig cfg)
-        {
-            if (!cfg.SafetyAlerts.Enabled || string.IsNullOrWhiteSpace(cfg.SafetyAlerts.AlertHistoryFile))
-                return null;
-
-            return new AlertService(
-                new JsonFileAlertSink(cfg.SafetyAlerts.AlertHistoryFile),
-                cfg.SafetyAlerts);
-        }
-
-        private async Task TryRaiseSafetyAlertAsync(
-            Func<IAlertService, CancellationToken, Task<SafetyAlert?>> raise)
-        {
-            if (_alertService == null)
-                return;
-
-            try
-            {
-                await raise(_alertService, _cts.Token).ConfigureAwait(false);
-            }
-            catch (OperationCanceledException) when (_cts.IsCancellationRequested) { }
-            catch (Exception ex)
-            {
-                Log($"[ALERT] Safety alert failed: {ex.Message}");
-            }
         }
 
         private void EnsureFolders()

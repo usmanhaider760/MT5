@@ -5,8 +5,8 @@ Scope: P3 final proof reporting only. This package does not change strategy logi
 ## Executive Classification
 
 - Evidence classification: Inconclusive
-- Readiness recommendation: collect more data
-- Real-money status: block live trading until all go criteria are met
+- Readiness recommendation: block live trading
+- Report file: `FINAL_STRATEGY_PROOF_PACKAGE.md`
 
 ## Required Warnings
 
@@ -17,49 +17,78 @@ Scope: P3 final proof reporting only. This package does not change strategy logi
 
 ## Go/No-Go Criteria
 
-| Criterion | Required | Current Evidence | Status |
+| Criterion | Required | Observed | Status |
 |---|---:|---:|---|
-| Minimum completed realistic backtest trades | 300 | Not supplied | No-go |
-| Minimum profit factor after costs | 1.20 | Not supplied | No-go |
-| Minimum expectancy after costs | > 0.00 USD | Not supplied | No-go |
-| Maximum drawdown | Configured tolerance | Not supplied | No-go |
-| Maximum losing streak | Configured tolerance | Not supplied | No-go |
-| Acceptable cost sensitivity degradation | Within configured tolerance | Not supplied | No-go |
-| Acceptable demo/paper reconciliation | Matches | Not supplied | No-go |
-| No critical repaint/lookahead findings | No Critical | Critical old trade-summary limitation present | No-go |
+| Minimum completed realistic backtest trades | 300 | 20 | No-go |
+| Minimum profit factor after costs | 1.2 | 0.72 | No-go |
+| Minimum expectancy after costs | $0.01 | $-0.81 | No-go |
+| Maximum drawdown | ∞ | $20.88 | Go |
+| Maximum losing streak | 2147483647 | 2 | Go |
+| Acceptable cost sensitivity degradation | ∞ | Missing | No-go |
+| Acceptable demo/paper reconciliation | Matches | Missing | No-go |
+| No critical repaint/lookahead findings | No Critical | Critical present | No-go |
 
 ## Evidence Summaries
 
-- Strategy extraction findings: The base deterministic strategy is documented as mostly HOLD; Buy/Sell depends on auto-scalping, AI, or manual paths.
-- Repaint/lookahead audit findings: A Critical old trade-summary limitation is present. Old closed-trade summaries must not be treated as strategy-edge proof.
-- Realistic backtest result summary: `REALISTIC_BACKTEST_REPORT.md` was not available when this package was created.
-- Signal quality metrics: Not supplied.
-- Segmented performance summary: Not supplied.
-- Cost sensitivity summary: Not supplied.
-- Robustness summary: Not supplied.
-- AI filter impact summary: Not supplied.
-- Demo/paper reconciliation summary: Not supplied.
-- Strategy edge verdict: Inconclusive.
-- Live-demo readiness recommendation: collect more data before any live-readiness claim.
-
-## Next-Step Recommendation
-
-- collect more data
-- continue paper testing
-- proceed to demo forward test only after a full realistic backtest package passes go/no-go criteria
-- block live trading until realistic backtest, repaint/lookahead, AI impact, and demo/paper reconciliation evidence all pass
+- Strategy extraction findings: Base deterministic strategy is documented as mostly HOLD; Buy/Sell depends on auto-scalping, AI, or manual paths.
+- Repaint/lookahead audit findings: Critical audit finding is present; positive classification is blocked.
+- Realistic backtest result summary: Realistic backtest report text is available.
+- Signal quality metrics: completed 20, PF 0.72, expectancy $-0.81, drawdown $20.88, losing streak 2.
+- Segmented performance summary: best Not verified; worst Not verified.
+- Cost sensitivity summary: Unavailable.
+- Robustness summary: Unavailable.
+- AI filter impact summary: Unavailable.
+- Demo/paper reconciliation summary: Unavailable.
+- Strategy edge verdict: Fail.
+- Live-demo readiness recommendation: block live trading.
 
 ## Failed Criteria
 
-- Minimum completed realistic backtest trades not supplied.
-- Profit factor after costs not supplied.
-- Expectancy after costs not supplied.
-- Drawdown and losing-streak tolerance evidence not supplied.
-- Cost sensitivity evidence not supplied.
-- Demo/paper reconciliation evidence not supplied.
-- Critical old trade-summary limitation remains a no-go for using closed trade summaries as edge proof.
+- Minimum completed realistic backtest trades not met: 20 < 300.
+- Minimum profit factor after costs not met: 0.72 < 1.2.
+- Minimum expectancy after costs not met: $-0.81 < $0.01.
+- Acceptable demo/paper reconciliation is unavailable.
+- Critical repaint/lookahead finding blocks positive classification.
+
+## Warnings
+
+- This is not financial advice.
+- Backtest results are not live proof.
+- Real-money trading should remain blocked unless go criteria are met.
+- AI confirmation should not be trusted unless measured as improving expectancy.
+- Cost sensitivity summary is unavailable.
+- Demo/paper reconciliation summary is unavailable.
+- Segmented performance summary is unavailable.
+- Robustness summary is unavailable.
+- AI filter impact summary is unavailable.
+- One or more outcomes are missing signal source metadata and were grouped as unknown.
+- R-multiple data is unavailable; average R multiple was not calculated.
+- Backtest edge is not live proof.
+- Live demo/paper validation is still required.
+- AI should not be trusted unless AI impact analysis shows improvement.
+- Cost sensitivity analysis is missing.
+- Strategy robustness analysis is missing.
+- AI filter impact analysis is missing; AI should remain outside edge proof.
+- Completed trade sample is too small: 20 < required 300.
 
 ## Assumptions
 
-- This file is the repository-level target artifact for `FinalStrategyProofPackageGenerator`.
-- A real rerun should supply completed P3 analytics inputs instead of this placeholder evidence state.
+- ai_disabled_reason: AI disabled: no historical AI decisions were supplied and offline evidence generation must not call external AI APIs.
+- broker_connection: No MT5 or live broker connection required
+- candidates_generated_from_real_data: 20
+- candidate_generation_diagnostic: OFFLINE_AUTO_SCALPING_PRICE_MOVEMENT_CANDIDATES_GENERATED
+- candidate_generation_source: offline-auto-scalping-price-movement
+- candidate_source: Externally provided candidates
+- candles_loaded: 643
+- evidence_package_scope: Configured CSV market data was supplied; still not live proof.
+- execution_costs: BacktestExecutionCostModel spread, commission, and slippage estimates
+- incomplete_signals: 0
+- live_trading: Not enabled; no live orders are placed by this command.
+- market_data: CSV/provided OHLC candles
+- market_data_source: Configured CSV market data
+- offline_live_logic_differences: Offline mirror uses the live auto-scalping price-movement fallback only. It does not call MT5 GetMarketSnapshot, does not use live M5/M15/H1 indicator snapshot scoring, does not call AI confirmation, does not inspect open positions, and does not execute orders.
+- real_strategy_candidates_used: Yes
+- sample_fixture_used: No
+- simulation_type: Realistic simulation only; not live proof
+- skipped_or_hold_signals: 623
+- ticks_loaded: 0

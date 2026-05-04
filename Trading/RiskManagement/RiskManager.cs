@@ -1,5 +1,6 @@
 using MT5TradingBot.Core;
 using MT5TradingBot.Models;
+using MT5TradingBot.Modules.Deployment;
 using MT5TradingBot.Modules.PairSettings;
 
 namespace MT5TradingBot.Modules.RiskManagement
@@ -77,32 +78,46 @@ namespace MT5TradingBot.Modules.RiskManagement
                     ? livePrice
                     : EstimateMarketPrice(request);
 
+            double effectiveMaxRiskPercent = RolloutEvaluator.EffectiveMaxRiskPercent(config);
             double lotSize = config.AutoLotCalculation
                 ? LotCalculator.Calculate(
                     account.Equity,
-                    config.MaxRiskPercent,
+                    effectiveMaxRiskPercent,
                     referenceEntry,
                     request.StopLoss,
                     request.Pair)
                 : request.LotSize;
+
+            lotSize = RolloutEvaluator.ApplyTinyLiveLotCap(
+                config,
+                lotSize,
+                account.Equity,
+                referenceEntry,
+                request.StopLoss,
+                request.Pair,
+                riskPercent => LotCalculator.Calculate(
+                    account.Equity,
+                    riskPercent,
+                    referenceEntry,
+                    request.StopLoss,
+                    request.Pair));
 
             double riskReward = LotCalculator.RiskRewardRatio(
                 referenceEntry,
                 request.StopLoss,
                 request.TakeProfit);
             var pairRules = _pairSettings?.GetForPair(request.Pair);
-            double minRr = pairRules?.ScalpingMinRR > 0 ? pairRules.ScalpingMinRR : config.MinRRRatio;
+            double minRr = Math.Max(
+                1.5,
+                pairRules?.ScalpingMinRR > 0 ? pairRules.ScalpingMinRR : config.MinRRRatio);
 
-            if (config.EnforceRR && riskReward < minRr)
+            if (riskReward < minRr)
                 return Task.FromResult(Blocked(
                     $"R:R {riskReward:F2} is below minimum {minRr:F2}.",
                     warnings,
                     referenceEntry,
                     lotSize,
                     riskReward));
-
-            if (!config.EnforceRR && riskReward < minRr)
-                warnings.Add($"R:R {riskReward:F2} is below configured minimum {minRr:F2}.");
 
             if (pairRules != null && referenceEntry > 0)
             {
@@ -135,16 +150,17 @@ namespace MT5TradingBot.Modules.RiskManagement
                         riskReward));
             }
 
-            double dollarRisk = LotCalculator.DollarRisk(
+            double dollarRisk = CalculateDollarRisk(
                 lotSize,
                 referenceEntry,
                 request.StopLoss,
-                request.Pair);
+                request.Pair,
+                symbolInfo);
 
             double riskPercent = dollarRisk / account.Equity * 100.0;
-            if (riskPercent > config.MaxRiskPercent * 1.05)
+            if (riskPercent > effectiveMaxRiskPercent * 1.05)
                 return Task.FromResult(Blocked(
-                    $"Trade risk {riskPercent:F2}% exceeds max {config.MaxRiskPercent:F2}%.",
+                    $"Trade risk {riskPercent:F2}% exceeds max {effectiveMaxRiskPercent:F2}%.",
                     warnings,
                     referenceEntry,
                     lotSize,
@@ -190,14 +206,17 @@ namespace MT5TradingBot.Modules.RiskManagement
                         dollarRisk,
                         riskPercent,
                         spreadPips));
-                else if (pairRules?.AvoidTradeIfSpreadAbovePercentOfTp > 0 && referenceEntry > 0)
+                else if (referenceEntry > 0)
                 {
-                    double pipSize = pairRules.PipSize > 0 ? pairRules.PipSize : LotCalculator.GetPipSize(request.Pair);
+                    double pipSize = pairRules?.PipSize > 0 ? pairRules.PipSize : LotCalculator.GetPipSize(request.Pair);
                     double tpPips = PipCalculator.DistanceInPips(request.TakeProfit, referenceEntry, pipSize);
                     double spreadPercentOfTp = tpPips > 0 ? spreadPips / tpPips * 100.0 : 0;
-                    if (tpPips > 0 && spreadPercentOfTp > pairRules.AvoidTradeIfSpreadAbovePercentOfTp)
+                    double spreadPercentLimit = pairRules?.AvoidTradeIfSpreadAbovePercentOfTp > 0
+                        ? Math.Min(pairRules.AvoidTradeIfSpreadAbovePercentOfTp, 20.0)
+                        : 20.0;
+                    if (tpPips > 0 && spreadPercentOfTp > spreadPercentLimit)
                         return Task.FromResult(Blocked(
-                            $"{request.Pair} spread is {spreadPercentOfTp:F1}% of TP distance; pair max is {pairRules.AvoidTradeIfSpreadAbovePercentOfTp:F1}%.",
+                            $"{request.Pair} spread is {spreadPercentOfTp:F1}% of TP distance; max professional limit is {spreadPercentLimit:F1}%.",
                             warnings,
                             referenceEntry,
                             lotSize,
@@ -211,7 +230,7 @@ namespace MT5TradingBot.Modules.RiskManagement
             return Task.FromResult(new RiskValidationResult
             {
                 IsApproved = true,
-                RiskLevel = DetermineRiskLevel(riskPercent, config.MaxRiskPercent),
+                RiskLevel = DetermineRiskLevel(riskPercent, effectiveMaxRiskPercent),
                 Reason = "Risk validation passed.",
                 RiskPercent = Math.Round(riskPercent, 2),
                 DollarRisk = dollarRisk,
@@ -259,5 +278,27 @@ namespace MT5TradingBot.Modules.RiskManagement
             request.TradeType == TradeType.BUY
                 ? request.StopLoss * 1.002
                 : request.StopLoss * 0.998;
+
+        private static double CalculateDollarRisk(
+            double lots,
+            double entry,
+            double sl,
+            string symbol,
+            SymbolInfo? symbolInfo)
+        {
+            double distance = Math.Abs(entry - sl);
+            if (symbolInfo != null &&
+                IsFinitePositive(symbolInfo.TickValue.GetValueOrDefault()) &&
+                IsFinitePositive(symbolInfo.TickSize.GetValueOrDefault()) &&
+                distance > 0)
+            {
+                return Math.Round(lots * (distance / symbolInfo.TickSize!.Value) * symbolInfo.TickValue!.Value, 2);
+            }
+
+            return LotCalculator.DollarRisk(lots, entry, sl, symbol);
+        }
+
+        private static bool IsFinitePositive(double value) =>
+            !double.IsNaN(value) && !double.IsInfinity(value) && value > 0;
     }
 }

@@ -1,6 +1,8 @@
 using MT5TradingBot.Core;
 using MT5TradingBot.Modules.AIAnalysis;
 using MT5TradingBot.Modules.BrokerIntegration;
+using MT5TradingBot.Modules.Deployment;
+using MT5TradingBot.Modules.NewsFilter;
 using MT5TradingBot.Modules.SignalDecision;
 using MT5TradingBot.Services;
 
@@ -40,14 +42,16 @@ namespace MT5TradingBot.UI
 
             IModule[] modules =
             [
+                new EaDeploymentModule(),
                 new BrokerModule(sm.Current.Mt5),
+                new NewsApiConfigModule(sm.Current.ApiIntegrations),
                 new AiApiConfigModule(sm.Current.Claude),
                 new SignalWatchFolderModule(sm.Current.Bot)
             ];
 
             _totalModules = modules.Length;
 
-            using var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+            using var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
             using var cts = CancellationTokenSource.CreateLinkedTokenSource(
                 timeoutCts.Token,
                 _userCancelCts.Token);
@@ -71,7 +75,7 @@ namespace MT5TradingBot.UI
                     row.SetResult(result.IsOk, result.Message);
                     if (result.IsOk) _passedModules++;
 
-                    AdvanceProgress(_passedModules + (_totalModules - _passedModules));
+                    AdvanceProgress(_rows.Count);
                 }
             }
             catch (OperationCanceledException)

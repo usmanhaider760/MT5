@@ -31,7 +31,7 @@ namespace MT5TradingBot.Modules.PairSettings
 
             if (_settings.PairSettings.TryGetValue(key, out var exact))
             {
-                Log.Information("Pair settings loaded for {Pair}", key);
+                Log.Debug("Pair settings loaded for {Pair}", key);
                 return WithPair(key, exact);
             }
 
@@ -41,7 +41,7 @@ namespace MT5TradingBot.Modules.PairSettings
 
             if (!string.IsNullOrWhiteSpace(match.Key))
             {
-                Log.Information("Pair settings loaded for {Pair} via configured base {BasePair}", pair, match.Key);
+                Log.Debug("Pair settings loaded for {Pair} via configured base {BasePair}", pair, match.Key);
                 return WithPair(match.Key, match.Value);
             }
 

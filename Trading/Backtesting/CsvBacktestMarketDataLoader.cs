@@ -103,7 +103,8 @@ namespace MT5TradingBot.Modules.Backtesting
                     AskHigh = CsvMarketDataParser.ParseOptionalPositiveDouble(row, "ask_high"),
                     AskLow = CsvMarketDataParser.ParseOptionalPositiveDouble(row, "ask_low"),
                     AskClose = CsvMarketDataParser.ParseOptionalPositiveDouble(row, "ask_close"),
-                    SpreadPips = CsvMarketDataParser.ParseOptionalNonNegativeDouble(row, "spread_pips"),
+                    SpreadPips = CsvMarketDataParser.ParseOptionalNonNegativeDouble(row, "spread_pips")
+                        ?? CsvMarketDataParser.ParseOptionalNonNegativeDouble(row, "spread"),
                     Volume = CsvMarketDataParser.ParseOptionalNonNegativeDouble(row, "volume")
                 });
             }

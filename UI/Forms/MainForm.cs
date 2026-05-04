@@ -43,6 +43,7 @@ namespace MT5TradingBot.UI
         private readonly Button _btnStopScalping = new();
         private const int MaxScreenLogLines = 500;
         private const int MaxScreenLogChars = 180;
+        private readonly List<string> _screenLogFullMessages = [];
 
         // -- Pair analysis feed ------------------------------------
         private readonly Dictionary<string, Panel> _pairAnalysisCards = new(StringComparer.OrdinalIgnoreCase);
@@ -54,6 +55,11 @@ namespace MT5TradingBot.UI
 
         // -- Timers ------------------------------------------------
         private readonly System.Windows.Forms.Timer _refreshTimer = new() { Interval = 2500 };
+        private MarketDataAutoSyncService? _marketDataSync;
+        private MT5Bridge? _marketDataBridge;
+        private readonly Panel _pnlMarketDataSync = new();
+        private readonly Label _lblMarketDataSync = new();
+        private readonly ProgressBar _pbMarketDataSync = new();
 
         // -- Pair Settings tab ------------------------------------
         private readonly TabPage _tabPairSettings = new() { Text = "  Pair Settings  ", Name = "_tabPairSettings" };
@@ -96,6 +102,7 @@ namespace MT5TradingBot.UI
             InitializeComponent();
             AppIcon.ApplyTo(this);
             ApplyStableLayout();
+            EnsureMarketDataSyncProgressArea();
 
             if (!IsDesignerHosted())
             {
@@ -144,6 +151,7 @@ namespace MT5TradingBot.UI
                 ? "MT5 Trading Bot ready. MT5 is connected."
                 : "MT5 Trading Bot ready. Connect to MT5 to begin.", C_ACCENT);
             ShowEaDeployNoticeIfNeeded();
+            StartMarketDataAutoSyncIfEnabled();
             await RefreshSignalFeedAsync();
             await EnsureAutoWatcherAsync("form load");
         }
@@ -244,9 +252,12 @@ namespace MT5TradingBot.UI
             _btnTestTelegram.Click   += BtnTestTelegram_Click;
 
             _btnClearLog.Click += BtnClearLog_Click;
+            _btnLogDetails.Click += BtnLogDetails_Click;
             _btnSaveLog.Click  += BtnSaveLog_Click;
             _btnOpenLogFile.Click += BtnOpenLogFile_Click;
             _btnDeleteLogs.Click += BtnDeleteLogs_Click;
+            _txtLog.DoubleClick += TxtLog_DoubleClick;
+            _cardTooltip.SetToolTip(_btnLogDetails, "Select or double-click a log line to see why the bot traded, waited, or blocked it.");
 
             _btnPairAdd.Click += BtnPairAdd_Click;
             _btnPairEdit.Click += BtnPairEdit_Click;
@@ -1955,6 +1966,7 @@ SAFETY RULES:
         {
             if (InvokeRequired) { Invoke(() => Log(msg, color)); return; }
             Serilog.Log.Information("{msg}", msg);
+            string fullMessage = CollapseWhitespace(msg);
             string screenMessage = BuildScreenLogMessage(msg);
             if (screenMessage.Length == 0) return;
 
@@ -1965,6 +1977,7 @@ SAFETY RULES:
             _txtLog.Select(start, line.Length);
             _txtLog.SelectionColor = color ?? C_TEXT;
             _txtLog.Select(_txtLog.TextLength, 0);
+            _screenLogFullMessages.Add($"[{DateTime.Now:HH:mm:ss}] {fullMessage}");
             TrimScreenLog();
             _txtLog.ResumeLayout();
             _txtLog.ScrollToCaret();
@@ -2008,7 +2021,10 @@ SAFETY RULES:
             string[] lines = _txtLog.Lines;
             if (lines.Length <= MaxScreenLogLines) return;
 
-            _txtLog.Lines = lines.Skip(lines.Length - MaxScreenLogLines).ToArray();
+            int removeCount = lines.Length - MaxScreenLogLines;
+            _txtLog.Lines = lines.Skip(removeCount).ToArray();
+            if (removeCount > 0 && _screenLogFullMessages.Count > 0)
+                _screenLogFullMessages.RemoveRange(0, Math.Min(removeCount, _screenLogFullMessages.Count));
             _txtLog.Select(_txtLog.TextLength, 0);
         }
 
@@ -2031,17 +2047,145 @@ SAFETY RULES:
             else btn.Enabled = enabled;
         }
 
+        private void EnsureMarketDataSyncProgressArea()
+        {
+            if (_pnlMarketDataSync.Parent != null) return;
+
+            _pnlMarketDataSync.Height = 30;
+            _pnlMarketDataSync.Dock = DockStyle.Fill;
+            _pnlMarketDataSync.BackColor = Color.FromArgb(24, 28, 36);
+            _pnlMarketDataSync.Padding = new Padding(10, 5, 10, 5);
+
+            _pbMarketDataSync.Dock = DockStyle.Right;
+            _pbMarketDataSync.Width = 180;
+            _pbMarketDataSync.Minimum = 0;
+            _pbMarketDataSync.Maximum = 100;
+            _pbMarketDataSync.Value = 0;
+
+            _lblMarketDataSync.Dock = DockStyle.Fill;
+            _lblMarketDataSync.TextAlign = ContentAlignment.MiddleLeft;
+            _lblMarketDataSync.ForeColor = C_MUTED;
+            _lblMarketDataSync.Text = "Market data sync: idle";
+
+            _pnlMarketDataSync.Controls.Add(_lblMarketDataSync);
+            _pnlMarketDataSync.Controls.Add(_pbMarketDataSync);
+
+            _layoutRoot.RowCount = 5;
+            if (_layoutRoot.RowStyles.Count < 5)
+                _layoutRoot.RowStyles.Add(new RowStyle(SizeType.Absolute, 30F));
+            _layoutRoot.Controls.Add(_pnlMarketDataSync, 0, 4);
+        }
+
+        private void StartMarketDataAutoSyncIfEnabled()
+        {
+            if (!_cfg.Bot.EnableMarketDataAutoUpdate)
+            {
+                Log(MarketDataSyncStatusText.Disabled, C_MUTED);
+                UpdateMarketDataProgress(new HistoricalMarketDataSyncProgress
+                {
+                    Status = HistoricalMarketDataSyncStatus.Skipped,
+                    Message = MarketDataSyncStatusText.Disabled
+                });
+                return;
+            }
+
+            bool runOnStartup = _cfg.Bot.UpdateMarketDataOnStartup || _cfg.Bot.UpdateOnStartup;
+            if (!runOnStartup)
+            {
+                Log(MarketDataSyncStatusText.Disabled, C_MUTED);
+                UpdateMarketDataProgress(new HistoricalMarketDataSyncProgress
+                {
+                    Status = HistoricalMarketDataSyncStatus.Skipped,
+                    DataType = _cfg.Bot.PreferredMarketDataType,
+                    Message = MarketDataSyncStatusText.Disabled
+                });
+            }
+            else
+            {
+                UpdateMarketDataProgress(new HistoricalMarketDataSyncProgress
+                {
+                    Status = HistoricalMarketDataSyncStatus.Syncing,
+                    DataType = _cfg.Bot.PreferredMarketDataType,
+                    Message = MarketDataSyncStatusText.Starting
+                });
+            }
+
+            _marketDataSync ??= new MarketDataAutoSyncService(
+                CreateMarketDataUpdater,
+                () => HistoricalMarketDataUpdater.FromConfig(_cfg.Bot),
+                TimeSpan.FromMinutes(Math.Max(1, _cfg.Bot.MarketDataSyncIntervalMinutes)),
+                _cfg.Bot.AllowSyncDuringTrading,
+                IsCriticalTradeExecutionInProgress,
+                CheckMarketDataMt5AvailableAsync);
+
+            _marketDataSync.ProgressChanged += p => UIThread(() => UpdateMarketDataProgress(p));
+            _marketDataSync.Start(runOnStartup);
+        }
+
+        private async Task RestartMarketDataAutoSyncAsync()
+        {
+            if (_marketDataSync != null)
+            {
+                await _marketDataSync.DisposeAsync();
+                _marketDataSync = null;
+            }
+
+            UIThread(StartMarketDataAutoSyncIfEnabled);
+        }
+
+        private HistoricalMarketDataUpdater CreateMarketDataUpdater()
+        {
+            MT5Bridge bridge = _bridge?.IsConnected == true
+                ? _bridge
+                : (_marketDataBridge ??= new MT5Bridge(_cfg.Mt5));
+
+            return new HistoricalMarketDataUpdater(new Mt5HistoricalMarketDataProvider(bridge));
+        }
+
+        private async Task<bool> CheckMarketDataMt5AvailableAsync()
+        {
+            MT5Bridge bridge = _bridge?.IsConnected == true
+                ? _bridge
+                : (_marketDataBridge ??= new MT5Bridge(_cfg.Mt5));
+
+            return await bridge.PingAsync().ConfigureAwait(false);
+        }
+
+        private bool IsCriticalTradeExecutionInProgress()
+        {
+            lock (_signalExecutionLock)
+                return _executingSignalIds.Count > 0;
+        }
+
+        private void UpdateMarketDataProgress(HistoricalMarketDataSyncProgress progress)
+        {
+            _pbMarketDataSync.Value = Math.Clamp(progress.Percent, 0, 100);
+            _lblMarketDataSync.Text = MarketDataSyncStatusText.Format(progress);
+
+            _lblMarketDataSync.ForeColor = progress.Status switch
+            {
+                HistoricalMarketDataSyncStatus.Failed => C_RED,
+                HistoricalMarketDataSyncStatus.Cancelled => C_YELLOW,
+                HistoricalMarketDataSyncStatus.Completed => C_GREEN,
+                _ => C_MUTED
+            };
+        }
+
         private async void OnFormClosingAsync(object? sender, FormClosingEventArgs e)
         {
             _refreshTimer.Stop();
             _signalFeedPollTimer.Stop();
             _signalFeedWatcher?.Dispose();
+            if (_marketDataSync != null)
+                await _marketDataSync.DisposeAsync();
             _settings.StopWatching();
             if (_scalping != null)
                 await _scalping.StopAsync();
             await StopClaudeAsync();
             await StopBotAsync();
             await _settings.SaveAsync(_cfg);
+            if (!ReferenceEquals(_marketDataBridge, _bridge))
+                _marketDataBridge?.Dispose();
             _bridge?.Dispose();
         }
 
@@ -2051,6 +2195,7 @@ SAFETY RULES:
             _bot?.UpdateConfig(s.Bot);
             _bot?.SetMode(s.Bot.OperatingMode);
             _claude?.UpdateConfig(s.Claude);
+            _ = RestartMarketDataAutoSyncAsync();
             UIThread(() => Log("[CFG] Settings hot-reloaded from disk."));
         }
 
@@ -3037,6 +3182,8 @@ SAFETY RULES:
 
             JObject reviewSnapshot = liveSnapshot
                 ?? JObject.Parse(BuildTradeReviewSnapshotJson(request, account, symbol, positions));
+            if (liveSnapshot == null)
+                Log("[BOT] Review market snapshot unavailable; using fallback account/symbol data.", C_YELLOW);
 
             try
             {
@@ -3055,8 +3202,11 @@ SAFETY RULES:
 
             return ShowTradeReviewDialog(request, info, snapshot, symbol, account, positions);
 
-            async Task<T?> AwaitOrDefaultAsync<T>(Task<T> task, string label, int timeoutMs = 2500)
+            async Task<T?> AwaitOrDefaultAsync<T>(Task<T> task, string label, int timeoutMs = 0)
             {
+                if (timeoutMs <= 0)
+                    timeoutMs = Math.Clamp(_cfg.Mt5.TimeoutMs + 1500, 4000, 10000);
+
                 var completed = await Task.WhenAny(task, Task.Delay(timeoutMs)).ConfigureAwait(false);
                 if (completed != task)
                 {
@@ -3198,7 +3348,7 @@ SAFETY RULES:
                     if (contextSnapshot != null && !form.IsDisposed)
                     {
                         MergeReviewSnapshotSections(currentSnapshot, contextSnapshot,
-                            "collected_at_utc", "collected_at_pkt", "session", "candles", "indicators", "structure", "levels");
+                            "collected_at_utc", "collected_at_pkt", "account", "price", "positions", "session", "candles", "indicators", "structure", "levels", "risk");
                         PatchSnapshotSignalFields(currentSnapshot, activeRequest);
                         CommitReviewSnapshot("Context");
                     }
@@ -3229,7 +3379,7 @@ SAFETY RULES:
                     if (slowSnapshot != null && !form.IsDisposed)
                     {
                         MergeReviewSnapshotSections(currentSnapshot, slowSnapshot,
-                            "symbol", "news", "history", "pair_rules");
+                            "account", "symbol", "price", "positions", "news", "history", "pair_rules", "risk");
                     }
                     else
                     {
@@ -3481,7 +3631,10 @@ SAFETY RULES:
             }
 
             var savedScalping = GetSavedScalpingConfigForPair(request.Pair);
-            var initialScalping = savedScalping ?? BuildSuggestedScalpingConfigForPair(request.Pair, symbol);
+            var suggestedScalping = BuildSuggestedScalpingConfigForPair(request.Pair, symbol);
+            var initialScalping = savedScalping == null
+                ? suggestedScalping
+                : MergeSavedScalpingPreferences(savedScalping, suggestedScalping);
             ApplyScalpingConfigToControls(initialScalping);
             if (savedScalping == null)
             {
@@ -3489,6 +3642,14 @@ SAFETY RULES:
                     $"[SCALP] Bot suggested values for {NormalizePairKey(request.Pair)}: " +
                     $"SL {initialScalping.StopLossPips:F1} pips, TP {initialScalping.TakeProfitPips:F1} pips, " +
                     $"max spread {initialScalping.MaxSpreadPips:F1} pips.",
+                    C_ACCENT);
+            }
+            else
+            {
+                Log(
+                    $"[SCALP] Refreshed live scalping values for {NormalizePairKey(request.Pair)}: " +
+                    $"SL {initialScalping.StopLossPips:F1} pips, TP {initialScalping.TakeProfitPips:F1} pips, " +
+                    $"max spread {initialScalping.MaxSpreadPips:F1} pips. Session preferences came from saved settings.",
                     C_ACCENT);
             }
 
@@ -3896,6 +4057,7 @@ SAFETY RULES:
                               && _cfg.Claude.ApiKey.Length > 20;
                 bool autoScalpingRequested = chkAutoScalp.Checked;
                 var scalpingConfig = BuildScalpingConfigFromReview(
+                    activeRequest.Pair,
                     cmbScalpMode,
                     nudScalpTrades,
                     nudScalpMinutes,
@@ -4923,9 +5085,11 @@ SAFETY RULES:
             JObject snapshot,
             IReadOnlyList<(string Path, Label Value, string Format)> bindings)
         {
+            NormalizeReviewSnapshotForDisplay(snapshot);
+
             foreach (var binding in bindings)
             {
-                var token = snapshot.SelectToken(binding.Path);
+                var token = ResolveReviewDisplayToken(snapshot, binding.Path);
                 binding.Value.Text = FormatReviewValue(token, binding.Format);
                 string stylePath = binding.Path;
                 JToken? styleToken = token;
@@ -4941,6 +5105,35 @@ SAFETY RULES:
             }
         }
 
+        private static JToken? ResolveReviewDisplayToken(JObject snapshot, string path)
+        {
+            var token = snapshot.SelectToken(path);
+            if (token != null && token.Type != JTokenType.Null)
+                return token;
+
+            string rootName = path.Split('.', 2)[0];
+            if (snapshot[rootName] is JObject root &&
+                root.Value<bool?>("available") == false)
+            {
+                string reason = root.Value<string>("reason") ?? "Data source did not return this section.";
+                return new JValue($"Unavailable: {reason}");
+            }
+
+            return token;
+        }
+
+        private static void NormalizeReviewSnapshotForDisplay(JObject snapshot)
+        {
+            double marginUsed = ReadReviewNumber(snapshot, "account.margin_used");
+            double marginLevel = ReadReviewNumber(snapshot, "account.margin_level");
+            if (!double.IsNaN(marginUsed) && marginUsed <= 0 &&
+                !double.IsNaN(marginLevel) && marginLevel <= 0 &&
+                snapshot["account"] is JObject account)
+            {
+                account["margin_level"] = null;
+            }
+        }
+
         private static string FormatReviewValue(JToken? token, string format)
         {
             if (token == null || token.Type == JTokenType.Null)
@@ -4950,7 +5143,12 @@ SAFETY RULES:
                 return token.ToString(Formatting.None).Trim('"');
 
             if (format == "bool")
-                return token.Type == JTokenType.Boolean && token.Value<bool>() ? "Yes" : "No";
+            {
+                if (token.Type == JTokenType.Boolean)
+                    return token.Value<bool>() ? "Yes" : "No";
+
+                return token.ToString(Formatting.None).Trim('"');
+            }
 
             if (format == "plain")
                 return token.ToString(Formatting.None).Trim('"');
@@ -5255,6 +5453,9 @@ SAFETY RULES:
             string raw     = token.ToString(Formatting.None).Trim('"');
             bool   boolVal = token.Type == JTokenType.Boolean && token.Value<bool>();
             bool   isNum   = double.TryParse(raw, NumberStyles.Any, CultureInfo.InvariantCulture, out double num);
+
+            if (raw.StartsWith("Unavailable:", StringComparison.OrdinalIgnoreCase))
+                return (dimFg, dimBg);
 
             if (path.StartsWith("execution_barriers.", StringComparison.OrdinalIgnoreCase) &&
                 token.Type == JTokenType.Boolean)
@@ -5582,10 +5783,10 @@ SAFETY RULES:
                     ["daily_range_pips"] = null,
                     ["prev_day_high"]    = null
                 },
-                ["candles"] = Unavailable("Current EA does not expose candle snapshots yet"),
-                ["indicators"] = Unavailable("Current EA does not expose RSI/MACD/EMA/ADX yet"),
-                ["structure"] = Unavailable("Structure engine not wired to live EA snapshot yet"),
-                ["levels"] = Unavailable("Support/resistance snapshot not exposed yet"),
+                ["candles"] = Unavailable("GET_MARKET_SNAPSHOT did not return candle data. Reload/re-attach the latest TradingBotEA in MT5 or wait for the context refresh."),
+                ["indicators"] = Unavailable("GET_MARKET_SNAPSHOT did not return indicator data. Reload/re-attach the latest TradingBotEA in MT5 or wait for the context refresh."),
+                ["structure"] = Unavailable("GET_MARKET_SNAPSHOT did not return market-structure data. Reload/re-attach the latest TradingBotEA in MT5 or wait for the context refresh."),
+                ["levels"] = Unavailable("GET_MARKET_SNAPSHOT did not return support/resistance data. Reload/re-attach the latest TradingBotEA in MT5 or wait for the context refresh."),
                 ["positions"] = new JObject
                 {
                     ["total_open"] = positions.Count,
@@ -6119,7 +6320,70 @@ SAFETY RULES:
         private async void BtnTestTelegram_Click(object? sender, EventArgs e)  => await TestTelegramConfigAsync();
         private void BtnResetPrompt_Click(object? sender, EventArgs e)         => _txtClaudePrompt.Text = ClaudeConfig.DefaultPrompt;
 
-        private void BtnClearLog_Click(object? sender, EventArgs e) => _txtLog.Clear();
+        private void BtnClearLog_Click(object? sender, EventArgs e)
+        {
+            _txtLog.Clear();
+            _screenLogFullMessages.Clear();
+        }
+
+        private void BtnLogDetails_Click(object? sender, EventArgs e) => ShowSelectedLogDetail();
+
+        private void TxtLog_DoubleClick(object? sender, EventArgs e) => ShowSelectedLogDetail();
+
+        private void ShowSelectedLogDetail()
+        {
+            int lineIndex = GetSelectedLogLineIndex();
+            string line = GetFullLogLineForDetails(lineIndex);
+            if (string.IsNullOrWhiteSpace(line))
+            {
+                AppMessageBox.Info(this, "Select a log line first, then click Details.");
+                return;
+            }
+
+            AppLogDetailBox.Show(this, LogLineExplainer.Explain(line));
+        }
+
+        private string GetFullLogLineForDetails(int lineIndex)
+        {
+            if (lineIndex >= 0 && lineIndex < _screenLogFullMessages.Count)
+                return _screenLogFullMessages[lineIndex];
+
+            return GetSelectedLogLine();
+        }
+
+        private int GetSelectedLogLineIndex()
+        {
+            if (_txtLog.TextLength == 0) return -1;
+
+            int caret = Math.Clamp(_txtLog.SelectionStart, 0, Math.Max(0, _txtLog.TextLength - 1));
+            int line = _txtLog.GetLineFromCharIndex(caret);
+            return line >= 0 && line < _txtLog.Lines.Length ? line : -1;
+        }
+
+        private string GetSelectedLogLine()
+        {
+            if (_txtLog.TextLength == 0) return "";
+
+            string selected = _txtLog.SelectedText;
+            if (!string.IsNullOrWhiteSpace(selected))
+            {
+                string selectedLine = selected
+                    .Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries)
+                    .FirstOrDefault(static x => !string.IsNullOrWhiteSpace(x))
+                    ?.Trim() ?? "";
+                if (selectedLine.Length > 0)
+                    return selectedLine;
+            }
+
+            string text = _txtLog.Text;
+            int caret = Math.Clamp(_txtLog.SelectionStart, 0, Math.Max(0, text.Length - 1));
+            int start = text.LastIndexOf('\n', caret);
+            start = start < 0 ? 0 : start + 1;
+            int end = text.IndexOf('\n', caret);
+            if (end < 0) end = text.Length;
+
+            return text[start..end].Trim();
+        }
 
         private void BtnOpenLogFile_Click(object? sender, EventArgs e)
         {
@@ -6159,6 +6423,7 @@ SAFETY RULES:
 
                 AppLogFiles.RecreateCurrentFile();
                 _txtLog.Clear();
+                _screenLogFullMessages.Clear();
                 Log("[LOG] All log files deleted. New session log started.", C_YELLOW);
             }
             catch (Exception ex)
@@ -6924,8 +7189,8 @@ SAFETY RULES:
             double minSl = pairRules?.MinSlPips > 0 ? pairRules.MinSlPips : 8;
             double maxSl = pairRules?.MaxSlPips > minSl ? pairRules.MaxSlPips : 500;
             double minTp = pairRules?.MinTpPips > 0 ? pairRules.MinTpPips : minSl;
-            double minRr = pairRules?.ScalpingMinRR > 0 ? pairRules.ScalpingMinRR : Math.Max(1.0, _cfg.Bot.MinRRRatio);
-            double preferredRr = pairRules?.PreferredRR > 0 ? pairRules.PreferredRR : Math.Max(1.2, minRr);
+            double minRr = Math.Max(1.5, pairRules?.ScalpingMinRR > 0 ? pairRules.ScalpingMinRR : _cfg.Bot.MinRRRatio);
+            double preferredRr = Math.Max(minRr, pairRules?.PreferredRR > 0 ? pairRules.PreferredRR : minRr);
             double atrFloor = pairRules?.MinAtrPipsM5 > 0
                 ? pairRules.MinAtrPipsM5 * Math.Max(1.0, pairRules.AtrMultiplierSl)
                 : 0;
@@ -6936,32 +7201,38 @@ SAFETY RULES:
                 maxSl));
             double tpPips = RoundHalfPip(Math.Max(
                 minTp,
-                Math.Min(500, Math.Max(slPips * preferredRr, spreadForCalc * 4.0))));
+                Math.Min(500, Math.Max(slPips * preferredRr, spreadForCalc * 5.0))));
             double maxSpreadPips = RoundHalfPip(Math.Clamp(
                 Math.Max(goodSpread, liveSpread > 0 ? liveSpread * 1.15 : acceptableSpread),
                 0.1,
-                Math.Min(100, Math.Max(0.1, configuredMaxSpread))));
+                Math.Min(tpPips * 0.20, Math.Min(100, Math.Max(0.1, configuredMaxSpread)))));
 
             return new ScalpingConfig
             {
                 MaxTrades = 3,
-                MaxMinutes = 15,
+                MaxMinutes = 60,
                 MaxSessionLossUsd = Math.Max(20, _cfg.Bot.Scalping.MaxSessionLossUsd),
                 ProfitTargetUsd = Math.Max(20, _cfg.Bot.Scalping.ProfitTargetUsd),
                 StopLossPips = slPips,
                 TakeProfitPips = tpPips,
                 MaxSpreadPips = maxSpreadPips,
+                DynamicValuesEnabled = true,
+                MinStopLossPips = minSl,
+                MaxStopLossPips = maxSl,
+                MinTakeProfitPips = minTp,
+                MaxTakeProfitPips = Math.Max(500, tpPips),
                 PollIntervalMs = _cfg.Bot.Scalping.PollIntervalMs,
                 CooldownSeconds = _cfg.Bot.Scalping.CooldownSeconds,
                 DirectionMode = ScalpingDirectionMode.Auto,
                 AllowPyramiding = false,
                 RequireSnapshotConfirmation = true,
-                MinDecisionScore = Math.Max(4, _cfg.Bot.Scalping.MinDecisionScore),
+                MinDecisionScore = Math.Max(6, _cfg.Bot.Scalping.MinDecisionScore),
                 UseAiConfirmation = false
             };
         }
 
         private ScalpingConfig BuildScalpingConfigFromReview(
+            string pair,
             ComboBox mode,
             NumericUpDown trades,
             NumericUpDown minutes,
@@ -6971,12 +7242,31 @@ SAFETY RULES:
             CheckBox aiConfirm)
         {
             var cfg = CloneScalpingConfig(_cfg.Bot.Scalping);
-            cfg.MaxTrades = (int)trades.Value;
-            cfg.MaxMinutes = (int)minutes.Value;
+            cfg.MaxTrades = Math.Clamp((int)trades.Value, 1, 6);
+            cfg.MaxMinutes = Math.Clamp((int)minutes.Value, 1, 90);
             cfg.StopLossPips = (double)sl.Value;
             cfg.TakeProfitPips = (double)tp.Value;
             cfg.MaxSpreadPips = (double)spread.Value;
+            cfg.DynamicValuesEnabled = true;
+            var pairRules = _pairSettings?.GetForPair(pair);
+            double minRr = Math.Max(1.5, pairRules?.ScalpingMinRR > 0 ? pairRules.ScalpingMinRR : _cfg.Bot.MinRRRatio);
+            cfg.TakeProfitPips = RoundHalfPip(Math.Max(cfg.TakeProfitPips, cfg.StopLossPips * minRr));
+            cfg.MaxSpreadPips = RoundHalfPip(Math.Min(cfg.MaxSpreadPips, cfg.TakeProfitPips * 0.20));
+            cfg.MinStopLossPips = pairRules?.MinSlPips > 0
+                ? pairRules.MinSlPips
+                : Math.Max(1, Math.Min(cfg.StopLossPips, cfg.MinStopLossPips > 0 ? cfg.MinStopLossPips : cfg.StopLossPips));
+            cfg.MaxStopLossPips = pairRules?.MaxSlPips > cfg.MinStopLossPips
+                ? pairRules.MaxSlPips
+                : Math.Max(cfg.MinStopLossPips, Math.Max(cfg.StopLossPips, cfg.MaxStopLossPips));
+            cfg.MinTakeProfitPips = pairRules?.MinTpPips > 0
+                ? pairRules.MinTpPips
+                : Math.Max(1, Math.Min(cfg.TakeProfitPips, cfg.MinTakeProfitPips > 0 ? cfg.MinTakeProfitPips : cfg.TakeProfitPips));
+            cfg.MaxTakeProfitPips = Math.Max(
+                cfg.MinTakeProfitPips,
+                Math.Max(cfg.TakeProfitPips, cfg.MaxTakeProfitPips > 0 ? cfg.MaxTakeProfitPips : cfg.MaxStopLossPips));
             cfg.RequireSnapshotConfirmation = true;
+            cfg.AllowPyramiding = false;
+            cfg.MinDecisionScore = Math.Max(6, cfg.MinDecisionScore);
             cfg.UseAiConfirmation = aiConfirm.Checked;
             cfg.DirectionMode = mode.SelectedIndex switch
             {
@@ -6985,6 +7275,23 @@ SAFETY RULES:
                 3 => ScalpingDirectionMode.SellOnly,
                 _ => ScalpingDirectionMode.Auto
             };
+            return cfg;
+        }
+
+        private static ScalpingConfig MergeSavedScalpingPreferences(ScalpingConfig saved, ScalpingConfig suggested)
+        {
+            var cfg = CloneScalpingConfig(suggested);
+            cfg.MaxTrades = Math.Clamp(saved.MaxTrades, 1, 6);
+            cfg.MaxMinutes = Math.Clamp(saved.MaxMinutes, 1, 90);
+            cfg.MaxSessionLossUsd = saved.MaxSessionLossUsd;
+            cfg.ProfitTargetUsd = saved.ProfitTargetUsd;
+            cfg.PollIntervalMs = saved.PollIntervalMs;
+            cfg.CooldownSeconds = saved.CooldownSeconds;
+            cfg.DirectionMode = saved.DirectionMode;
+            cfg.AllowPyramiding = false;
+            cfg.RequireSnapshotConfirmation = true;
+            cfg.MinDecisionScore = Math.Max(6, saved.MinDecisionScore);
+            cfg.UseAiConfirmation = saved.UseAiConfirmation;
             return cfg;
         }
 
@@ -6997,6 +7304,11 @@ SAFETY RULES:
             StopLossPips = config.StopLossPips,
             TakeProfitPips = config.TakeProfitPips,
             MaxSpreadPips = config.MaxSpreadPips,
+            DynamicValuesEnabled = config.DynamicValuesEnabled,
+            MinStopLossPips = config.MinStopLossPips,
+            MaxStopLossPips = config.MaxStopLossPips,
+            MinTakeProfitPips = config.MinTakeProfitPips,
+            MaxTakeProfitPips = config.MaxTakeProfitPips,
             PollIntervalMs = config.PollIntervalMs,
             CooldownSeconds = config.CooldownSeconds,
             DirectionMode = config.DirectionMode,
