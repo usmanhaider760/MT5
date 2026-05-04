@@ -6,56 +6,73 @@ namespace MT5TradingBot.UI
 {
     internal static class LogLineExplainer
     {
+        private const string NumberPattern = @"[0-9]+(?:\.[0-9]+)?";
+
         private static readonly Regex PriceSummaryRegex = new(
-            @"Price:\s*bid\s*(?<bid>[0-9.]+),\s*ask\s*(?<ask>[0-9.]+)\.\s*Spread:\s*(?<spread>[0-9.]+)\s*pips\s*\(max\s*(?<maxSpread>[0-9.]+)\)\.\s*Lot\s*(?<lot>[0-9.]+);\s*each pip about\s*\$(?<pipValue>[0-9.]+)\.\s*Risk if SL hits:\s*(?<slPips>[0-9.]+)\s*pips\s*/\s*about\s*\$(?<risk>[0-9.]+)\.\s*Profit target:\s*(?<tpPips>[0-9.]+)\s*pips\s*/\s*about\s*\$(?<profit>[0-9.]+)",
+            @"Price:\s*bid\s*(?<bid>[0-9]+(?:\.[0-9]+)?),\s*ask\s*(?<ask>[0-9]+(?:\.[0-9]+)?)\.\s*Spread:\s*(?<spread>[0-9]+(?:\.[0-9]+)?)\s*pips\s*\(max\s*(?<maxSpread>[0-9]+(?:\.[0-9]+)?)\)\.\s*Lot\s*(?<lot>[0-9]+(?:\.[0-9]+)?);\s*each pip about\s*\$(?<pipValue>[0-9]+(?:\.[0-9]+)?)\.\s*Risk if SL hits:\s*(?<slPips>[0-9]+(?:\.[0-9]+)?)\s*pips\s*/\s*about\s*\$(?<risk>[0-9]+(?:\.[0-9]+)?)\.\s*Profit target:\s*(?<tpPips>[0-9]+(?:\.[0-9]+)?)\s*pips\s*/\s*about\s*\$(?<profit>[0-9]+(?:\.[0-9]+)?)",
             RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
         public static AppLogDetail Explain(string rawLine)
         {
-            string line = Clean(rawLine);
-            string message = StripTimestamp(line);
-            var summary = ParsePriceSummary(message);
+            try
+            {
+                string line = Clean(rawLine);
+                string message = StripTimestamp(line);
+                var summary = ParsePriceSummary(message);
 
-            if (Contains(message, "Waiting: spread") && Contains(message, "above the user ceiling"))
-                return ExplainSpreadBlock(line, message, summary);
+                if (Contains(message, "Waiting: spread") && Contains(message, "above the user ceiling"))
+                    return ExplainSpreadBlock(line, message, summary);
 
-            if (Contains(message, "market volatility is too high for scalping") || Contains(message, "live conditions require about"))
-                return ExplainVolatilityBlock(line, message, summary);
+                if (Contains(message, "market volatility is too high for scalping") || Contains(message, "live conditions require about"))
+                    return ExplainVolatilityBlock(line, message, summary);
 
-            if (Contains(message, "broker stop/freeze-level data is unavailable") || Contains(message, "BROKER_STOP_LEVEL_DATA_UNAVAILABLE"))
-                return ExplainBrokerStopData(line, message, summary);
+                if (Contains(message, "broker stop/freeze-level data is unavailable") || Contains(message, "BROKER_STOP_LEVEL_DATA_UNAVAILABLE"))
+                    return ExplainBrokerStopData(line, message, summary);
 
-            if (Contains(message, "Trade was not opened"))
-                return ExplainTradeNotOpened(line, message, summary);
+                if (Contains(message, "Trade was not opened"))
+                    return ExplainTradeNotOpened(line, message, summary);
 
-            if (Contains(message, "Trying trade"))
-                return ExplainTryingTrade(line, message, summary);
+                if (Contains(message, "Trying trade"))
+                    return ExplainTryingTrade(line, message, summary);
 
-            if (Contains(message, "Started XAUUSD") || Contains(message, "Started "))
-                return ExplainSessionStarted(line, message, summary);
+                if (Contains(message, "Started XAUUSD") || Contains(message, "Started "))
+                    return ExplainSessionStarted(line, message, summary);
 
-            if (Contains(message, "User confirmed review warnings"))
-                return ExplainReviewWarnings(line, message, summary);
+                if (Contains(message, "User confirmed review warnings"))
+                    return ExplainReviewWarnings(line, message, summary);
 
-            if (Contains(message, "Review market snapshot timed out") || Contains(message, "Review account info timed out") || Contains(message, "using fallback account/symbol data"))
-                return ExplainReviewTimeout(line, message, summary);
+                if (Contains(message, "Review market snapshot timed out") || Contains(message, "Review account info timed out") || Contains(message, "using fallback account/symbol data"))
+                    return ExplainReviewTimeout(line, message, summary);
 
-            if (Contains(message, "Pipe error") || Contains(message, "Pipe is broken"))
-                return ExplainPipeError(line, message, summary);
+                if (Contains(message, "Pipe error") || Contains(message, "Pipe is broken"))
+                    return ExplainPipeError(line, message, summary);
 
-            if (Contains(message, "Reload required in MT5"))
-                return ExplainEaReload(line, message, summary);
+                if (Contains(message, "Reload required in MT5"))
+                    return ExplainEaReload(line, message, summary);
 
-            if (Contains(message, "opened") || Contains(message, "executed") || Contains(message, "filled"))
-                return ExplainExecutionResult(line, message, summary);
+                if (Contains(message, "opened") || Contains(message, "executed") || Contains(message, "filled"))
+                    return ExplainExecutionResult(line, message, summary);
 
-            return Generic(line, message, summary);
+                return Generic(line, message, summary);
+            }
+            catch (Exception ex)
+            {
+                string line = Clean(rawLine);
+                return new AppLogDetail(
+                    line,
+                    "The detail parser could not fully parse this log line, but the original message is still shown above.",
+                    $"Parser error: {ex.Message}",
+                    "No formula is available because parsing failed.",
+                    "No trade action was performed by the detail window. This error only affected explanation display.",
+                    "Not available from this single log line.",
+                    "The bot should keep running. Report this log line so the explanation parser can be improved.");
+            }
         }
 
         private static AppLogDetail ExplainSpreadBlock(string original, string message, PriceSummary? summary)
         {
-            double? spread = ReadDouble(message, @"spread\s*(?<v>[0-9.]+)\s*pips");
-            double? ceiling = ReadDouble(message, @"user ceiling\s*(?<v>[0-9.]+)\s*pips");
+            double? spread = ReadDouble(message, $@"spread\s*(?<v>{NumberPattern})\s*pips");
+            double? ceiling = ReadDouble(message, $@"user ceiling\s*(?<v>{NumberPattern})\s*pips");
             var values = new StringBuilder();
             AppendValue(values, "Live spread", spread, "pips");
             AppendValue(values, "Allowed ceiling", ceiling, "pips");
@@ -73,21 +90,26 @@ namespace MT5TradingBot.UI
 
         private static AppLogDetail ExplainVolatilityBlock(string original, string message, PriceSummary? summary)
         {
-            double? needed = ReadDouble(message, @"(?:ATR needs about|require about)\s*(?<v>[0-9.]+)\s*SL pips");
-            double? guardrail = ReadDouble(message, @"guardrail\s*(?<v>[0-9.]+)\s*pips");
+            double? needed = ReadDouble(message, $@"(?:ATR needs about|require about)\s*(?<v>{NumberPattern})\s*SL pips");
+            double? guardrail = ReadDouble(message, $@"guardrail\s*(?<v>{NumberPattern})\s*pips");
             var values = new StringBuilder();
             AppendValue(values, "Required SL from live volatility", needed, "pips");
             AppendValue(values, "Maximum allowed SL guardrail", guardrail, "pips");
+            if (needed > 0 && guardrail > 0)
+            {
+                AppendValue(values, "Amount above guardrail", needed - guardrail, "pips");
+                AppendValue(values, "Required SL as percent of guardrail", needed / guardrail * 100.0, "%");
+            }
             AppendSummary(values, summary);
 
             return Detail(
                 original,
-                "The bot waited because live volatility required a stop loss wider than the configured safety guardrail. A scalping trade with too-wide SL can risk much more than expected or need an unrealistic TP.",
+                "Technical meaning: the ATR volatility model says the market is moving too widely for the current scalping guardrails. ATR means Average True Range; it estimates how far price has recently been moving.\n\nNon-technical meaning: gold is currently too jumpy for this small scalping setup. The bot would need a much wider safety distance to avoid being stopped out by normal noise.",
                 values.ToString(),
-                BuildFormula(summary, "Dynamic SL rule: required SL = max(pair minimum SL, ATR-based volatility distance, market-structure distance, broker stop/freeze distance, spread buffer). Block when required SL > max SL guardrail."),
-                "No trade was opened. The bot protected the account from trading into a volatility regime that no longer matches the scalping setup.",
+                BuildFormula(summary, "Dynamic SL rule: required SL = max(pair minimum SL, ATR-based volatility distance, market-structure distance, broker stop/freeze distance, spread buffer).\n\nDecision rule: if required SL > max SL guardrail, the bot must wait. In this log, the required SL was above the guardrail, so the setup failed the volatility safety check."),
+                "No trade was opened. This is a professional safety block: the bot refused to force a tight scalp into a market that currently needs more room than allowed.",
                 BuildExpectedPl(summary),
-                "Wait for ATR/volatility to cool down. If XAUUSD normally needs this much room at your broker, treat it as a different strategy, not the same tight scalping setup.");
+                "Wait for ATR/volatility to cool down. Do not simply raise the 500-pip guardrail unless account risk, TP distance, session conditions, spread, and backtest/demo evidence also support the wider stop. For XAUUSD, high ATR often appears around news, session opens, sharp momentum, or poor liquidity.");
         }
 
         private static AppLogDetail ExplainBrokerStopData(string original, string message, PriceSummary? summary)
@@ -228,10 +250,10 @@ namespace MT5TradingBot.UI
             var values = new StringBuilder();
             string? side = ReadText(message, @"Trying trade\s*[0-9]+/[0-9]+:\s*(?<v>BUY|SELL)");
             string? symbol = ReadText(message, @"Trying trade\s*[0-9]+/[0-9]+:\s*(?:BUY|SELL)\s*(?<v>[A-Z0-9._-]+)");
-            double? lot = ReadDouble(message, @"lot\s*(?<v>[0-9.]+)");
-            double? entry = ReadDouble(message, @"entry around\s*(?<v>[0-9.]+)");
-            double? sl = ReadDouble(message, @"stop loss\s*(?<v>[0-9.]+)");
-            double? tp = ReadDouble(message, @"take profit\s*(?<v>[0-9.]+)");
+            double? lot = ReadDouble(message, $@"lot\s*(?<v>{NumberPattern})");
+            double? entry = ReadDouble(message, $@"entry around\s*(?<v>{NumberPattern})");
+            double? sl = ReadDouble(message, $@"stop loss\s*(?<v>{NumberPattern})");
+            double? tp = ReadDouble(message, $@"take profit\s*(?<v>{NumberPattern})");
 
             AppendText(values, "Side", side);
             AppendText(values, "Symbol", symbol);
@@ -247,13 +269,13 @@ namespace MT5TradingBot.UI
         {
             var values = new StringBuilder();
             AppendText(values, "Mode", ReadText(message, @"mode=(?<v>[A-Za-z]+)"));
-            AppendValue(values, "Lot", ReadDouble(message, @"lot=(?<v>[0-9.]+)"), "");
-            AppendValue(values, "Max trades", ReadDouble(message, @"maxTrades=(?<v>[0-9.]+)"), "");
-            AppendValue(values, "Max minutes", ReadDouble(message, @"maxMinutes=(?<v>[0-9.]+)"), "minutes");
-            AppendValue(values, "SL", ReadDouble(message, @"SL=(?<v>[0-9.]+)p"), "pips");
-            AppendValue(values, "TP", ReadDouble(message, @"TP=(?<v>[0-9.]+)p"), "pips");
-            AppendValue(values, "Max spread", ReadDouble(message, @"maxSpread=(?<v>[0-9.]+)p"), "pips");
-            AppendValue(values, "Minimum score", ReadDouble(message, @"score>=(?<v>[0-9.]+)"), "");
+            AppendValue(values, "Lot", ReadDouble(message, $@"lot=(?<v>{NumberPattern})"), "");
+            AppendValue(values, "Max trades", ReadDouble(message, $@"maxTrades=(?<v>{NumberPattern})"), "");
+            AppendValue(values, "Max minutes", ReadDouble(message, $@"maxMinutes=(?<v>{NumberPattern})"), "minutes");
+            AppendValue(values, "SL", ReadDouble(message, $@"SL=(?<v>{NumberPattern})p"), "pips");
+            AppendValue(values, "TP", ReadDouble(message, $@"TP=(?<v>{NumberPattern})p"), "pips");
+            AppendValue(values, "Max spread", ReadDouble(message, $@"maxSpread=(?<v>{NumberPattern})p"), "pips");
+            AppendValue(values, "Minimum score", ReadDouble(message, $@"score>=(?<v>{NumberPattern})"), "");
             return values.Length == 0 ? "Session values were not parsed from this line." : values.ToString();
         }
 
@@ -320,7 +342,9 @@ namespace MT5TradingBot.UI
         }
 
         private static double Number(Match match, string group) =>
-            double.Parse(match.Groups[group].Value, CultureInfo.InvariantCulture);
+            double.TryParse(match.Groups[group].Value, NumberStyles.Float, CultureInfo.InvariantCulture, out double value)
+                ? value
+                : double.NaN;
 
         private static double? ReadDouble(string text, string pattern)
         {

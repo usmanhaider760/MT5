@@ -43,6 +43,7 @@ namespace MT5TradingBot.UI
         private readonly Button _btnStopScalping = new();
         private const int MaxScreenLogLines = 500;
         private const int MaxScreenLogChars = 180;
+        private readonly List<string> _screenLogFullMessages = [];
 
         // -- Pair analysis feed ------------------------------------
         private readonly Dictionary<string, Panel> _pairAnalysisCards = new(StringComparer.OrdinalIgnoreCase);
@@ -1965,6 +1966,7 @@ SAFETY RULES:
         {
             if (InvokeRequired) { Invoke(() => Log(msg, color)); return; }
             Serilog.Log.Information("{msg}", msg);
+            string fullMessage = CollapseWhitespace(msg);
             string screenMessage = BuildScreenLogMessage(msg);
             if (screenMessage.Length == 0) return;
 
@@ -1975,6 +1977,7 @@ SAFETY RULES:
             _txtLog.Select(start, line.Length);
             _txtLog.SelectionColor = color ?? C_TEXT;
             _txtLog.Select(_txtLog.TextLength, 0);
+            _screenLogFullMessages.Add($"[{DateTime.Now:HH:mm:ss}] {fullMessage}");
             TrimScreenLog();
             _txtLog.ResumeLayout();
             _txtLog.ScrollToCaret();
@@ -2018,7 +2021,10 @@ SAFETY RULES:
             string[] lines = _txtLog.Lines;
             if (lines.Length <= MaxScreenLogLines) return;
 
-            _txtLog.Lines = lines.Skip(lines.Length - MaxScreenLogLines).ToArray();
+            int removeCount = lines.Length - MaxScreenLogLines;
+            _txtLog.Lines = lines.Skip(removeCount).ToArray();
+            if (removeCount > 0 && _screenLogFullMessages.Count > 0)
+                _screenLogFullMessages.RemoveRange(0, Math.Min(removeCount, _screenLogFullMessages.Count));
             _txtLog.Select(_txtLog.TextLength, 0);
         }
 
@@ -6289,7 +6295,11 @@ SAFETY RULES:
         private async void BtnTestTelegram_Click(object? sender, EventArgs e)  => await TestTelegramConfigAsync();
         private void BtnResetPrompt_Click(object? sender, EventArgs e)         => _txtClaudePrompt.Text = ClaudeConfig.DefaultPrompt;
 
-        private void BtnClearLog_Click(object? sender, EventArgs e) => _txtLog.Clear();
+        private void BtnClearLog_Click(object? sender, EventArgs e)
+        {
+            _txtLog.Clear();
+            _screenLogFullMessages.Clear();
+        }
 
         private void BtnLogDetails_Click(object? sender, EventArgs e) => ShowSelectedLogDetail();
 
@@ -6297,7 +6307,8 @@ SAFETY RULES:
 
         private void ShowSelectedLogDetail()
         {
-            string line = GetSelectedLogLine();
+            int lineIndex = GetSelectedLogLineIndex();
+            string line = GetFullLogLineForDetails(lineIndex);
             if (string.IsNullOrWhiteSpace(line))
             {
                 AppMessageBox.Info(this, "Select a log line first, then click Details.");
@@ -6305,6 +6316,23 @@ SAFETY RULES:
             }
 
             AppLogDetailBox.Show(this, LogLineExplainer.Explain(line));
+        }
+
+        private string GetFullLogLineForDetails(int lineIndex)
+        {
+            if (lineIndex >= 0 && lineIndex < _screenLogFullMessages.Count)
+                return _screenLogFullMessages[lineIndex];
+
+            return GetSelectedLogLine();
+        }
+
+        private int GetSelectedLogLineIndex()
+        {
+            if (_txtLog.TextLength == 0) return -1;
+
+            int caret = Math.Clamp(_txtLog.SelectionStart, 0, Math.Max(0, _txtLog.TextLength - 1));
+            int line = _txtLog.GetLineFromCharIndex(caret);
+            return line >= 0 && line < _txtLog.Lines.Length ? line : -1;
         }
 
         private string GetSelectedLogLine()
@@ -6370,6 +6398,7 @@ SAFETY RULES:
 
                 AppLogFiles.RecreateCurrentFile();
                 _txtLog.Clear();
+                _screenLogFullMessages.Clear();
                 Log("[LOG] All log files deleted. New session log started.", C_YELLOW);
             }
             catch (Exception ex)
