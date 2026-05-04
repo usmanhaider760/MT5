@@ -25,6 +25,7 @@ namespace MT5TradingBot.Modules.Backtesting
         public string SpreadRegime { get; init; } = "";
         public double? SpreadPips { get; init; }
         public string SourceSignalReason { get; init; } = "";
+        public string SourceType { get; init; } = "";
         public double? SourceSignalConfidence { get; init; }
     }
 

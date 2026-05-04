@@ -2,11 +2,15 @@ using System.Reflection;
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
+using System.Diagnostics;
 using MT5TradingBot.Core;
 using MT5TradingBot.Data;
 using MT5TradingBot.Models;
 using MT5TradingBot.Modules.Backtesting;
 using MT5TradingBot.Modules.BrokerIntegration;
+using MT5TradingBot.Modules.Deployment;
+using MT5TradingBot.Modules.LiveReadiness;
+using MT5TradingBot.Modules.MarketData;
 using MT5TradingBot.Modules.NewsFilter;
 using MT5TradingBot.Modules.RiskManagement;
 using MT5TradingBot.Modules.Scalping;
@@ -120,6 +124,50 @@ internal static class Program
         new("trade disabled does not retry order send", TradeDisabledDoesNotRetryOrderSend),
         new("OrderCheck rejection does not retry order send", OrderCheckRejectionDoesNotRetryOrderSend),
         new("paper mode does not use live order retry policy", PaperModeDoesNotUseLiveOrderRetryPolicy),
+        new("rollout PaperOnly blocks live orders", RolloutPaperOnlyBlocksLiveOrders),
+        new("rollout Demo blocks real live orders", RolloutDemoBlocksRealLiveOrders),
+        new("rollout TinyLive applies capped risk", RolloutTinyLiveAppliesCappedRisk),
+        new("rollout scale-up criteria can recommend advance", RolloutScaleUpCriteriaCanRecommendAdvance),
+        new("rollout poor drawdown recommends rollback", RolloutPoorDrawdownRecommendsRollback),
+        new("rollout high losing streak recommends rollback", RolloutHighLosingStreakRecommendsRollback),
+        new("rollout high rejection rate recommends rollback", RolloutHighRejectionRateRecommendsRollback),
+        new("rollout critical runtime health recommends rollback", RolloutCriticalRuntimeHealthRecommendsRollback),
+        new("rollout kill switch active blocks or rolls back", RolloutKillSwitchActiveBlocksOrRollsBack),
+        new("rollout does not auto-advance without explicit confirmation", RolloutDoesNotAutoAdvanceWithoutExplicitConfirmation),
+        new("final go no-go all gates passing returns Go", FinalGoNoGoAllGatesPassingReturnsGo),
+        new("final go no-go missing strategy proof returns Unknown", FinalGoNoGoMissingStrategyProofReturnsUnknown),
+        new("final go no-go kill switch active returns No-Go", FinalGoNoGoKillSwitchActiveReturnsNoGo),
+        new("final go no-go broker readiness failure returns No-Go", FinalGoNoGoBrokerReadinessFailureReturnsNoGo),
+        new("final go no-go critical runtime health returns No-Go", FinalGoNoGoCriticalRuntimeHealthReturnsNoGo),
+        new("final go no-go demo setup returns Conditional-Go", FinalGoNoGoDemoSetupReturnsConditionalGo),
+        new("final go no-go missing evidence returns Unknown", FinalGoNoGoMissingEvidenceReturnsUnknown),
+        new("final go no-go report includes required warnings", FinalGoNoGoReportIncludesRequiredWarnings),
+        new("final go no-go report includes required manual actions", FinalGoNoGoReportIncludesRequiredManualActions),
+        new("evidence package CSV does not silently use sample fixture", EvidencePackageCsvDoesNotSilentlyUseSampleFixture),
+        new("evidence package no strategy candidates returns clear diagnostic", EvidencePackageNoStrategyCandidatesReturnsClearDiagnostic),
+        new("evidence package explicit sample fixture still works", EvidencePackageExplicitSampleFixtureStillWorks),
+        new("evidence package report marks data source correctly", EvidencePackageReportMarksDataSourceCorrectly),
+        new("offline candidate generator tick data can produce candidates", OfflineCandidateGeneratorTickDataCanProduceCandidates),
+        new("offline candidate generator HOLD signals are counted", OfflineCandidateGeneratorHoldSignalsAreCounted),
+        new("offline candidate generator incomplete signals are counted", OfflineCandidateGeneratorIncompleteSignalsAreCounted),
+        new("offline candidate generator does not reference AI or MT5 services", OfflineCandidateGeneratorDoesNotReferenceAiOrMt5Services),
+        new("offline generated candidates flow into realistic runner", OfflineGeneratedCandidatesFlowIntoRealisticRunner),
+        new("evidence report omits not implemented diagnostic when candidates generated", EvidenceReportOmitsNotImplementedDiagnosticWhenCandidatesGenerated),
+        new("market data auto sync startup trigger is nonblocking", MarketDataAutoSyncStartupTriggerIsNonblocking),
+        new("market data auto sync skips when already running", MarketDataAutoSyncSkipsWhenAlreadyRunning),
+        new("market data auto sync skips during critical trading", MarketDataAutoSyncSkipsDuringCriticalTrading),
+        new("market data updater creates new tick file", MarketDataUpdaterCreatesNewTickFile),
+        new("market data updater appends only new rows", MarketDataUpdaterAppendsOnlyNewRows),
+        new("market data updater removes duplicates", MarketDataUpdaterRemovesDuplicates),
+        new("market data updater trims old tick rows", MarketDataUpdaterTrimsOldTickRows),
+        new("market data updater trims old M1 rows", MarketDataUpdaterTrimsOldM1Rows),
+        new("market data updater falls back to OHLC when ticks unavailable", MarketDataUpdaterFallsBackToOhlcWhenTicksUnavailable),
+        new("market data updater invalid symbol returns clear error", MarketDataUpdaterInvalidSymbolReturnsClearError),
+        new("market data updater generated CSV validates with loader", MarketDataUpdaterGeneratedCsvValidatesWithLoader),
+        new("market data updater emits progress events", MarketDataUpdaterEmitsProgressEvents),
+        new("market data auto sync cancel stops safely", MarketDataAutoSyncCancelStopsSafely),
+        new("market data updater CLI parses arguments", MarketDataUpdaterCliParsesArguments),
+        new("market data updater does not call live trade methods", MarketDataUpdaterDoesNotCallLiveTradeMethods),
         new("backtest/live mismatch report can be generated", BacktestLiveMismatchReportCanBeGenerated),
         new("backtest/live mismatch report marks commission and slippage present", BacktestLiveMismatchReportMarksCommissionAndSlippagePresent),
         new("backtest/live mismatch report marks spread realism missing", BacktestLiveMismatchReportMarksSpreadRealismMissing),
@@ -2075,6 +2123,793 @@ internal static class Program
         AssertTrue(result.IsSuccess, "Paper mode should simulate fills separately from live retry policy.");
         AssertEqual(0, mt5.OpenTradeCalls, "Paper mode must not send broker orders or retries.");
         AssertEqual(0, result.OrderSendAttempts, "Paper fills should not report live order-send attempts.");
+    }
+
+    private static async Task RolloutPaperOnlyBlocksLiveOrders()
+    {
+        var config = RolloutConfig(RolloutStage.PaperOnly);
+
+        await using var mt5 = new FakeMt5Server(Account(), Symbol(spreadPoints: 10));
+        await using var bot = new AutoBotService(
+            Bridge(mt5.Port),
+            config,
+            apiConfig: NewsDisabled());
+
+        var result = await bot.ExecuteTradeWithValidationAsync(BuyRequest()).ConfigureAwait(false);
+
+        AssertFalse(result.IsSuccess, "PaperOnly rollout stage must block real live execution.");
+        AssertEqual("ROLLOUT_STAGE_BLOCKED", result.ErrorCode, "Rollout stage should provide a dedicated block code.");
+        AssertEqual(0, mt5.OpenTradeCalls, "PaperOnly rollout must block before broker execution.");
+    }
+
+    private static async Task RolloutDemoBlocksRealLiveOrders()
+    {
+        var config = RolloutConfig(RolloutStage.Demo);
+
+        await using var mt5 = new FakeMt5Server(Account(), Symbol(spreadPoints: 10));
+        await using var bot = new AutoBotService(
+            Bridge(mt5.Port),
+            config,
+            apiConfig: NewsDisabled());
+
+        var result = await bot.ExecuteTradeWithValidationAsync(BuyRequest()).ConfigureAwait(false);
+
+        AssertFalse(result.IsSuccess, "Demo rollout stage must not send real live orders.");
+        AssertEqual("ROLLOUT_STAGE_BLOCKED", result.ErrorCode, "Demo rollout should block through the rollout gate.");
+        AssertEqual(0, mt5.OpenTradeCalls, "Demo rollout must block before broker execution.");
+    }
+
+    private static async Task RolloutTinyLiveAppliesCappedRisk()
+    {
+        var config = RolloutConfig(RolloutStage.TinyLive);
+        config.MaxRiskPercent = 1.0;
+        config.MaxTinyLiveRiskPercent = 0.25;
+        config.MaxTinyLiveLotMultiplier = 0.50;
+
+        var result = await NewRiskManager().ValidateAsync(
+            BuyRequest(),
+            Account(),
+            Symbol(spreadPoints: 10),
+            [],
+            config).ConfigureAwait(false);
+
+        AssertTrue(result.IsApproved, result.Reason);
+        AssertClose(0.05, result.ValidatedLotSize, 0.0001, "TinyLive should reduce auto-lot size to the tiny risk cap.");
+        AssertClose(0.25, result.RiskPercent, 0.01, "TinyLive risk percent should stay at the tiny-live cap.");
+    }
+
+    private static Task RolloutScaleUpCriteriaCanRecommendAdvance()
+    {
+        var result = new RolloutEvaluator().Evaluate(new RolloutEvaluationInput
+        {
+            Config = RolloutConfig(RolloutStage.TinyLive),
+            TinyLiveCompletedTrades = 40,
+            TinyLiveElapsedDays = 20,
+            TinyLiveProfitFactor = 1.30,
+            ExplicitScaleUpConfirmation = true
+        });
+
+        AssertEqual(RolloutAction.Advance.ToString(), result.Action.ToString(), "Passing scale-up criteria with confirmation should recommend advance.");
+        AssertEqual(RolloutStage.ScaledLive.ToString(), result.RecommendedStage.ToString(), "Recommended stage should be ScaledLive.");
+        return Task.CompletedTask;
+    }
+
+    private static Task RolloutPoorDrawdownRecommendsRollback()
+    {
+        var result = EvaluateRollback(CurrentDrawdownPercent: 4.0);
+
+        AssertEqual(RolloutAction.RollBack.ToString(), result.Action.ToString(), "Excess drawdown should recommend rollback.");
+        AssertEqual(RolloutStage.RolledBack.ToString(), result.RecommendedStage.ToString(), "Rollback target should be RolledBack.");
+        return Task.CompletedTask;
+    }
+
+    private static Task RolloutHighLosingStreakRecommendsRollback()
+    {
+        var result = EvaluateRollback(CurrentLosingStreak: 5);
+
+        AssertEqual(RolloutAction.RollBack.ToString(), result.Action.ToString(), "High losing streak should recommend rollback.");
+        AssertEqual(RolloutStage.RolledBack.ToString(), result.RecommendedStage.ToString(), "Rollback target should be RolledBack.");
+        return Task.CompletedTask;
+    }
+
+    private static Task RolloutHighRejectionRateRecommendsRollback()
+    {
+        var result = EvaluateRollback(CurrentRejectionRate: 0.20);
+
+        AssertEqual(RolloutAction.RollBack.ToString(), result.Action.ToString(), "High rejection rate should recommend rollback.");
+        AssertEqual(RolloutStage.RolledBack.ToString(), result.RecommendedStage.ToString(), "Rollback target should be RolledBack.");
+        return Task.CompletedTask;
+    }
+
+    private static Task RolloutCriticalRuntimeHealthRecommendsRollback()
+    {
+        var result = EvaluateRollback(RuntimeHealthCritical: true);
+
+        AssertEqual(RolloutAction.RollBack.ToString(), result.Action.ToString(), "Critical runtime health should recommend rollback.");
+        AssertEqual(RolloutStage.RolledBack.ToString(), result.RecommendedStage.ToString(), "Rollback target should be RolledBack.");
+        return Task.CompletedTask;
+    }
+
+    private static Task RolloutKillSwitchActiveBlocksOrRollsBack()
+    {
+        var result = EvaluateRollback(KillSwitchActive: true);
+
+        AssertTrue(
+            result.Action is RolloutAction.Block or RolloutAction.RollBack,
+            "Active kill switch should block or roll back rollout.");
+        AssertEqual(RolloutStage.RolledBack.ToString(), result.RecommendedStage.ToString(), "Kill switch target should be RolledBack.");
+        return Task.CompletedTask;
+    }
+
+    private static Task RolloutDoesNotAutoAdvanceWithoutExplicitConfirmation()
+    {
+        var result = new RolloutEvaluator().Evaluate(new RolloutEvaluationInput
+        {
+            Config = RolloutConfig(RolloutStage.TinyLive),
+            TinyLiveCompletedTrades = 40,
+            TinyLiveElapsedDays = 20,
+            TinyLiveProfitFactor = 1.30,
+            ExplicitScaleUpConfirmation = false
+        });
+
+        AssertEqual(RolloutAction.Stay.ToString(), result.Action.ToString(), "Scale-up must not auto-advance without explicit confirmation.");
+        AssertEqual(RolloutStage.ScaledLive.ToString(), result.RecommendedStage.ToString(), "Evaluator may recommend ScaledLive while keeping action at Stay.");
+        AssertTrue(result.Warnings.Count > 0, "Missing confirmation should be surfaced as a warning.");
+        return Task.CompletedTask;
+    }
+
+    private static Task FinalGoNoGoAllGatesPassingReturnsGo()
+    {
+        var result = new FinalGoNoGoChecklist().Evaluate(AllPassingGoNoGoInput(FinalGoNoGoTarget.FullLive) with
+        {
+            AllowFullLiveGo = true
+        });
+
+        AssertEqual(FinalGoNoGoDecision.Go.ToString(), result.Decision.ToString(), "All required full-live gates should return Go only with explicit full-live release allowance.");
+        AssertEqual(0, result.FailedCriteria.Count, "Passing checklist should have no failed criteria.");
+        return Task.CompletedTask;
+    }
+
+    private static Task FinalGoNoGoMissingStrategyProofReturnsUnknown()
+    {
+        var result = new FinalGoNoGoChecklist().Evaluate(AllPassingGoNoGoInput(FinalGoNoGoTarget.FullLive) with
+        {
+            AllowFullLiveGo = true,
+            P3StrategyEdgeProofReadiness = FinalChecklistStatus.Missing
+        });
+
+        AssertEqual(FinalGoNoGoDecision.Unknown.ToString(), result.Decision.ToString(), "Missing strategy proof should leave final live decision unknown.");
+        AssertTrue(result.Warnings.Any(w => w.Contains("P3 strategy edge proof", StringComparison.OrdinalIgnoreCase)),
+            "Missing strategy proof should be named in warnings.");
+        return Task.CompletedTask;
+    }
+
+    private static Task FinalGoNoGoKillSwitchActiveReturnsNoGo()
+    {
+        var result = new FinalGoNoGoChecklist().Evaluate(AllPassingGoNoGoInput(FinalGoNoGoTarget.FullLive) with
+        {
+            AllowFullLiveGo = true,
+            KillSwitchInactive = false
+        });
+
+        AssertEqual(FinalGoNoGoDecision.NoGo.ToString(), result.Decision.ToString(), "Active kill switch must force No-Go.");
+        AssertTrue(result.FailedCriteria.Any(f => f.Contains("Kill switch", StringComparison.OrdinalIgnoreCase)),
+            "Kill-switch failure should be listed.");
+        return Task.CompletedTask;
+    }
+
+    private static Task FinalGoNoGoBrokerReadinessFailureReturnsNoGo()
+    {
+        var result = new FinalGoNoGoChecklist().Evaluate(AllPassingGoNoGoInput(FinalGoNoGoTarget.FullLive) with
+        {
+            AllowFullLiveGo = true,
+            BrokerEaDeploymentChecklist = FinalChecklistStatus.Fail
+        });
+
+        AssertEqual(FinalGoNoGoDecision.NoGo.ToString(), result.Decision.ToString(), "Broker readiness failure must force No-Go.");
+        AssertTrue(result.FailedCriteria.Any(f => f.Contains("Broker", StringComparison.OrdinalIgnoreCase)),
+            "Broker readiness failure should be listed.");
+        return Task.CompletedTask;
+    }
+
+    private static Task FinalGoNoGoCriticalRuntimeHealthReturnsNoGo()
+    {
+        var result = new FinalGoNoGoChecklist().Evaluate(AllPassingGoNoGoInput(FinalGoNoGoTarget.FullLive) with
+        {
+            AllowFullLiveGo = true,
+            RuntimeHealthStatus = FinalRuntimeHealthStatus.Critical
+        });
+
+        AssertEqual(FinalGoNoGoDecision.NoGo.ToString(), result.Decision.ToString(), "Critical runtime health must force No-Go.");
+        AssertTrue(result.FailedCriteria.Any(f => f.Contains("Runtime health", StringComparison.OrdinalIgnoreCase)),
+            "Runtime health failure should be listed.");
+        return Task.CompletedTask;
+    }
+
+    private static Task FinalGoNoGoDemoSetupReturnsConditionalGo()
+    {
+        var result = new FinalGoNoGoChecklist().Evaluate(AllPassingGoNoGoInput(FinalGoNoGoTarget.PaperOrDemo));
+
+        AssertEqual(FinalGoNoGoDecision.ConditionalGo.ToString(), result.Decision.ToString(), "Demo/paper setup should be Conditional-Go when criteria support it.");
+        AssertFalse(result.FailedCriteria.Any(), "Supported demo/paper setup should not have failed criteria.");
+        return Task.CompletedTask;
+    }
+
+    private static Task FinalGoNoGoMissingEvidenceReturnsUnknown()
+    {
+        var result = new FinalGoNoGoChecklist().Evaluate(AllPassingGoNoGoInput(FinalGoNoGoTarget.FullLive) with
+        {
+            AllowFullLiveGo = true,
+            P2RealisticBacktestReadiness = FinalChecklistStatus.Missing
+        });
+
+        AssertEqual(FinalGoNoGoDecision.Unknown.ToString(), result.Decision.ToString(), "Missing required evidence should return Unknown.");
+        AssertTrue(result.Warnings.Any(w => w.Contains("P2 realistic backtest", StringComparison.OrdinalIgnoreCase)),
+            "Missing P2 evidence should be listed.");
+        return Task.CompletedTask;
+    }
+
+    private static Task FinalGoNoGoReportIncludesRequiredWarnings()
+    {
+        string folder = TestFolder();
+        var result = new FinalGoNoGoChecklist().EvaluateAndWriteReport(AllPassingGoNoGoInput(FinalGoNoGoTarget.TinyLive) with
+        {
+            ReportDirectory = folder
+        });
+
+        AssertEqual(Path.Combine(folder, FinalGoNoGoChecklist.ReportFileName), result.ReportPath, "Report path should use the required file name.");
+        string report = File.ReadAllText(result.ReportPath);
+        AssertContains("This is not financial advice", report);
+        AssertContains("Backtests are not live proof", report);
+        AssertContains("Real-money trading remains blocked unless all Go criteria pass", report);
+        AssertContains("Tiny-live must use reduced risk caps", report);
+        AssertContains("User must manually confirm live enablement", report);
+        return Task.CompletedTask;
+    }
+
+    private static Task FinalGoNoGoReportIncludesRequiredManualActions()
+    {
+        string folder = TestFolder();
+        var result = new FinalGoNoGoChecklist().EvaluateAndWriteReport(AllPassingGoNoGoInput(FinalGoNoGoTarget.FullLive) with
+        {
+            ReportDirectory = folder,
+            AllowFullLiveGo = true,
+            UserLiveEnablementConfirmed = null
+        });
+
+        AssertEqual(FinalGoNoGoDecision.Unknown.ToString(), result.Decision.ToString(), "Missing user confirmation should keep decision unknown.");
+        AssertTrue(result.RequiredManualActions.Any(a => a.Contains("user live enablement", StringComparison.OrdinalIgnoreCase)),
+            "User confirmation should appear as a required manual action.");
+        string report = File.ReadAllText(result.ReportPath);
+        AssertContains("Required Manual Actions", report);
+        AssertContains("Capture explicit user live enablement confirmation", report);
+        return Task.CompletedTask;
+    }
+
+    private static async Task EvidencePackageCsvDoesNotSilentlyUseSampleFixture()
+    {
+        string folder = TestFolder();
+        string tickCsv = WriteTempCsv(
+            "timestamp,symbol,bid,ask,volume",
+            "2026-05-03T10:00:00Z,EURUSD,1.10000,1.10005,10",
+            "2026-05-03T10:01:00Z,EURUSD,1.10010,1.10015,12");
+
+        var result = await new EvidencePackageCommand()
+            .RunAsync(new EvidencePackageCommandRequest
+            {
+                OutputDirectory = folder,
+                TickCsvPath = tickCsv
+            })
+            .ConfigureAwait(false);
+
+        AssertTrue(result.UsedRealMarketData, "Provided tick CSV should be recognized as real market data input.");
+        AssertFalse(result.UsedSampleFixture, "Provided CSV must not silently fall back to the sample fixture.");
+        AssertEqual(2, result.TicksLoaded, "Tick count should reflect provided CSV rows.");
+        AssertTrue(result.CandidatesGenerated > 0, "Provided CSV should generate offline candidates when price movement conditions are met.");
+        string report = File.ReadAllText(Path.Combine(folder, RealisticBacktestReportCommand.DefaultReportFileName));
+        AssertContains("- Sample fixture used: No", report);
+        AssertContains("- Market data source: Configured CSV market data", report);
+    }
+
+    private static async Task EvidencePackageNoStrategyCandidatesReturnsClearDiagnostic()
+    {
+        string folder = TestFolder();
+        string tickCsv = WriteTempCsv(
+            "timestamp,symbol,bid,ask",
+            "2026-05-03T10:00:00Z,EURUSD,1.10000,1.10005",
+            "2026-05-03T10:01:00Z,EURUSD,1.10000,1.10005");
+
+        var result = await new EvidencePackageCommand()
+            .RunAsync(new EvidencePackageCommandRequest
+            {
+                OutputDirectory = folder,
+                TickCsvPath = tickCsv
+            })
+            .ConfigureAwait(false);
+
+        AssertEqual(
+            "REAL_MARKET_DATA_LOADED_BUT_NO_STRATEGY_CANDIDATES",
+            result.CandidateGenerationDiagnostic,
+            "Flat market data should return a clear no-candidates diagnostic.");
+        string report = File.ReadAllText(Path.Combine(folder, RealisticBacktestReportCommand.DefaultReportFileName));
+        AssertContains("REAL_MARKET_DATA_LOADED_BUT_NO_STRATEGY_CANDIDATES", report);
+        AssertContains("REALISTIC_BACKTEST_NO_CANDIDATES", report);
+    }
+
+    private static async Task EvidencePackageExplicitSampleFixtureStillWorks()
+    {
+        string folder = TestFolder();
+        string tickCsv = WriteTempCsv(
+            "timestamp,symbol,bid,ask",
+            "2026-05-03T10:00:00Z,EURUSD,1.10000,1.10005");
+
+        var result = await new EvidencePackageCommand()
+            .RunAsync(new EvidencePackageCommandRequest
+            {
+                OutputDirectory = folder,
+                TickCsvPath = tickCsv,
+                UseSampleFixture = true
+            })
+            .ConfigureAwait(false);
+
+        AssertTrue(result.UsedSampleFixture, "Explicit sample fixture flag should allow the built-in example.");
+        AssertEqual(3, result.CandidatesGenerated, "Sample fixture should retain its three example candidates.");
+        string report = File.ReadAllText(Path.Combine(folder, RealisticBacktestReportCommand.DefaultReportFileName));
+        AssertContains("- Sample fixture used: Yes", report);
+        AssertContains("candidate_source: Built-in minimal fixture", report);
+    }
+
+    private static async Task EvidencePackageReportMarksDataSourceCorrectly()
+    {
+        string folder = TestFolder();
+        string ohlcCsv = WriteTempCsv(
+            "timestamp,symbol,timeframe,open,high,low,close,spread_pips",
+            "2026-05-03T10:00:00Z,EURUSD,M1,1.10000,1.10020,1.09990,1.10010,0.8",
+            "2026-05-03T10:01:00Z,EURUSD,M1,1.10010,1.10040,1.10000,1.10030,0.8");
+
+        var result = await new EvidencePackageCommand()
+            .RunAsync(new EvidencePackageCommandRequest
+            {
+                OutputDirectory = folder,
+                OhlcCsvPath = ohlcCsv
+            })
+            .ConfigureAwait(false);
+
+        AssertEqual(2, result.CandlesLoaded, "OHLC count should reflect provided CSV rows.");
+        string report = File.ReadAllText(Path.Combine(folder, RealisticBacktestReportCommand.DefaultReportFileName));
+        AssertContains("| Candles loaded | 2 |", report);
+        AssertContains("- Real strategy candidates used: Yes", report);
+        AssertContains("- Candidate generation source: offline-auto-scalping-price-movement", report);
+    }
+
+    private static Task OfflineCandidateGeneratorTickDataCanProduceCandidates()
+    {
+        var result = new EvidenceStrategyCandidateGenerator().Generate(
+            [
+                Tick("EURUSD", 0, 1.10000, 1.10005),
+                Tick("EURUSD", 60, 1.10010, 1.10015)
+            ],
+            []);
+
+        AssertEqual(1, result.Candidates.Count, "Rising tick mid should produce one BUY candidate after the initial hold.");
+        AssertEqual(TradeType.BUY.ToString(), result.Candidates[0].Direction.ToString(), "Rising price movement should map to BUY in auto mode.");
+        AssertEqual("auto-scalping / AI-disabled", result.Candidates[0].SourceType, "Offline candidate should identify source type and disabled AI boundary.");
+        AssertTrue(result.Candidates[0].StopLoss < result.Candidates[0].EntryPrice, "BUY candidate should have SL below entry.");
+        AssertTrue(result.Candidates[0].TakeProfit > result.Candidates[0].EntryPrice, "BUY candidate should have TP above entry.");
+        AssertEqual("OFFLINE_AUTO_SCALPING_PRICE_MOVEMENT_CANDIDATES_GENERATED", result.DiagnosticCode, "Generated candidates should not use the not-implemented diagnostic.");
+        return Task.CompletedTask;
+    }
+
+    private static Task OfflineCandidateGeneratorHoldSignalsAreCounted()
+    {
+        var result = new EvidenceStrategyCandidateGenerator().Generate(
+            [
+                Tick("EURUSD", 0, 1.10000, 1.10005),
+                Tick("EURUSD", 60, 1.10000, 1.10005)
+            ],
+            []);
+
+        AssertEqual(0, result.Candidates.Count, "Flat price movement should not create a trade candidate.");
+        AssertTrue(result.SkippedOrHoldSignals >= 2, "Initial row and flat movement should count as hold/skipped signals.");
+        return Task.CompletedTask;
+    }
+
+    private static Task OfflineCandidateGeneratorIncompleteSignalsAreCounted()
+    {
+        var config = Config();
+        config.Scalping.StopLossPips = 0;
+
+        var result = new EvidenceStrategyCandidateGenerator().Generate(
+            [
+                Tick("EURUSD", 0, 1.10000, 1.10005),
+                Tick("EURUSD", 60, 1.10010, 1.10015)
+            ],
+            [],
+            config);
+
+        AssertEqual(0, result.Candidates.Count, "Invalid SL/TP config should prevent candidate creation.");
+        AssertEqual(1, result.IncompleteSignals, "Invalid SL/TP config should count the signal as incomplete.");
+        return Task.CompletedTask;
+    }
+
+    private static Task OfflineCandidateGeneratorDoesNotReferenceAiOrMt5Services()
+    {
+        string source = File.ReadAllText(Path.Combine(FindRepoRoot(), "Application", "LiveReadiness", "EvidenceStrategyCandidateGenerator.cs"));
+
+        AssertFalse(source.Contains("MT5Bridge", StringComparison.Ordinal), "Offline generator must not reference MT5Bridge.");
+        AssertFalse(source.Contains("ITradeExecutionService", StringComparison.Ordinal), "Offline generator must not reference live execution service.");
+        AssertFalse(source.Contains("AutoBotService", StringComparison.Ordinal), "Offline generator must not reference AutoBotService.");
+        AssertFalse(source.Contains("Claude", StringComparison.Ordinal), "Offline generator must not reference Claude/AI services.");
+        AssertFalse(source.Contains("Anthropic", StringComparison.Ordinal), "Offline generator must not reference external AI packages.");
+        return Task.CompletedTask;
+    }
+
+    private static Task OfflineGeneratedCandidatesFlowIntoRealisticRunner()
+    {
+        var ticks = new[]
+        {
+            Tick("EURUSD", 0, 1.10000, 1.10005),
+            Tick("EURUSD", 60, 1.10010, 1.10015),
+            Tick("EURUSD", 120, 1.10090, 1.10095)
+        };
+        var generation = new EvidenceStrategyCandidateGenerator().Generate(ticks, []);
+
+        var result = RealisticBacktestRunner.Run(new RealisticBacktestRunInput
+        {
+            Candidates = generation.Candidates,
+            Ticks = ticks,
+            Config = Config()
+        });
+
+        AssertTrue(result.Success, "Generated candidates should be accepted by the realistic runner.");
+        AssertTrue(result.SuccessfulTrades.Count > 0, "Future tick movement should allow at least one generated candidate to resolve.");
+        return Task.CompletedTask;
+    }
+
+    private static async Task EvidenceReportOmitsNotImplementedDiagnosticWhenCandidatesGenerated()
+    {
+        string folder = TestFolder();
+        string tickCsv = WriteTempCsv(
+            "timestamp,symbol,bid,ask",
+            "2026-05-03T10:00:00Z,EURUSD,1.10000,1.10005",
+            "2026-05-03T10:01:00Z,EURUSD,1.10010,1.10015",
+            "2026-05-03T10:02:00Z,EURUSD,1.10090,1.10095");
+
+        var result = await new EvidencePackageCommand()
+            .RunAsync(new EvidencePackageCommandRequest
+            {
+                OutputDirectory = folder,
+                TickCsvPath = tickCsv
+            })
+            .ConfigureAwait(false);
+
+        AssertTrue(result.CandidatesGenerated > 0, "Rising tick data should generate candidates.");
+        string report = File.ReadAllText(Path.Combine(folder, RealisticBacktestReportCommand.DefaultReportFileName));
+        AssertFalse(report.Contains(EvidenceStrategyCandidateGenerator.NotImplementedCode, StringComparison.Ordinal),
+            "Report should not include the not-implemented diagnostic after candidates are generated.");
+        AssertContains("OFFLINE_AUTO_SCALPING_PRICE_MOVEMENT_CANDIDATES_GENERATED", report);
+    }
+
+    private static async Task MarketDataAutoSyncStartupTriggerIsNonblocking()
+    {
+        string folder = TestFolder();
+        var provider = new FakeHistoricalMarketDataProvider
+        {
+            Ticks = [Tick("EURUSD", 0, 1.10000, 1.10005)],
+            Delay = TimeSpan.FromMilliseconds(250)
+        };
+        using var started = new ManualResetEventSlim(false);
+        provider.OnFetchStarted = () => started.Set();
+
+        await using var sync = CreateAutoSyncForTest(provider, folder, TimeSpan.FromMinutes(30));
+        var sw = Stopwatch.StartNew();
+        sync.Start(runImmediately: true);
+        sw.Stop();
+
+        AssertTrue(sw.ElapsedMilliseconds < 100, "Startup sync scheduling should not block the caller.");
+        AssertTrue(started.Wait(TimeSpan.FromSeconds(2)), "Startup sync should begin in the background.");
+        sync.CancelActiveSync();
+    }
+
+    private static async Task MarketDataAutoSyncSkipsWhenAlreadyRunning()
+    {
+        string folder = TestFolder();
+        var provider = new FakeHistoricalMarketDataProvider
+        {
+            Ticks = [Tick("EURUSD", 0, 1.10000, 1.10005)],
+            Delay = TimeSpan.FromMilliseconds(300)
+        };
+
+        await using var sync = CreateAutoSyncForTest(provider, folder, TimeSpan.FromMinutes(30));
+        Task first = sync.TriggerSyncAsync("manual");
+        await Task.Delay(50).ConfigureAwait(false);
+        var second = await sync.TriggerSyncAsync("manual").ConfigureAwait(false);
+        sync.CancelActiveSync();
+        await first.ConfigureAwait(false);
+
+        AssertTrue(second.Warnings.Any(w => w.Contains("already running", StringComparison.OrdinalIgnoreCase)),
+            "Concurrent sync request should be skipped.");
+        AssertEqual(1, provider.TickCalls, "Only the first sync should reach the provider.");
+    }
+
+    private static async Task MarketDataAutoSyncSkipsDuringCriticalTrading()
+    {
+        string folder = TestFolder();
+        var provider = new FakeHistoricalMarketDataProvider
+        {
+            Ticks = [Tick("EURUSD", 0, 1.10000, 1.10005)]
+        };
+
+        await using var sync = CreateAutoSyncForTest(
+            provider,
+            folder,
+            TimeSpan.FromMinutes(30),
+            allowSyncDuringTrading: false,
+            criticalTradingInProgress: () => true);
+
+        var summary = await sync.TriggerSyncAsync("manual").ConfigureAwait(false);
+
+        AssertTrue(summary.Warnings.Any(w => w.Contains("critical trade execution", StringComparison.OrdinalIgnoreCase)),
+            "Sync should be skipped while critical trade execution is in progress.");
+        AssertEqual(0, provider.TickCalls, "Provider should not be called when trading skip gate is active.");
+    }
+
+    private static async Task MarketDataUpdaterCreatesNewTickFile()
+    {
+        string folder = TestFolder();
+        var provider = new FakeHistoricalMarketDataProvider
+        {
+            Ticks =
+            [
+                Tick("EURUSD", 0, 1.10000, 1.10005),
+                Tick("EURUSD", 60, 1.10010, 1.10015)
+            ]
+        };
+
+        var summary = await RunMarketDataUpdateForTest(provider, folder, MarketDataUpdateType.Tick).ConfigureAwait(false);
+
+        string path = Path.Combine(folder, "EURUSD_ticks.csv");
+        AssertTrue(File.Exists(path), "Tick updater should create the expected output file.");
+        AssertEqual(2, summary.SymbolResults.Single().RowsAfter, "Two fetched ticks should be written.");
+        var loaded = await new CsvBacktestTickDataLoader().LoadAsync(path, "EURUSD").ConfigureAwait(false);
+        AssertEqual(2, loaded.Count, "Generated tick CSV should load through the existing loader.");
+    }
+
+    private static async Task MarketDataUpdaterAppendsOnlyNewRows()
+    {
+        string folder = TestFolder();
+        Directory.CreateDirectory(folder);
+        string path = Path.Combine(folder, "EURUSD_ticks.csv");
+        File.WriteAllLines(path,
+        [
+            "timestamp,symbol,bid,ask,volume",
+            "2026-05-03T10:00:00.000Z,EURUSD,1.10000,1.10005,1"
+        ]);
+
+        var provider = new FakeHistoricalMarketDataProvider
+        {
+            Ticks =
+            [
+                new BacktestTick { TimestampUtc = new DateTime(2026, 5, 3, 10, 0, 0, DateTimeKind.Utc), Symbol = "EURUSD", Bid = 1.10000, Ask = 1.10005, Volume = 1 },
+                new BacktestTick { TimestampUtc = new DateTime(2026, 5, 3, 10, 1, 0, DateTimeKind.Utc), Symbol = "EURUSD", Bid = 1.10010, Ask = 1.10015, Volume = 1 }
+            ]
+        };
+
+        var summary = await RunMarketDataUpdateForTest(provider, folder, MarketDataUpdateType.Tick).ConfigureAwait(false);
+        var loaded = await new CsvBacktestTickDataLoader().LoadAsync(path, "EURUSD").ConfigureAwait(false);
+
+        AssertTrue(provider.LastTickFromUtc > new DateTime(2026, 5, 3, 10, 0, 0, DateTimeKind.Utc),
+            "Incremental update should request only data after the last existing timestamp.");
+        AssertEqual(2, loaded.Count, "Existing row plus one new row should remain after deduplication.");
+        AssertEqual(1, summary.SymbolResults.Single().RowsBefore, "Rows before should count existing file rows.");
+    }
+
+    private static async Task MarketDataUpdaterRemovesDuplicates()
+    {
+        string folder = TestFolder();
+        var duplicateTime = new DateTime(2026, 5, 3, 10, 0, 0, DateTimeKind.Utc);
+        var provider = new FakeHistoricalMarketDataProvider
+        {
+            Ticks =
+            [
+                new BacktestTick { TimestampUtc = duplicateTime, Symbol = "EURUSD", Bid = 1.10000, Ask = 1.10005, Volume = 1 },
+                new BacktestTick { TimestampUtc = duplicateTime, Symbol = "EURUSD", Bid = 1.10000, Ask = 1.10005, Volume = 1 }
+            ]
+        };
+
+        await RunMarketDataUpdateForTest(provider, folder, MarketDataUpdateType.Tick).ConfigureAwait(false);
+
+        string path = Path.Combine(folder, "EURUSD_ticks.csv");
+        var loaded = await new CsvBacktestTickDataLoader().LoadAsync(path, "EURUSD").ConfigureAwait(false);
+        AssertEqual(1, loaded.Count, "Duplicate ticks should be removed before validation.");
+    }
+
+    private static async Task MarketDataUpdaterTrimsOldTickRows()
+    {
+        string folder = TestFolder();
+        Directory.CreateDirectory(folder);
+        string path = Path.Combine(folder, "EURUSD_ticks.csv");
+        File.WriteAllLines(path,
+        [
+            "timestamp,symbol,bid,ask,volume",
+            "2026-02-01T10:00:00.000Z,EURUSD,1.09000,1.09005,1",
+            "2026-05-03T10:00:00.000Z,EURUSD,1.10000,1.10005,1"
+        ]);
+
+        var provider = new FakeHistoricalMarketDataProvider();
+        var summary = await RunMarketDataUpdateForTest(provider, folder, MarketDataUpdateType.Tick).ConfigureAwait(false);
+        var loaded = await new CsvBacktestTickDataLoader().LoadAsync(path, "EURUSD").ConfigureAwait(false);
+
+        AssertEqual(1, loaded.Count, "Tick retention should keep only recent rows.");
+        AssertEqual(1, summary.SymbolResults.Single().RowsRemovedByRetention, "Rows removed by retention should be reported.");
+    }
+
+    private static async Task MarketDataUpdaterTrimsOldM1Rows()
+    {
+        string folder = TestFolder();
+        Directory.CreateDirectory(folder);
+        string path = Path.Combine(folder, "EURUSD_M1.csv");
+        File.WriteAllLines(path,
+        [
+            "timestamp,symbol,open,high,low,close,timeframe,spread",
+            "2025-01-01T10:00:00.000Z,EURUSD,1.0800,1.0810,1.0790,1.0805,M1,1.0",
+            "2026-05-03T10:00:00.000Z,EURUSD,1.1000,1.1010,1.0990,1.1005,M1,1.0"
+        ]);
+
+        var provider = new FakeHistoricalMarketDataProvider();
+        var summary = await RunMarketDataUpdateForTest(provider, folder, MarketDataUpdateType.OHLC).ConfigureAwait(false);
+        var loaded = await new CsvBacktestOhlcDataLoader().LoadAsync(path, "EURUSD").ConfigureAwait(false);
+
+        AssertEqual(1, loaded.Count, "OHLC retention should keep only rows within 365 days.");
+        AssertEqual(1, summary.SymbolResults.Single().RowsRemovedByRetention, "OHLC retention removals should be reported.");
+    }
+
+    private static async Task MarketDataUpdaterFallsBackToOhlcWhenTicksUnavailable()
+    {
+        string folder = TestFolder();
+        var provider = new FakeHistoricalMarketDataProvider
+        {
+            TickError = "NO_TICK_HISTORY: broker returned no ticks",
+            Candles =
+            [
+                new BacktestOhlcCandle
+                {
+                    TimestampUtc = new DateTime(2026, 5, 3, 10, 0, 0, DateTimeKind.Utc),
+                    Symbol = "EURUSD",
+                    Timeframe = "M1",
+                    Open = 1.1000,
+                    High = 1.1005,
+                    Low = 1.0995,
+                    Close = 1.1002,
+                    SpreadPips = 1.0
+                }
+            ]
+        };
+
+        var summary = await RunMarketDataUpdateForTest(provider, folder, MarketDataUpdateType.TickThenOHLC).ConfigureAwait(false);
+        var result = summary.SymbolResults.Single();
+
+        AssertEqual(MarketDataUpdateType.OHLC.ToString(), result.DataTypeUsed.ToString(), "Fallback should write OHLC data.");
+        AssertTrue(result.FallbackUsed, "Fallback flag should be set.");
+        AssertTrue(File.Exists(Path.Combine(folder, "EURUSD_M1.csv")), "OHLC fallback file should be created.");
+    }
+
+    private static async Task MarketDataUpdaterInvalidSymbolReturnsClearError()
+    {
+        string folder = TestFolder();
+        var provider = new FakeHistoricalMarketDataProvider
+        {
+            TickError = "INVALID_SYMBOL: Symbol not found: BAD"
+        };
+
+        var summary = await RunMarketDataUpdateForTest(provider, folder, MarketDataUpdateType.Tick, "BAD").ConfigureAwait(false);
+
+        AssertTrue(summary.Errors.Any(e => e.Contains("INVALID_SYMBOL", StringComparison.OrdinalIgnoreCase)),
+            "Invalid symbol should return a clear provider error.");
+    }
+
+    private static async Task MarketDataUpdaterGeneratedCsvValidatesWithLoader()
+    {
+        string folder = TestFolder();
+        var provider = new FakeHistoricalMarketDataProvider
+        {
+            Candles =
+            [
+                new BacktestOhlcCandle
+                {
+                    TimestampUtc = new DateTime(2026, 5, 3, 10, 0, 0, DateTimeKind.Utc),
+                    Symbol = "EURUSD",
+                    Timeframe = "M1",
+                    Open = 1.1000,
+                    High = 1.1005,
+                    Low = 1.0995,
+                    Close = 1.1002,
+                    SpreadPips = 1.2
+                }
+            ]
+        };
+
+        await RunMarketDataUpdateForTest(provider, folder, MarketDataUpdateType.OHLC).ConfigureAwait(false);
+
+        var loaded = await new CsvBacktestOhlcDataLoader()
+            .LoadAsync(Path.Combine(folder, "EURUSD_M1.csv"), "EURUSD")
+            .ConfigureAwait(false);
+        AssertEqual(1, loaded.Count, "Generated OHLC CSV should validate through the existing loader.");
+        AssertClose(1.2, loaded[0].SpreadPips.GetValueOrDefault(), 0.0001, "Loader should accept the generated spread column alias.");
+    }
+
+    private static async Task MarketDataUpdaterEmitsProgressEvents()
+    {
+        string folder = TestFolder();
+        var provider = new FakeHistoricalMarketDataProvider
+        {
+            Ticks = [Tick("EURUSD", 0, 1.10000, 1.10005)]
+        };
+        var events = new List<HistoricalMarketDataSyncProgress>();
+        var progress = new Progress<HistoricalMarketDataSyncProgress>(events.Add);
+        var updater = new HistoricalMarketDataUpdater(provider);
+
+        await updater.UpdateAsync(new HistoricalMarketDataUpdateRequest
+        {
+            Symbols = ["EURUSD"],
+            DataDirectory = folder,
+            PreferredDataType = MarketDataUpdateType.Tick,
+            NowUtc = new DateTime(2026, 5, 4, 0, 0, 0, DateTimeKind.Utc)
+        }, progress).ConfigureAwait(false);
+
+        await Task.Delay(50).ConfigureAwait(false);
+        AssertTrue(events.Any(e => e.Status == HistoricalMarketDataSyncStatus.Syncing), "Updater should emit syncing progress.");
+        AssertTrue(events.Any(e => e.Symbol == "EURUSD" && e.RowsFetched == 1), "Progress should include symbol and fetched rows.");
+    }
+
+    private static async Task MarketDataAutoSyncCancelStopsSafely()
+    {
+        string folder = TestFolder();
+        var provider = new FakeHistoricalMarketDataProvider
+        {
+            Ticks = [Tick("EURUSD", 0, 1.10000, 1.10005)],
+            Delay = TimeSpan.FromSeconds(5)
+        };
+        var events = new List<HistoricalMarketDataSyncProgress>();
+
+        await using var sync = CreateAutoSyncForTest(provider, folder, TimeSpan.FromMinutes(30));
+        sync.ProgressChanged += events.Add;
+
+        Task<HistoricalMarketDataUpdateSummary> running = sync.TriggerSyncAsync("manual");
+        await Task.Delay(100).ConfigureAwait(false);
+        sync.CancelActiveSync();
+        var summary = await running.ConfigureAwait(false);
+
+        AssertTrue(summary.Warnings.Any(w => w.Contains("cancelled", StringComparison.OrdinalIgnoreCase)),
+            "Cancellation should return a safe warning summary.");
+        AssertTrue(events.Any(e => e.Status == HistoricalMarketDataSyncStatus.Cancelled),
+            "Cancellation should emit a cancelled progress event.");
+    }
+
+    private static Task MarketDataUpdaterCliParsesArguments()
+    {
+        var options = HistoricalMarketDataCliOptions.Parse(
+            ["--update-market-data", "--symbols", "EURUSD,GBPUSD", "--lookback-days", "30", "--data-dir", ".\\data", "--type", "tick-then-ohlc"]);
+
+        AssertEqual(2, options.Symbols.Count, "CLI should parse comma-separated symbols.");
+        AssertEqual(30, options.LookbackDays.GetValueOrDefault(), "CLI should parse lookback days.");
+        AssertEqual(".\\data", options.DataDirectory ?? "", "CLI should parse data directory.");
+        AssertEqual(MarketDataUpdateType.TickThenOHLC.ToString(), options.PreferredDataType.ToString() ?? "", "CLI should parse update type.");
+        return Task.CompletedTask;
+    }
+
+    private static async Task MarketDataUpdaterDoesNotCallLiveTradeMethods()
+    {
+        string folder = TestFolder();
+        var provider = new FakeHistoricalMarketDataProvider
+        {
+            Ticks = [Tick("EURUSD", 0, 1.10000, 1.10005)]
+        };
+
+        await RunMarketDataUpdateForTest(provider, folder, MarketDataUpdateType.Tick).ConfigureAwait(false);
+
+        AssertEqual(0, provider.LiveTradeMethodCalls, "Market data updater should only call historical data provider methods.");
+        AssertTrue(provider.TickCalls > 0, "Test should verify the historical tick path was used.");
     }
 
     private static Task BacktestLiveMismatchReportCanBeGenerated()
@@ -5076,6 +5911,69 @@ internal static class Program
         return config;
     }
 
+    private static BotConfig RolloutConfig(RolloutStage stage)
+    {
+        var config = Config();
+        config.EnableStagedRollout = true;
+        config.CurrentRolloutStage = stage;
+        config.MaxTinyLiveRiskPercent = 0.25;
+        config.MaxTinyLiveLotMultiplier = 0.50;
+        config.MinTradesBeforeScaleUp = 30;
+        config.MinDaysBeforeScaleUp = 14;
+        config.MinProfitFactorBeforeScaleUp = 1.15;
+        config.MaxDrawdownBeforeRollback = 3.0;
+        config.MaxLosingStreakBeforeRollback = 4;
+        config.MaxRejectionRateBeforeRollback = 0.10;
+        config.MaxSpreadDriftBeforeRollback = 1.50;
+        config.MaxSlippageDriftBeforeRollback = 1.50;
+        config.AutoRollbackEnabled = true;
+        return config;
+    }
+
+    private static RolloutEvaluationResult EvaluateRollback(
+        double CurrentDrawdownPercent = 0,
+        int CurrentLosingStreak = 0,
+        double CurrentRejectionRate = 0,
+        double CurrentSpreadDrift = 0,
+        double CurrentSlippageDrift = 0,
+        bool RuntimeHealthCritical = false,
+        bool KillSwitchActive = false) =>
+        new RolloutEvaluator().Evaluate(new RolloutEvaluationInput
+        {
+            Config = RolloutConfig(RolloutStage.TinyLive),
+            CurrentDrawdownPercent = CurrentDrawdownPercent,
+            CurrentLosingStreak = CurrentLosingStreak,
+            CurrentRejectionRate = CurrentRejectionRate,
+            CurrentSpreadDrift = CurrentSpreadDrift,
+            CurrentSlippageDrift = CurrentSlippageDrift,
+            RuntimeHealthCritical = RuntimeHealthCritical,
+            KillSwitchActive = KillSwitchActive
+        });
+
+    private static FinalGoNoGoInput AllPassingGoNoGoInput(FinalGoNoGoTarget target) => new()
+    {
+        Target = target,
+        AllowFullLiveGo = false,
+        TinyLiveRiskCapsConfigured = target == FinalGoNoGoTarget.TinyLive,
+        NewsProviderRequired = true,
+        P0AccountSafetyReadiness = FinalChecklistStatus.Pass,
+        P1ExecutionRealismReadiness = FinalChecklistStatus.Pass,
+        P2RealisticBacktestReadiness = FinalChecklistStatus.Pass,
+        P3StrategyEdgeProofReadiness = FinalChecklistStatus.Pass,
+        P4LiveReadinessGate = FinalChecklistStatus.Pass,
+        DemoForwardTestGate = FinalChecklistStatus.Pass,
+        BrokerEaDeploymentChecklist = FinalChecklistStatus.Pass,
+        RuntimeHealthStatus = FinalRuntimeHealthStatus.Healthy,
+        SafetyAlertStatus = FinalChecklistStatus.Pass,
+        OperationalReadinessReportStatus = FinalChecklistStatus.Pass,
+        StagedRolloutStatus = FinalChecklistStatus.Pass,
+        KillSwitchInactive = true,
+        UserLiveEnablementConfirmed = target != FinalGoNoGoTarget.PaperOrDemo,
+        EaCompiledRedeployedNote = FinalChecklistStatus.Pass,
+        Mt5ConnectionHealth = FinalChecklistStatus.Pass,
+        NewsProviderStatus = FinalChecklistStatus.Pass
+    };
+
     private static BotConfig OrderRetryConfig(int maxRetries, double maxSpreadPips = 3)
     {
         var config = Config(maxSpreadPips: maxSpreadPips);
@@ -5513,6 +6411,105 @@ internal static class Program
     {
         string outputPath = Path.Combine(TestFolder(), StrategyExtractionReportGenerator.DefaultReportFileName);
         return new StrategyExtractionReportGenerator().GenerateAsync(FindRepoRoot(), outputPath);
+    }
+
+    private sealed class FakeHistoricalMarketDataProvider : IHistoricalMarketDataProvider
+    {
+        public IReadOnlyList<BacktestTick> Ticks { get; init; } = [];
+        public IReadOnlyList<BacktestOhlcCandle> Candles { get; init; } = [];
+        public string TickError { get; init; } = "";
+        public string OhlcError { get; init; } = "";
+        public TimeSpan Delay { get; init; }
+        public Action? OnFetchStarted { get; set; }
+        public int TickCalls { get; private set; }
+        public int OhlcCalls { get; private set; }
+        public int LiveTradeMethodCalls { get; private set; }
+        public DateTime LastTickFromUtc { get; private set; }
+
+        public Task<HistoricalMarketDataProviderResult<BacktestTick>> GetTicksAsync(
+            string symbol,
+            DateTime fromUtc,
+            DateTime toUtc,
+            int maxRows,
+            CancellationToken cancellationToken = default)
+        {
+            TickCalls++;
+            LastTickFromUtc = fromUtc;
+            OnFetchStarted?.Invoke();
+            if (Delay > TimeSpan.Zero)
+                return GetTicksDelayedAsync(symbol, fromUtc, toUtc, maxRows, cancellationToken);
+
+            if (!string.IsNullOrWhiteSpace(TickError))
+                return Task.FromResult(HistoricalMarketDataProviderResult<BacktestTick>.Fail(TickError));
+
+            return Task.FromResult(HistoricalMarketDataProviderResult<BacktestTick>.Ok(
+                Ticks
+                    .Where(t => string.Equals(t.Symbol, symbol, StringComparison.OrdinalIgnoreCase))
+                    .Where(t => t.TimestampUtc >= fromUtc && t.TimestampUtc <= toUtc)
+                    .Take(maxRows)
+                    .ToList()));
+        }
+
+        private async Task<HistoricalMarketDataProviderResult<BacktestTick>> GetTicksDelayedAsync(
+            string symbol,
+            DateTime fromUtc,
+            DateTime toUtc,
+            int maxRows,
+            CancellationToken cancellationToken)
+        {
+            await Task.Delay(Delay, cancellationToken).ConfigureAwait(false);
+            if (!string.IsNullOrWhiteSpace(TickError))
+                return HistoricalMarketDataProviderResult<BacktestTick>.Fail(TickError);
+
+            return HistoricalMarketDataProviderResult<BacktestTick>.Ok(
+                Ticks
+                    .Where(t => string.Equals(t.Symbol, symbol, StringComparison.OrdinalIgnoreCase))
+                    .Where(t => t.TimestampUtc >= fromUtc && t.TimestampUtc <= toUtc)
+                    .Take(maxRows)
+                    .ToList());
+        }
+
+        public Task<HistoricalMarketDataProviderResult<BacktestOhlcCandle>> GetOhlcM1Async(
+            string symbol,
+            DateTime fromUtc,
+            DateTime toUtc,
+            int maxRows,
+            CancellationToken cancellationToken = default)
+        {
+            OhlcCalls++;
+            OnFetchStarted?.Invoke();
+            if (Delay > TimeSpan.Zero)
+                return GetOhlcDelayedAsync(symbol, fromUtc, toUtc, maxRows, cancellationToken);
+
+            if (!string.IsNullOrWhiteSpace(OhlcError))
+                return Task.FromResult(HistoricalMarketDataProviderResult<BacktestOhlcCandle>.Fail(OhlcError));
+
+            return Task.FromResult(HistoricalMarketDataProviderResult<BacktestOhlcCandle>.Ok(
+                Candles
+                    .Where(c => string.Equals(c.Symbol, symbol, StringComparison.OrdinalIgnoreCase))
+                    .Where(c => c.TimestampUtc >= fromUtc && c.TimestampUtc <= toUtc)
+                    .Take(maxRows)
+                    .ToList()));
+        }
+
+        private async Task<HistoricalMarketDataProviderResult<BacktestOhlcCandle>> GetOhlcDelayedAsync(
+            string symbol,
+            DateTime fromUtc,
+            DateTime toUtc,
+            int maxRows,
+            CancellationToken cancellationToken)
+        {
+            await Task.Delay(Delay, cancellationToken).ConfigureAwait(false);
+            if (!string.IsNullOrWhiteSpace(OhlcError))
+                return HistoricalMarketDataProviderResult<BacktestOhlcCandle>.Fail(OhlcError);
+
+            return HistoricalMarketDataProviderResult<BacktestOhlcCandle>.Ok(
+                Candles
+                    .Where(c => string.Equals(c.Symbol, symbol, StringComparison.OrdinalIgnoreCase))
+                    .Where(c => c.TimestampUtc >= fromUtc && c.TimestampUtc <= toUtc)
+                    .Take(maxRows)
+                    .ToList());
+        }
     }
 
     private static Task<RepaintLookaheadAuditReportResult> GenerateRepaintLookaheadAuditReportForTest()
@@ -6131,6 +7128,53 @@ internal static class Program
         Low = low,
         Close = 1.1000
     };
+
+    private static BacktestTick Tick(string symbol, int seconds, double bid, double ask) => new()
+    {
+        TimestampUtc = new DateTime(2026, 5, 3, 10, 0, 0, DateTimeKind.Utc).AddSeconds(seconds),
+        Symbol = symbol,
+        Bid = bid,
+        Ask = ask
+    };
+
+    private static Task<HistoricalMarketDataUpdateSummary> RunMarketDataUpdateForTest(
+        FakeHistoricalMarketDataProvider provider,
+        string folder,
+        MarketDataUpdateType updateType,
+        params string[] symbols)
+    {
+        var updater = new HistoricalMarketDataUpdater(provider);
+        return updater.UpdateAsync(new HistoricalMarketDataUpdateRequest
+        {
+            Symbols = symbols.Length > 0 ? symbols : ["EURUSD"],
+            DataDirectory = folder,
+            PreferredDataType = updateType,
+            LookbackDays = 1,
+            MaxRowsPerUpdate = 100,
+            NowUtc = new DateTime(2026, 5, 4, 0, 0, 0, DateTimeKind.Utc)
+        });
+    }
+
+    private static MarketDataAutoSyncService CreateAutoSyncForTest(
+        FakeHistoricalMarketDataProvider provider,
+        string folder,
+        TimeSpan interval,
+        bool allowSyncDuringTrading = false,
+        Func<bool>? criticalTradingInProgress = null) =>
+        new(
+            () => new HistoricalMarketDataUpdater(provider),
+            () => new HistoricalMarketDataUpdateRequest
+            {
+                Symbols = ["EURUSD"],
+                DataDirectory = folder,
+                PreferredDataType = MarketDataUpdateType.Tick,
+                LookbackDays = 1,
+                MaxRowsPerUpdate = 100,
+                NowUtc = new DateTime(2026, 5, 4, 0, 0, 0, DateTimeKind.Utc)
+            },
+            interval,
+            allowSyncDuringTrading,
+            criticalTradingInProgress);
 
     private static void AssertExit(
         IntrabarExitResult result,

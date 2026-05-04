@@ -1,3 +1,5 @@
+using MT5TradingBot.Modules.Deployment;
+using MT5TradingBot.Modules.MarketData;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Converters;
 using MT5TradingBot.Core;
@@ -494,6 +496,84 @@ namespace MT5TradingBot.Models
         /// </summary>
         [JsonProperty("paper_trading")]
         public bool PaperTrading { get; set; } = false;
+
+        [JsonProperty("enable_staged_rollout")]
+        public bool EnableStagedRollout { get; set; } = false;
+
+        [JsonProperty("current_rollout_stage")]
+        public RolloutStage CurrentRolloutStage { get; set; } = RolloutStage.PaperOnly;
+
+        [JsonProperty("max_tiny_live_risk_percent")]
+        public double MaxTinyLiveRiskPercent { get; set; } = 0.25;
+
+        [JsonProperty("max_tiny_live_lot_multiplier")]
+        public double MaxTinyLiveLotMultiplier { get; set; } = 0.50;
+
+        [JsonProperty("min_trades_before_scale_up")]
+        public int MinTradesBeforeScaleUp { get; set; } = 30;
+
+        [JsonProperty("min_days_before_scale_up")]
+        public int MinDaysBeforeScaleUp { get; set; } = 14;
+
+        [JsonProperty("min_profit_factor_before_scale_up")]
+        public double MinProfitFactorBeforeScaleUp { get; set; } = 1.15;
+
+        [JsonProperty("max_drawdown_before_rollback")]
+        public double MaxDrawdownBeforeRollback { get; set; } = 3.0;
+
+        [JsonProperty("max_losing_streak_before_rollback")]
+        public int MaxLosingStreakBeforeRollback { get; set; } = 4;
+
+        [JsonProperty("max_rejection_rate_before_rollback")]
+        public double MaxRejectionRateBeforeRollback { get; set; } = 0.10;
+
+        [JsonProperty("max_spread_drift_before_rollback")]
+        public double MaxSpreadDriftBeforeRollback { get; set; } = 1.50;
+
+        [JsonProperty("max_slippage_drift_before_rollback")]
+        public double MaxSlippageDriftBeforeRollback { get; set; } = 1.50;
+
+        [JsonProperty("auto_rollback_enabled")]
+        public bool AutoRollbackEnabled { get; set; } = true;
+
+        [JsonProperty("enable_market_data_auto_update")]
+        public bool EnableMarketDataAutoUpdate { get; set; } = false;
+
+        [JsonProperty("update_market_data_on_startup")]
+        public bool UpdateMarketDataOnStartup { get; set; } = false;
+
+        [JsonProperty("market_data_sync_interval_minutes")]
+        public int MarketDataSyncIntervalMinutes { get; set; } = 30;
+
+        [JsonProperty("market_data_symbols")]
+        public List<string> MarketDataSymbols { get; set; } = ["EURUSD"];
+
+        [JsonProperty("market_data_directory")]
+        public string MarketDataDirectory { get; set; } = @".\data";
+
+        [JsonProperty("preferred_market_data_type")]
+        public MarketDataUpdateType PreferredMarketDataType { get; set; } = MarketDataUpdateType.TickThenOHLC;
+
+        [JsonProperty("market_data_lookback_days")]
+        public int MarketDataLookbackDays { get; set; } = 30;
+
+        [JsonProperty("update_on_startup")]
+        public bool UpdateOnStartup { get; set; } = false;
+
+        [JsonProperty("tick_retention_days")]
+        public int TickRetentionDays { get; set; } = 60;
+
+        [JsonProperty("ohlc_retention_days")]
+        public int OhlcRetentionDays { get; set; } = 365;
+
+        [JsonProperty("max_days_per_update")]
+        public int MaxDaysPerUpdate { get; set; } = 7;
+
+        [JsonProperty("max_rows_per_update")]
+        public int MaxRowsPerUpdate { get; set; } = 5_000;
+
+        [JsonProperty("allow_sync_during_trading")]
+        public bool AllowSyncDuringTrading { get; set; } = false;
 
         [JsonProperty("scalping")]
         public ScalpingConfig Scalping { get; set; } = new();

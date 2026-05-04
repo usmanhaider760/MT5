@@ -2,6 +2,7 @@ using MT5TradingBot.Core;
 using MT5TradingBot.Data;
 using MT5TradingBot.Models;
 using MT5TradingBot.Modules.BrokerIntegration;
+using MT5TradingBot.Modules.Deployment;
 using MT5TradingBot.Modules.NewsFilter;
 using MT5TradingBot.Modules.PairSettings;
 using MT5TradingBot.Modules.RiskManagement;
@@ -781,6 +782,10 @@ namespace MT5TradingBot.Services
             try
             {
                 bool liveMode = !_cfg.PaperTrading;
+                var rolloutBlock = CheckRolloutStage(request.Id, liveMode);
+                if (rolloutBlock != null)
+                    return rolloutBlock;
+
                 var noTradeWindowBlock = CheckNoTradeWindow(request.Id, liveMode);
                 if (noTradeWindowBlock != null)
                     return noTradeWindowBlock;
@@ -1787,6 +1792,30 @@ namespace MT5TradingBot.Services
                 ? "NO_TRADE_WINDOW_CONFIG_INVALID"
                 : "ROLLOVER_NO_TRADE_WINDOW";
             return Fail(requestId, code, check.Message);
+        }
+
+        private TradeResult? CheckRolloutStage(string requestId, bool liveMode)
+        {
+            if (!liveMode || !_cfg.EnableStagedRollout)
+                return null;
+
+            var result = new RolloutEvaluator().Evaluate(new RolloutEvaluationInput
+            {
+                Config = _cfg,
+                IsLiveOrderRequested = true,
+                LiveReadinessGatePassed = true,
+                ExplicitUserConfirmation = true,
+                KillSwitchActive = _killSwitchState.KillSwitchActive || _emergencyStopFired
+            });
+
+            if (result.Action != RolloutAction.Block)
+                return null;
+
+            string detail = result.FailedCriteria.Count > 0
+                ? string.Join(" ", result.FailedCriteria)
+                : result.Reason;
+            Log($"[SAFETY] Rollout stage blocked live order: {detail}");
+            return Fail(requestId, "ROLLOUT_STAGE_BLOCKED", detail);
         }
 
         private TradeResult? CheckSessionSpread(

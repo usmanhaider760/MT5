@@ -1,5 +1,6 @@
 using MT5TradingBot.Core;
 using MT5TradingBot.Models;
+using MT5TradingBot.Modules.Deployment;
 using MT5TradingBot.Modules.PairSettings;
 
 namespace MT5TradingBot.Modules.RiskManagement
@@ -77,14 +78,29 @@ namespace MT5TradingBot.Modules.RiskManagement
                     ? livePrice
                     : EstimateMarketPrice(request);
 
+            double effectiveMaxRiskPercent = RolloutEvaluator.EffectiveMaxRiskPercent(config);
             double lotSize = config.AutoLotCalculation
                 ? LotCalculator.Calculate(
                     account.Equity,
-                    config.MaxRiskPercent,
+                    effectiveMaxRiskPercent,
                     referenceEntry,
                     request.StopLoss,
                     request.Pair)
                 : request.LotSize;
+
+            lotSize = RolloutEvaluator.ApplyTinyLiveLotCap(
+                config,
+                lotSize,
+                account.Equity,
+                referenceEntry,
+                request.StopLoss,
+                request.Pair,
+                riskPercent => LotCalculator.Calculate(
+                    account.Equity,
+                    riskPercent,
+                    referenceEntry,
+                    request.StopLoss,
+                    request.Pair));
 
             double riskReward = LotCalculator.RiskRewardRatio(
                 referenceEntry,
@@ -142,9 +158,9 @@ namespace MT5TradingBot.Modules.RiskManagement
                 request.Pair);
 
             double riskPercent = dollarRisk / account.Equity * 100.0;
-            if (riskPercent > config.MaxRiskPercent * 1.05)
+            if (riskPercent > effectiveMaxRiskPercent * 1.05)
                 return Task.FromResult(Blocked(
-                    $"Trade risk {riskPercent:F2}% exceeds max {config.MaxRiskPercent:F2}%.",
+                    $"Trade risk {riskPercent:F2}% exceeds max {effectiveMaxRiskPercent:F2}%.",
                     warnings,
                     referenceEntry,
                     lotSize,
@@ -211,7 +227,7 @@ namespace MT5TradingBot.Modules.RiskManagement
             return Task.FromResult(new RiskValidationResult
             {
                 IsApproved = true,
-                RiskLevel = DetermineRiskLevel(riskPercent, config.MaxRiskPercent),
+                RiskLevel = DetermineRiskLevel(riskPercent, effectiveMaxRiskPercent),
                 Reason = "Risk validation passed.",
                 RiskPercent = Math.Round(riskPercent, 2),
                 DollarRisk = dollarRisk,

@@ -1,6 +1,6 @@
 # Strategy Extraction Report
 
-Scope: reporting/extraction only. No entry rules, indicators, AI prompts, take-profit logic, or live trading behavior are changed by this report.
+Scope: reporting/extraction only. No entry rules, indicators, AI prompts, take-profit logic, or live trading behavior are changed by this report generator.
 
 ## Strategy Flow Diagram
 
@@ -76,18 +76,24 @@ The base deterministic strategy currently produces mostly HOLD. `StrategyEngine.
 
 | Status | File | Class/Method | Evidence |
 |---|---|---|---|
-| Verified | `Trading/StrategyEngine/StrategyEngine.cs` | `StrategyEngine.CreateInitialSignalAsync` | Highest-score available pair selection, lower-spread tie-breaker, symbol data fetch, provisional levels, and Hold direction. |
-| Verified | `Trading/Scalping/ScalpingSessionService.cs` | `RunAsync` | Auto-scalping session preconditions, spread/news/cooldown/pyramiding filters, and execution delegate use. |
-| Verified | `Trading/Scalping/ScalpingSessionService.cs` | `ResolveScalpingDecision / EvaluateSnapshot / BuildRequest` | Deterministic auto-scalping direction, confirmation scoring, fallback price movement, and SL/TP request construction. |
-| Verified | `Trading/RiskManagement/RiskManager.cs` | `RiskManager.ValidateAsync` | Auto lot calculation, manual lot preservation, R:R, pair rules, spread, and risk checks. |
-| Verified | `Infrastructure/AI/AiAnalysisService.cs` | `AiAnalysisService.AnalyzeAsync` | Skeleton AI returns Hold and requires real provider confirmation. |
-| Verified | `Infrastructure/AI/ClaudeSignalService.cs` | `ClaudeSignalService.ParseAndExecuteAsync` | AI JSON NO_TRADE returns without execution; TRADE builds request and uses execution delegate. |
-| Verified | `Application/SignalDecision/SignalDecisionService.cs` | `SignalDecisionService.CreateDecisionAsync` | AI/risk confidence gate converts AI Buy/Sell into final decision; otherwise Hold. |
-| Verified | `UI/Forms/MainForm.cs` | `ExecuteSignalFromCardSafeAsync / StartAutoScalpingFromReviewAsync` | User review, lot/final request override, auto-scalping start confirmation, and central gate call. |
-| Verified | `Application/Workflows/AutoBotService.cs` | `AutoBotService.ExecuteTradeWithValidationAsync` | Central safety gate before paper fill or execution service. |
-| Verified | `Trading/TradeExecution/TradeExecutionService.cs` | `TradeExecutionService.ExecuteAsync` | Valid request, approved risk, approved user/workflow decision, broker OrderCheck, then MT5 send. |
-| Not verified | `MT5_EA/TradingBotEA.mq5` | `GET_MARKET_SNAPSHOT / indicator calculation` | Closed-candle use, support/resistance repainting, and historical reproducibility were not audited in this patch. |
-| Not verified | `Application/Workflows/AutoBotService.cs` | `HeartbeatLoopAsync / position management` | Full post-entry break-even, trailing, manual close, and emergency close determinism was not audited in this patch. |
+| Verified | `Trading/StrategyEngine/StrategyEngine.cs` | `StrategyEngine.CreateInitialSignalAsync` | Required source fragments were found. |
+| Verified | `Trading/StrategyEngine/StrategyEngine.cs` | `StrategyEngine.CreateInitialSignalAsync` | Required source fragments were found. |
+| Verified | `Trading/StrategyEngine/StrategyEngine.cs` | `StrategyEngine.CreateInitialSignalAsync` | Required source fragments were found. |
+| Verified | `Trading/Scalping/ScalpingSessionService.cs` | `ScalpingSessionService.RunAsync` | Required source fragments were found. |
+| Verified | `Trading/Scalping/ScalpingSessionService.cs` | `ResolveScalpingDecision / ResolveProbeDirection` | Required source fragments were found. |
+| Verified | `Trading/Scalping/ScalpingSessionService.cs` | `EvaluateSnapshot` | Required source fragments were found. |
+| Verified | `Trading/Scalping/ScalpingSessionService.cs` | `ResolvePriceMovementDecision` | Required source fragments were found. |
+| Verified | `Trading/Scalping/ScalpingSessionService.cs` | `BuildRequest` | Required source fragments were found. |
+| Verified | `Trading/RiskManagement/RiskManager.cs` | `RiskManager.ValidateAsync` | Required source fragments were found. |
+| Verified | `Infrastructure/AI/AiAnalysisService.cs` | `AiAnalysisService.AnalyzeAsync` | Required source fragments were found. |
+| Verified | `Infrastructure/AI/ClaudeSignalService.cs` | `ClaudeSignalService.ParseAndExecuteAsync` | Required source fragments were found. |
+| Verified | `Application/SignalDecision/SignalDecisionService.cs` | `SignalDecisionService.CreateDecisionAsync` | Required source fragments were found. |
+| Verified | `UI/Forms/MainForm.cs` | `ExecuteSignalFromCardSafeAsync / ShowTradeReviewDialogAsync` | Required source fragments were found. |
+| Verified | `UI/Forms/MainForm.cs` | `StartAutoScalpingFromReviewAsync` | Required source fragments were found. |
+| Verified | `Application/Workflows/AutoBotService.cs` | `AutoBotService.ExecuteTradeWithValidationAsync` | Required source fragments were found. |
+| Verified | `Trading/TradeExecution/TradeExecutionService.cs` | `TradeExecutionService.ExecuteAsync` | Required source fragments were found. |
+| Not verified | `MT5_EA/TradingBotEA.mq5` | `GET_MARKET_SNAPSHOT / indicator calculation` | Not verified |
+| Not verified | `Application/Workflows/AutoBotService.cs` | `HeartbeatLoopAsync / position management` | Not verified |
 
 ## Hold/No-Trade Behavior
 
@@ -107,6 +113,6 @@ The base deterministic strategy currently produces mostly HOLD. `StrategyEngine.
 
 ## Areas Marked Not Verified
 
-- Historical reproducibility: this patch did not audit whether snapshot fields are calculated from closed candles only, whether support/resistance can repaint, or whether all fields are available historically.
+- Historical reproducibility: This patch did not audit whether snapshot fields are calculated from closed candles only, whether support/resistance can repaint, or whether all fields are available historically.
 - Complete deterministic exit management: SL/TP placement is documented, but full post-entry management such as break-even, trailing, manual close, and emergency close behavior is not fully proven as deterministic strategy exit logic in this report.
 - Future-data/repainting risk is not proven by this patch; it belongs to P3 Patch 3.

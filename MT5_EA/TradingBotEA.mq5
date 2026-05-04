@@ -158,6 +158,8 @@ string ProcessRequest(string json)
    if(cmd == "GET_MARGIN_ESTIMATE")return CmdGetMarginEstimate(reqId, json);
    if(cmd == "CHECK_ORDER")    return CmdCheckOrder(reqId, json);
    if(cmd == "GET_MARKET_SNAPSHOT")return CmdGetMarketSnapshot(reqId, json);
+   if(cmd == "GET_TICKS")      return CmdGetTicks(reqId, json);
+   if(cmd == "GET_RATES")      return CmdGetRates(reqId, json);
    if(cmd == "CLOSE_ALL")      return CmdCloseAll(reqId);
 
    return Err(reqId, "UNKNOWN_CMD", "Unknown command: " + cmd);
@@ -737,6 +739,155 @@ string CmdGetMarketSnapshot(string reqId, string json)
    d += "}";
 
    return Ok(reqId, d);
+}
+
+//+------------------------------------------------------------------+
+//| GET_TICKS - read-only historical tick export                      |
+//+------------------------------------------------------------------+
+string CmdGetTicks(string reqId, string json)
+{
+   string data = JsonStr(json, "data");
+   if(StringLen(data) == 0) data = json;
+
+   string sym = JsonStr(data, "symbol");
+   StringReplace(sym, "/", "");
+
+   string brokerSymbol = "";
+   if(!ResolveBrokerSymbol(sym, brokerSymbol))
+      return Err(reqId, "INVALID_SYMBOL", "Symbol not found: " + sym + ". Check broker suffix in MT5 Market Watch.");
+   sym = brokerSymbol;
+
+   ulong fromMsc = (ulong)JsonDbl(data, "from_unix_ms");
+   ulong toMsc = (ulong)JsonDbl(data, "to_unix_ms");
+   int maxRows = (int)JsonDbl(data, "max_rows");
+   if(maxRows <= 0) maxRows = 5000;
+   if(maxRows > 20000) maxRows = 20000;
+   if(fromMsc <= 0 || toMsc <= fromMsc)
+      return Err(reqId, "INVALID_RANGE", "Historical tick request requires a valid UTC from/to range.");
+
+   MqlTick ticks[];
+   ResetLastError();
+   int copied = CopyTicksRange(sym, ticks, COPY_TICKS_ALL, fromMsc, toMsc);
+   if(copied <= 0)
+   {
+      int err = GetLastError();
+      return Err(reqId, "NO_TICK_HISTORY",
+         "CopyTicksRange returned no data for " + sym + " error " + IntegerToString(err));
+   }
+
+   int count = MathMin(copied, maxRows);
+   string arr = "[";
+   for(int i = 0; i < count; i++)
+   {
+      if(i > 0) arr += ",";
+      double volume = ticks[i].volume_real > 0.0 ? ticks[i].volume_real : (double)ticks[i].volume;
+      arr += "{";
+      arr += "\"TimestampUtc\":\"" + IsoUtcFromMillis((ulong)ticks[i].time_msc) + "\",";
+      arr += "\"Symbol\":\"" + Esc(sym) + "\",";
+      arr += "\"Bid\":" + DoubleToString(ticks[i].bid, (int)SymbolInfoInteger(sym, SYMBOL_DIGITS)) + ",";
+      arr += "\"Ask\":" + DoubleToString(ticks[i].ask, (int)SymbolInfoInteger(sym, SYMBOL_DIGITS)) + ",";
+      arr += "\"Volume\":" + DoubleToString(volume, 2);
+      arr += "}";
+   }
+   arr += "]";
+   return Ok(reqId, arr);
+}
+
+//+------------------------------------------------------------------+
+//| GET_RATES - read-only historical OHLC export                      |
+//+------------------------------------------------------------------+
+string CmdGetRates(string reqId, string json)
+{
+   string data = JsonStr(json, "data");
+   if(StringLen(data) == 0) data = json;
+
+   string sym = JsonStr(data, "symbol");
+   StringReplace(sym, "/", "");
+
+   string brokerSymbol = "";
+   if(!ResolveBrokerSymbol(sym, brokerSymbol))
+      return Err(reqId, "INVALID_SYMBOL", "Symbol not found: " + sym + ". Check broker suffix in MT5 Market Watch.");
+   sym = brokerSymbol;
+
+   string timeframeStr = JsonStr(data, "timeframe");
+   ENUM_TIMEFRAMES tf = TimeframeFromString(timeframeStr);
+   if(tf == PERIOD_CURRENT) tf = PERIOD_M1;
+
+   long fromMs = (long)JsonDbl(data, "from_unix_ms");
+   long toMs = (long)JsonDbl(data, "to_unix_ms");
+   int maxRows = (int)JsonDbl(data, "max_rows");
+   if(maxRows <= 0) maxRows = 5000;
+   if(maxRows > 20000) maxRows = 20000;
+   if(fromMs <= 0 || toMs <= fromMs)
+      return Err(reqId, "INVALID_RANGE", "Historical rate request requires a valid UTC from/to range.");
+
+   datetime fromTime = (datetime)(fromMs / 1000);
+   datetime toTime = (datetime)(toMs / 1000);
+
+   MqlRates rates[];
+   ResetLastError();
+   int copied = CopyRates(sym, tf, fromTime, toTime, rates);
+   if(copied <= 0)
+   {
+      int err = GetLastError();
+      return Err(reqId, "NO_RATE_HISTORY",
+         "CopyRates returned no data for " + sym + " error " + IntegerToString(err));
+   }
+
+   int digits = (int)SymbolInfoInteger(sym, SYMBOL_DIGITS);
+   double point = SymbolInfoDouble(sym, SYMBOL_POINT);
+   double pip = SnapshotPipSize(sym);
+   int count = MathMin(copied, maxRows);
+   string arr = "[";
+   for(int i = 0; i < count; i++)
+   {
+      if(i > 0) arr += ",";
+      double spreadPips = pip > 0.0 ? ((double)rates[i].spread * point) / pip : 0.0;
+      arr += "{";
+      arr += "\"TimestampUtc\":\"" + IsoUtcFromSeconds(rates[i].time) + "\",";
+      arr += "\"Symbol\":\"" + Esc(sym) + "\",";
+      arr += "\"Timeframe\":\"M1\",";
+      arr += "\"Open\":" + DoubleToString(rates[i].open, digits) + ",";
+      arr += "\"High\":" + DoubleToString(rates[i].high, digits) + ",";
+      arr += "\"Low\":" + DoubleToString(rates[i].low, digits) + ",";
+      arr += "\"Close\":" + DoubleToString(rates[i].close, digits) + ",";
+      arr += "\"SpreadPips\":" + DoubleToString(spreadPips, 2) + ",";
+      arr += "\"Volume\":" + IntegerToString((int)rates[i].tick_volume);
+      arr += "}";
+   }
+   arr += "]";
+   return Ok(reqId, arr);
+}
+
+string IsoUtcFromMillis(ulong unixMs)
+{
+   datetime t = (datetime)(unixMs / 1000);
+   int millis = (int)(unixMs % 1000);
+   MqlDateTime dt;
+   TimeToStruct(t, dt);
+   return StringFormat("%04d-%02d-%02dT%02d:%02d:%02d.%03dZ",
+      dt.year, dt.mon, dt.day, dt.hour, dt.min, dt.sec, millis);
+}
+
+string IsoUtcFromSeconds(datetime t)
+{
+   MqlDateTime dt;
+   TimeToStruct(t, dt);
+   return StringFormat("%04d-%02d-%02dT%02d:%02d:%02d.000Z",
+      dt.year, dt.mon, dt.day, dt.hour, dt.min, dt.sec);
+}
+
+ENUM_TIMEFRAMES TimeframeFromString(string value)
+{
+   StringToUpper(value);
+   if(value == "M1" || value == "PERIOD_M1") return PERIOD_M1;
+   if(value == "M5" || value == "PERIOD_M5") return PERIOD_M5;
+   if(value == "M15" || value == "PERIOD_M15") return PERIOD_M15;
+   if(value == "M30" || value == "PERIOD_M30") return PERIOD_M30;
+   if(value == "H1" || value == "PERIOD_H1") return PERIOD_H1;
+   if(value == "H4" || value == "PERIOD_H4") return PERIOD_H4;
+   if(value == "D1" || value == "PERIOD_D1") return PERIOD_D1;
+   return PERIOD_CURRENT;
 }
 
 // Extract a string or number value for a given key

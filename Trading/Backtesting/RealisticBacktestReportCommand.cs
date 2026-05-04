@@ -253,6 +253,8 @@ namespace MT5TradingBot.Modules.Backtesting
             sb.AppendLine("|---|---:|");
             sb.AppendLine($"| Backtest period | {period} |");
             sb.AppendLine($"| Symbols tested | {symbols} |");
+            sb.AppendLine($"| Ticks loaded | {ticks.Count.ToString(CultureInfo.InvariantCulture)} |");
+            sb.AppendLine($"| Candles loaded | {candles.Count.ToString(CultureInfo.InvariantCulture)} |");
             sb.AppendLine($"| Total candidates | {candidates.Count.ToString(CultureInfo.InvariantCulture)} |");
             sb.AppendLine($"| Completed trades | {result.SuccessfulTrades.Count.ToString(CultureInfo.InvariantCulture)} |");
             sb.AppendLine($"| Rejected trades | {result.RejectedTrades.Count.ToString(CultureInfo.InvariantCulture)} |");
@@ -265,6 +267,22 @@ namespace MT5TradingBot.Modules.Backtesting
             sb.AppendLine($"| Total commission | {Usd(metrics.TotalCommissionUsd)} |");
             sb.AppendLine($"| Total slippage | {Usd(metrics.TotalSlippageUsd)} |");
             sb.AppendLine($"| Total spread cost | {Usd(metrics.TotalSpreadCostUsd)} |");
+            sb.AppendLine($"| Backtest status | {(result.Success ? "Success" : "Failed")} |");
+            if (!result.Success)
+                sb.AppendLine($"| Failure reason | {Escape(result.FailureCode + ": " + result.FailureReason)} |");
+            sb.AppendLine();
+            sb.AppendLine("## Candidate Generation");
+            sb.AppendLine();
+            sb.AppendLine($"- Market data source: {Assumption(assumptions, "market_data_source", "Unavailable")}");
+            sb.AppendLine($"- Candidate generation source: {Assumption(assumptions, "candidate_generation_source", "Unavailable")}");
+            sb.AppendLine($"- Sample fixture used: {Assumption(assumptions, "sample_fixture_used", "Unknown")}");
+            sb.AppendLine($"- Real strategy candidates used: {Assumption(assumptions, "real_strategy_candidates_used", "Unknown")}");
+            sb.AppendLine($"- Candidates generated from real data: {Assumption(assumptions, "candidates_generated_from_real_data", "0")}");
+            sb.AppendLine($"- Skipped/hold signals: {Assumption(assumptions, "skipped_or_hold_signals", "0")}");
+            sb.AppendLine($"- Incomplete signals: {Assumption(assumptions, "incomplete_signals", "0")}");
+            sb.AppendLine($"- AI disabled reason: {Assumption(assumptions, "ai_disabled_reason", "Unavailable")}");
+            sb.AppendLine($"- Offline/live logic differences: {Assumption(assumptions, "offline_live_logic_differences", "Unavailable")}");
+            sb.AppendLine($"- Diagnostic: {Assumption(assumptions, "candidate_generation_diagnostic", "None")}");
             sb.AppendLine();
             sb.AppendLine("## Rejection Breakdown");
             sb.AppendLine();
@@ -319,6 +337,14 @@ namespace MT5TradingBot.Modules.Backtesting
 
         private static string Escape(string value) =>
             value.Replace("|", "\\|", StringComparison.Ordinal);
+
+        private static string Assumption(
+            IReadOnlyDictionary<string, string> assumptions,
+            string key,
+            string fallback) =>
+            assumptions.TryGetValue(key, out string? value) && !string.IsNullOrWhiteSpace(value)
+                ? value
+                : fallback;
 
         private static DateTime EnsureUtc(DateTime timestamp) =>
             timestamp.Kind == DateTimeKind.Utc

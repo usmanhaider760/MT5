@@ -54,6 +54,11 @@ namespace MT5TradingBot.UI
 
         // -- Timers ------------------------------------------------
         private readonly System.Windows.Forms.Timer _refreshTimer = new() { Interval = 2500 };
+        private MarketDataAutoSyncService? _marketDataSync;
+        private MT5Bridge? _marketDataBridge;
+        private readonly Panel _pnlMarketDataSync = new();
+        private readonly Label _lblMarketDataSync = new();
+        private readonly ProgressBar _pbMarketDataSync = new();
 
         // -- Pair Settings tab ------------------------------------
         private readonly TabPage _tabPairSettings = new() { Text = "  Pair Settings  ", Name = "_tabPairSettings" };
@@ -96,6 +101,7 @@ namespace MT5TradingBot.UI
             InitializeComponent();
             AppIcon.ApplyTo(this);
             ApplyStableLayout();
+            EnsureMarketDataSyncProgressArea();
 
             if (!IsDesignerHosted())
             {
@@ -144,6 +150,7 @@ namespace MT5TradingBot.UI
                 ? "MT5 Trading Bot ready. MT5 is connected."
                 : "MT5 Trading Bot ready. Connect to MT5 to begin.", C_ACCENT);
             ShowEaDeployNoticeIfNeeded();
+            StartMarketDataAutoSyncIfEnabled();
             await RefreshSignalFeedAsync();
             await EnsureAutoWatcherAsync("form load");
         }
@@ -2031,17 +2038,124 @@ SAFETY RULES:
             else btn.Enabled = enabled;
         }
 
+        private void EnsureMarketDataSyncProgressArea()
+        {
+            if (_pnlMarketDataSync.Parent != null) return;
+
+            _pnlMarketDataSync.Height = 30;
+            _pnlMarketDataSync.Dock = DockStyle.Fill;
+            _pnlMarketDataSync.BackColor = Color.FromArgb(24, 28, 36);
+            _pnlMarketDataSync.Padding = new Padding(10, 5, 10, 5);
+
+            _pbMarketDataSync.Dock = DockStyle.Right;
+            _pbMarketDataSync.Width = 180;
+            _pbMarketDataSync.Minimum = 0;
+            _pbMarketDataSync.Maximum = 100;
+            _pbMarketDataSync.Value = 0;
+
+            _lblMarketDataSync.Dock = DockStyle.Fill;
+            _lblMarketDataSync.TextAlign = ContentAlignment.MiddleLeft;
+            _lblMarketDataSync.ForeColor = C_MUTED;
+            _lblMarketDataSync.Text = "Market data sync: idle";
+
+            _pnlMarketDataSync.Controls.Add(_lblMarketDataSync);
+            _pnlMarketDataSync.Controls.Add(_pbMarketDataSync);
+
+            _layoutRoot.RowCount = 5;
+            if (_layoutRoot.RowStyles.Count < 5)
+                _layoutRoot.RowStyles.Add(new RowStyle(SizeType.Absolute, 30F));
+            _layoutRoot.Controls.Add(_pnlMarketDataSync, 0, 4);
+        }
+
+        private void StartMarketDataAutoSyncIfEnabled()
+        {
+            if (!_cfg.Bot.EnableMarketDataAutoUpdate)
+            {
+                UpdateMarketDataProgress(new HistoricalMarketDataSyncProgress
+                {
+                    Status = HistoricalMarketDataSyncStatus.Skipped,
+                    Message = "Market data sync: disabled"
+                });
+                return;
+            }
+
+            _marketDataSync ??= new MarketDataAutoSyncService(
+                CreateMarketDataUpdater,
+                () => HistoricalMarketDataUpdater.FromConfig(_cfg.Bot),
+                TimeSpan.FromMinutes(Math.Max(1, _cfg.Bot.MarketDataSyncIntervalMinutes)),
+                _cfg.Bot.AllowSyncDuringTrading,
+                IsCriticalTradeExecutionInProgress);
+
+            _marketDataSync.ProgressChanged += p => UIThread(() => UpdateMarketDataProgress(p));
+            _marketDataSync.Start(_cfg.Bot.UpdateMarketDataOnStartup || _cfg.Bot.UpdateOnStartup);
+        }
+
+        private async Task RestartMarketDataAutoSyncAsync()
+        {
+            if (_marketDataSync != null)
+            {
+                await _marketDataSync.DisposeAsync();
+                _marketDataSync = null;
+            }
+
+            UIThread(StartMarketDataAutoSyncIfEnabled);
+        }
+
+        private HistoricalMarketDataUpdater CreateMarketDataUpdater()
+        {
+            MT5Bridge bridge = _bridge?.IsConnected == true
+                ? _bridge
+                : (_marketDataBridge ??= new MT5Bridge(_cfg.Mt5));
+
+            return new HistoricalMarketDataUpdater(new Mt5HistoricalMarketDataProvider(bridge));
+        }
+
+        private bool IsCriticalTradeExecutionInProgress()
+        {
+            lock (_signalExecutionLock)
+                return _executingSignalIds.Count > 0;
+        }
+
+        private void UpdateMarketDataProgress(HistoricalMarketDataSyncProgress progress)
+        {
+            int percent = Math.Clamp(progress.Percent, 0, 100);
+            _pbMarketDataSync.Value = percent;
+
+            string symbol = string.IsNullOrWhiteSpace(progress.Symbol) ? "-" : progress.Symbol;
+            string updated = progress.LastUpdatedUtc.HasValue
+                ? progress.LastUpdatedUtc.Value.ToString("u", CultureInfo.InvariantCulture)
+                : "-";
+            string message = string.IsNullOrWhiteSpace(progress.Message)
+                ? progress.Status.ToString()
+                : progress.Message;
+
+            _lblMarketDataSync.Text =
+                $"Market data sync: {progress.Status} | {symbol} | {progress.DataType} | {percent}% | rows {progress.RowsFetched} | updated {updated} | {message}";
+
+            _lblMarketDataSync.ForeColor = progress.Status switch
+            {
+                HistoricalMarketDataSyncStatus.Failed => C_RED,
+                HistoricalMarketDataSyncStatus.Cancelled => C_YELLOW,
+                HistoricalMarketDataSyncStatus.Completed => C_GREEN,
+                _ => C_MUTED
+            };
+        }
+
         private async void OnFormClosingAsync(object? sender, FormClosingEventArgs e)
         {
             _refreshTimer.Stop();
             _signalFeedPollTimer.Stop();
             _signalFeedWatcher?.Dispose();
+            if (_marketDataSync != null)
+                await _marketDataSync.DisposeAsync();
             _settings.StopWatching();
             if (_scalping != null)
                 await _scalping.StopAsync();
             await StopClaudeAsync();
             await StopBotAsync();
             await _settings.SaveAsync(_cfg);
+            if (!ReferenceEquals(_marketDataBridge, _bridge))
+                _marketDataBridge?.Dispose();
             _bridge?.Dispose();
         }
 
@@ -2051,6 +2165,7 @@ SAFETY RULES:
             _bot?.UpdateConfig(s.Bot);
             _bot?.SetMode(s.Bot.OperatingMode);
             _claude?.UpdateConfig(s.Claude);
+            _ = RestartMarketDataAutoSyncAsync();
             UIThread(() => Log("[CFG] Settings hot-reloaded from disk."));
         }
 
