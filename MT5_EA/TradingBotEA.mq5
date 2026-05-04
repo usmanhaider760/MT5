@@ -13,7 +13,7 @@
 
 //── Inputs ────────────────────────────────────────────────────────
 input string InpPipeName    = "MT5TradingBotPipe"; // Named pipe name
-input int    InpBufSize     = 131072;               // Buffer size (128 KB)
+input int    InpBufSize     = 1048576;               // Buffer size (128 KB)
 input bool   InpEnableLog   = true;                 // Verbose logging
 input int    InpMagic       = 999001;               // Default magic number
 input int    InpSlippage    = 10;                   // Max slippage points
@@ -155,14 +155,166 @@ string ProcessRequest(string json)
    if(cmd == "CLOSE_TRADE")    return CmdCloseTrade(reqId, json);
    if(cmd == "MODIFY_POSITION")return CmdModifyPosition(reqId, json);
    if(cmd == "GET_SYMBOL_INFO")return CmdGetSymbolInfo(reqId, json);
-   if(cmd == "GET_MARGIN_ESTIMATE")return CmdGetMarginEstimate(reqId, json);
-   if(cmd == "CHECK_ORDER")    return CmdCheckOrder(reqId, json);
    if(cmd == "GET_MARKET_SNAPSHOT")return CmdGetMarketSnapshot(reqId, json);
    if(cmd == "GET_TICKS")      return CmdGetTicks(reqId, json);
    if(cmd == "GET_RATES")      return CmdGetRates(reqId, json);
    if(cmd == "CLOSE_ALL")      return CmdCloseAll(reqId);
 
    return Err(reqId, "UNKNOWN_CMD", "Unknown command: " + cmd);
+}
+
+long JsonLong(string json, string key)
+{
+   string v = JsonStr(json, key);
+   if(StringLen(v) == 0) return 0;
+   return (long)StringToInteger(v);
+}
+
+datetime UnixMsToTime(long unixMs)
+{
+   return (datetime)(unixMs / 1000);
+}
+
+string TimeToIsoUtc(datetime t)
+{
+   return TimeToString(t, TIME_DATE | TIME_SECONDS);
+}
+
+string CmdGetTicks(string reqId, string json)
+{
+   string data = JsonStr(json, "data");
+   if(StringLen(data) == 0 || JsonLong(data, "from_unix_ms") <= 0 || JsonLong(data, "to_unix_ms") <= 0)
+      data = json;
+
+   string sym = JsonStr(data, "symbol");
+   StringReplace(sym, "/", "");
+
+   string brokerSymbol = "";
+   if(!ResolveBrokerSymbol(sym, brokerSymbol))
+      return Err(reqId, "INVALID_SYMBOL", "Symbol not found: " + sym);
+
+   sym = brokerSymbol;
+
+   long fromMs = JsonLong(data, "from_unix_ms");
+   long toMs   = JsonLong(data, "to_unix_ms");
+   int maxRows = (int)JsonDbl(data, "max_rows");
+
+   if(maxRows <= 0) maxRows = 5000;
+   if(maxRows > 50000) maxRows = 50000;
+
+   datetime fromTime = UnixMsToTime(fromMs);
+   datetime toTime   = UnixMsToTime(toMs);
+
+   if(fromTime <= 0 || toTime <= 0 || fromTime >= toTime)
+      return Err(reqId, "INVALID_RANGE", "Invalid tick date range");
+
+   MqlTick ticks[];
+   ulong fromUs = (ulong)fromMs * 1000;
+   ulong toUs   = (ulong)toMs * 1000;
+
+   int copied = CopyTicksRange(sym, ticks, COPY_TICKS_ALL, fromUs, toUs);
+
+   if(copied <= 0)
+      return Ok(reqId, "[]");
+
+   string arr = "[";
+   int added = 0;
+
+   for(int i = 0; i < copied && added < maxRows; i++)
+   {
+      if(added > 0) arr += ",";
+
+      arr += "{";
+      arr += "\"TimestampUtc\":\"" + TimeToIsoUtc((datetime)ticks[i].time) + "\",";
+      arr += "\"Symbol\":\"" + Esc(sym) + "\",";
+      arr += "\"Bid\":" + DoubleToString(ticks[i].bid, (int)SymbolInfoInteger(sym, SYMBOL_DIGITS)) + ",";
+      arr += "\"Ask\":" + DoubleToString(ticks[i].ask, (int)SymbolInfoInteger(sym, SYMBOL_DIGITS)) + ",";
+      arr += "\"Volume\":" + DoubleToString((double)ticks[i].volume, 2);
+      arr += "}";
+
+      added++;
+   }
+
+   arr += "]";
+   return Ok(reqId, arr);
+}
+
+string CmdGetRates(string reqId, string json)
+{
+   string data = JsonStr(json, "data");
+   if(StringLen(data) == 0 || JsonLong(data, "from_unix_ms") <= 0 || JsonLong(data, "to_unix_ms") <= 0)
+      data = json;
+
+   string sym = JsonStr(data, "symbol");
+   StringReplace(sym, "/", "");
+
+   string brokerSymbol = "";
+   if(!ResolveBrokerSymbol(sym, brokerSymbol))
+      return Err(reqId, "INVALID_SYMBOL", "Symbol not found: " + sym);
+
+   sym = brokerSymbol;
+
+   string tfText = JsonStr(data, "timeframe");
+   string tfOut = tfText;
+   if(StringLen(tfOut) == 0)
+      tfOut = "M1";
+   ENUM_TIMEFRAMES tf = PERIOD_M1;
+
+   if(tfText == "M5") tf = PERIOD_M5;
+   else if(tfText == "M15") tf = PERIOD_M15;
+   else if(tfText == "M30") tf = PERIOD_M30;
+   else if(tfText == "H1") tf = PERIOD_H1;
+   else tf = PERIOD_M1;
+
+   long fromMs = JsonLong(data, "from_unix_ms");
+   long toMs   = JsonLong(data, "to_unix_ms");
+   int maxRows = (int)JsonDbl(data, "max_rows");
+
+   if(maxRows <= 0) maxRows = 5000;
+   if(maxRows > 50000) maxRows = 50000;
+
+   datetime fromTime = UnixMsToTime(fromMs);
+   datetime toTime   = UnixMsToTime(toMs);
+
+   if(fromTime <= 0 || toTime <= 0 || fromTime >= toTime)
+      return Err(reqId, "INVALID_RANGE", "Invalid OHLC date range");
+
+   MqlRates rates[];
+   ArraySetAsSeries(rates, false);
+
+   int copied = CopyRates(sym, tf, fromTime, toTime, rates);
+
+   if(copied <= 0)
+      return Ok(reqId, "[]");
+
+   int digits = (int)SymbolInfoInteger(sym, SYMBOL_DIGITS);
+   double pip = SnapshotPipSize(sym);
+
+   string arr = "[";
+   int added = 0;
+
+   for(int i = 0; i < copied && added < maxRows; i++)
+   {
+      if(added > 0) arr += ",";
+
+      double spreadPips = pip > 0 ? rates[i].spread * SymbolInfoDouble(sym, SYMBOL_POINT) / pip : 0.0;
+
+      arr += "{";
+      arr += "\"TimestampUtc\":\"" + TimeToIsoUtc(rates[i].time) + "\",";
+      arr += "\"Symbol\":\"" + Esc(sym) + "\",";
+      arr += "\"Open\":" + DoubleToString(rates[i].open, digits) + ",";
+      arr += "\"High\":" + DoubleToString(rates[i].high, digits) + ",";
+      arr += "\"Low\":" + DoubleToString(rates[i].low, digits) + ",";
+      arr += "\"Close\":" + DoubleToString(rates[i].close, digits) + ",";
+      arr += "\"Timeframe\":\"" + Esc(tfOut) + "\",";
+      arr += "\"SpreadPips\":" + DoubleToString(spreadPips, 2);
+      arr += "}";
+
+      added++;
+   }
+
+   arr += "]";
+   return Ok(reqId, arr);
 }
 
 //+------------------------------------------------------------------+
@@ -444,27 +596,17 @@ string CmdGetSymbolInfo(string reqId, string json)
 
    double ask   = SymbolInfoDouble(sym, SYMBOL_ASK);
    double bid   = SymbolInfoDouble(sym, SYMBOL_BID);
-   double point = SymbolInfoDouble(sym, SYMBOL_POINT);
-   double spread= point > 0 ? (ask - bid) / point : 0;
+   double spread= (ask - bid) / SymbolInfoDouble(sym, SYMBOL_POINT);
    double minLot= SymbolInfoDouble(sym, SYMBOL_VOLUME_MIN);
    double maxLot= SymbolInfoDouble(sym, SYMBOL_VOLUME_MAX);
-   double lotStep= SymbolInfoDouble(sym, SYMBOL_VOLUME_STEP);
-   double volumeLimit= SymbolInfoDouble(sym, SYMBOL_VOLUME_LIMIT);
-   long stopLevel = SymbolInfoInteger(sym, SYMBOL_TRADE_STOPS_LEVEL);
-   long freezeLevel = SymbolInfoInteger(sym, SYMBOL_TRADE_FREEZE_LEVEL);
 
    string d = "{";
    d += "\"Symbol\":\""   + Esc(sym) + "\",";
    d += "\"Ask\":"        + DoubleToString(ask,    5) + ",";
    d += "\"Bid\":"        + DoubleToString(bid,    5) + ",";
    d += "\"Spread\":"     + DoubleToString(spread, 1) + ",";
-   d += "\"MinLot\":"     + DoubleToString(minLot, 4) + ",";
-   d += "\"MaxLot\":"     + DoubleToString(maxLot, 4) + ",";
-   d += "\"LotStep\":"    + DoubleToString(lotStep, 4) + ",";
-   d += "\"VolumeLimit\":" + DoubleToString(volumeLimit, 2) + ",";
-   d += "\"PointSize\":"   + DoubleToString(point, (int)SymbolInfoInteger(sym, SYMBOL_DIGITS)) + ",";
-   d += "\"StopLevelPoints\":" + IntegerToString(stopLevel) + ",";
-   d += "\"FreezeLevelPoints\":" + IntegerToString(freezeLevel) + ",";
+   d += "\"MinLot\":"     + DoubleToString(minLot, 2) + ",";
+   d += "\"MaxLot\":"     + DoubleToString(maxLot, 2) + ",";
    d += "\"Digits\":"     + IntegerToString(SymbolInfoInteger(sym, SYMBOL_DIGITS));
    d += "}";
    return Ok(reqId, d);
@@ -473,186 +615,6 @@ string CmdGetSymbolInfo(string reqId, string json)
 //+------------------------------------------------------------------+
 //| JSON helpers — minimal, no deps                                   |
 //+------------------------------------------------------------------+
-
-//+------------------------------------------------------------------+
-//| GET_MARKET_SNAPSHOT                                               |
-//+------------------------------------------------------------------+
-string CmdGetMarginEstimate(string reqId, string json)
-{
-   string data = JsonStr(json, "data");
-   if(StringLen(data) == 0) data = json;
-
-   string sym = JsonStr(data, "symbol");
-   if(StringLen(sym) == 0) sym = JsonStr(data, "Pair");
-   StringReplace(sym, "/", "");
-
-   string brokerSymbol = "";
-   if(!ResolveBrokerSymbol(sym, brokerSymbol))
-      return Err(reqId, "INVALID_SYMBOL", "Symbol not found: " + sym + ". Check broker suffix in MT5 Market Watch.");
-   sym = brokerSymbol;
-
-   string tradeType = JsonStr(data, "trade_type");
-   if(StringLen(tradeType) == 0) tradeType = JsonStr(data, "TradeType");
-   StringToUpper(tradeType);
-   bool isSell = (tradeType == "SELL");
-
-   double lots = JsonDbl(data, "lots");
-   if(lots <= 0) lots = JsonDbl(data, "lot_size");
-   if(lots <= 0) lots = JsonDbl(data, "LotSize");
-
-   double minLot = SymbolInfoDouble(sym, SYMBOL_VOLUME_MIN);
-   double maxLot = SymbolInfoDouble(sym, SYMBOL_VOLUME_MAX);
-   double lotStep = SymbolInfoDouble(sym, SYMBOL_VOLUME_STEP);
-   if(lots < minLot || lots > maxLot)
-      return Err(reqId, "INVALID_LOTS", "Lot size outside broker limits for " + sym);
-
-   int digits = (int)SymbolInfoInteger(sym, SYMBOL_DIGITS);
-   double price = JsonDbl(data, "price");
-   if(price <= 0) price = JsonDbl(data, "EntryPrice");
-   if(price <= 0)
-      price = isSell ? SymbolInfoDouble(sym, SYMBOL_BID) : SymbolInfoDouble(sym, SYMBOL_ASK);
-   if(price <= 0)
-      return Err(reqId, "NO_PRICE", "Price unavailable for margin estimate: " + sym);
-
-   ENUM_ORDER_TYPE orderType = isSell ? ORDER_TYPE_SELL : ORDER_TYPE_BUY;
-   double requiredMargin = 0.0;
-   ResetLastError();
-   if(!OrderCalcMargin(orderType, sym, lots, price, requiredMargin))
-   {
-      int err = GetLastError();
-      return Err(reqId, "MARGIN_ESTIMATE_FAILED",
-         "OrderCalcMargin failed for " + sym + " error " + IntegerToString(err));
-   }
-
-   if(requiredMargin <= 0)
-      return Err(reqId, "NO_MARGIN_DATA", "Required margin is zero for " + sym);
-
-   string d = "{";
-   d += "\"Symbol\":\"" + Esc(sym) + "\",";
-   d += "\"TradeType\":\"" + (isSell ? "SELL" : "BUY") + "\",";
-   d += "\"Lots\":" + DoubleToString(lots, 2) + ",";
-   d += "\"Price\":" + DoubleToString(price, digits) + ",";
-   d += "\"RequiredMargin\":" + DoubleToString(requiredMargin, 2) + ",";
-   d += "\"MinLot\":" + DoubleToString(minLot, 2) + ",";
-   d += "\"MaxLot\":" + DoubleToString(maxLot, 2) + ",";
-   d += "\"LotStep\":" + DoubleToString(lotStep, 2) + ",";
-   d += "\"Currency\":\"" + Esc(AccountInfoString(ACCOUNT_CURRENCY)) + "\"";
-   d += "}";
-   return Ok(reqId, d);
-}
-
-//+------------------------------------------------------------------+
-//| CHECK_ORDER                                                       |
-//+------------------------------------------------------------------+
-string CmdCheckOrder(string reqId, string json)
-{
-   string data = JsonStr(json, "data");
-   if(StringLen(data) == 0) data = json;
-
-   string sym = JsonStr(data, "symbol");
-   if(StringLen(sym) == 0) sym = JsonStr(data, "Pair");
-   StringReplace(sym, "/", "");
-
-   string brokerSymbol = "";
-   if(!ResolveBrokerSymbol(sym, brokerSymbol))
-      return Err(reqId, "INVALID_SYMBOL", "Symbol not found: " + sym + ". Check broker suffix in MT5 Market Watch.");
-   sym = brokerSymbol;
-
-   string tradeType = JsonStr(data, "trade_type");
-   if(StringLen(tradeType) == 0) tradeType = JsonStr(data, "TradeType");
-   StringToUpper(tradeType);
-   bool isSell = (tradeType == "SELL");
-
-   string orderType = JsonStr(data, "order_type");
-   if(StringLen(orderType) == 0) orderType = JsonStr(data, "OrderType");
-   StringToUpper(orderType);
-   bool isMarket = (orderType == "MARKET" || StringLen(orderType) == 0);
-   bool isLimit = (orderType == "LIMIT");
-   bool isStop = (orderType == "STOP");
-
-   double lots = JsonDbl(data, "lots");
-   if(lots <= 0) lots = JsonDbl(data, "lot_size");
-   if(lots <= 0) lots = JsonDbl(data, "LotSize");
-
-   double price = JsonDbl(data, "price");
-   if(price <= 0) price = JsonDbl(data, "EntryPrice");
-   if(price <= 0)
-      price = isSell ? SymbolInfoDouble(sym, SYMBOL_BID) : SymbolInfoDouble(sym, SYMBOL_ASK);
-
-   double sl = JsonDbl(data, "stop_loss");
-   if(sl <= 0) sl = JsonDbl(data, "StopLoss");
-   double tp = JsonDbl(data, "take_profit");
-   if(tp <= 0) tp = JsonDbl(data, "TakeProfit");
-   int magic = (int)JsonDbl(data, "magic_number");
-   if(magic <= 0) magic = (int)JsonDbl(data, "MagicNumber");
-   if(magic <= 0) magic = InpMagic;
-
-   if(lots <= 0) return Err(reqId, "INVALID_LOTS", "Lot size unavailable for OrderCheck: " + sym);
-   if(price <= 0) return Err(reqId, "NO_PRICE", "Price unavailable for OrderCheck: " + sym);
-
-   MqlTradeRequest checkRequest;
-   MqlTradeCheckResult checkResult;
-   ZeroMemory(checkRequest);
-   ZeroMemory(checkResult);
-
-   checkRequest.action = isMarket ? TRADE_ACTION_DEAL : TRADE_ACTION_PENDING;
-   checkRequest.symbol = sym;
-   checkRequest.volume = lots;
-   checkRequest.price = price;
-   checkRequest.sl = sl;
-   checkRequest.tp = tp;
-   checkRequest.magic = magic;
-   checkRequest.deviation = InpSlippage;
-   checkRequest.type_time = ORDER_TIME_GTC;
-
-   long fillingMode = SymbolInfoInteger(sym, SYMBOL_FILLING_MODE);
-   if((fillingMode & SYMBOL_FILLING_IOC) == SYMBOL_FILLING_IOC)
-      checkRequest.type_filling = ORDER_FILLING_IOC;
-   else if((fillingMode & SYMBOL_FILLING_FOK) == SYMBOL_FILLING_FOK)
-      checkRequest.type_filling = ORDER_FILLING_FOK;
-   else
-      checkRequest.type_filling = ORDER_FILLING_RETURN;
-
-   if(isMarket)
-      checkRequest.type = isSell ? ORDER_TYPE_SELL : ORDER_TYPE_BUY;
-   else if(isLimit)
-      checkRequest.type = isSell ? ORDER_TYPE_SELL_LIMIT : ORDER_TYPE_BUY_LIMIT;
-   else if(isStop)
-      checkRequest.type = isSell ? ORDER_TYPE_SELL_STOP : ORDER_TYPE_BUY_STOP;
-   else
-      return Err(reqId, "INVALID_ORDER_TYPE", "Unsupported order type for OrderCheck: " + orderType);
-
-   ResetLastError();
-   bool ok = OrderCheck(checkRequest, checkResult);
-   if(!ok)
-   {
-      int err = GetLastError();
-      return Err(reqId, "ORDERCHECK_FAILED",
-         "OrderCheck failed for " + sym + " error " + IntegerToString(err));
-   }
-
-   bool accepted =
-      checkResult.retcode == TRADE_RETCODE_DONE ||
-      checkResult.retcode == TRADE_RETCODE_PLACED ||
-      checkResult.retcode == TRADE_RETCODE_DONE_PARTIAL;
-
-   int digits = (int)SymbolInfoInteger(sym, SYMBOL_DIGITS);
-   string d = "{";
-   d += "\"IsAccepted\":" + BoolJson(accepted) + ",";
-   d += "\"Retcode\":" + IntegerToString(checkResult.retcode) + ",";
-   d += "\"Comment\":\"" + Esc(checkResult.comment) + "\",";
-   d += "\"Margin\":" + DoubleToString(checkResult.margin, 2) + ",";
-   d += "\"MarginFree\":" + DoubleToString(checkResult.margin_free, 2) + ",";
-   d += "\"MarginLevel\":" + DoubleToString(checkResult.margin_level, 2) + ",";
-   d += "\"Volume\":" + DoubleToString(lots, 2) + ",";
-   d += "\"Price\":" + DoubleToString(price, digits) + ",";
-   d += "\"StopLoss\":" + DoubleToString(sl, digits) + ",";
-   d += "\"TakeProfit\":" + DoubleToString(tp, digits) + ",";
-   d += "\"Symbol\":\"" + Esc(sym) + "\",";
-   d += "\"TradeType\":\"" + (isSell ? "SELL" : "BUY") + "\"";
-   d += "}";
-   return Ok(reqId, d);
-}
 
 //+------------------------------------------------------------------+
 //| GET_MARKET_SNAPSHOT                                               |
@@ -739,155 +701,6 @@ string CmdGetMarketSnapshot(string reqId, string json)
    d += "}";
 
    return Ok(reqId, d);
-}
-
-//+------------------------------------------------------------------+
-//| GET_TICKS - read-only historical tick export                      |
-//+------------------------------------------------------------------+
-string CmdGetTicks(string reqId, string json)
-{
-   string data = JsonStr(json, "data");
-   if(StringLen(data) == 0) data = json;
-
-   string sym = JsonStr(data, "symbol");
-   StringReplace(sym, "/", "");
-
-   string brokerSymbol = "";
-   if(!ResolveBrokerSymbol(sym, brokerSymbol))
-      return Err(reqId, "INVALID_SYMBOL", "Symbol not found: " + sym + ". Check broker suffix in MT5 Market Watch.");
-   sym = brokerSymbol;
-
-   ulong fromMsc = (ulong)JsonDbl(data, "from_unix_ms");
-   ulong toMsc = (ulong)JsonDbl(data, "to_unix_ms");
-   int maxRows = (int)JsonDbl(data, "max_rows");
-   if(maxRows <= 0) maxRows = 5000;
-   if(maxRows > 20000) maxRows = 20000;
-   if(fromMsc <= 0 || toMsc <= fromMsc)
-      return Err(reqId, "INVALID_RANGE", "Historical tick request requires a valid UTC from/to range.");
-
-   MqlTick ticks[];
-   ResetLastError();
-   int copied = CopyTicksRange(sym, ticks, COPY_TICKS_ALL, fromMsc, toMsc);
-   if(copied <= 0)
-   {
-      int err = GetLastError();
-      return Err(reqId, "NO_TICK_HISTORY",
-         "CopyTicksRange returned no data for " + sym + " error " + IntegerToString(err));
-   }
-
-   int count = MathMin(copied, maxRows);
-   string arr = "[";
-   for(int i = 0; i < count; i++)
-   {
-      if(i > 0) arr += ",";
-      double volume = ticks[i].volume_real > 0.0 ? ticks[i].volume_real : (double)ticks[i].volume;
-      arr += "{";
-      arr += "\"TimestampUtc\":\"" + IsoUtcFromMillis((ulong)ticks[i].time_msc) + "\",";
-      arr += "\"Symbol\":\"" + Esc(sym) + "\",";
-      arr += "\"Bid\":" + DoubleToString(ticks[i].bid, (int)SymbolInfoInteger(sym, SYMBOL_DIGITS)) + ",";
-      arr += "\"Ask\":" + DoubleToString(ticks[i].ask, (int)SymbolInfoInteger(sym, SYMBOL_DIGITS)) + ",";
-      arr += "\"Volume\":" + DoubleToString(volume, 2);
-      arr += "}";
-   }
-   arr += "]";
-   return Ok(reqId, arr);
-}
-
-//+------------------------------------------------------------------+
-//| GET_RATES - read-only historical OHLC export                      |
-//+------------------------------------------------------------------+
-string CmdGetRates(string reqId, string json)
-{
-   string data = JsonStr(json, "data");
-   if(StringLen(data) == 0) data = json;
-
-   string sym = JsonStr(data, "symbol");
-   StringReplace(sym, "/", "");
-
-   string brokerSymbol = "";
-   if(!ResolveBrokerSymbol(sym, brokerSymbol))
-      return Err(reqId, "INVALID_SYMBOL", "Symbol not found: " + sym + ". Check broker suffix in MT5 Market Watch.");
-   sym = brokerSymbol;
-
-   string timeframeStr = JsonStr(data, "timeframe");
-   ENUM_TIMEFRAMES tf = TimeframeFromString(timeframeStr);
-   if(tf == PERIOD_CURRENT) tf = PERIOD_M1;
-
-   long fromMs = (long)JsonDbl(data, "from_unix_ms");
-   long toMs = (long)JsonDbl(data, "to_unix_ms");
-   int maxRows = (int)JsonDbl(data, "max_rows");
-   if(maxRows <= 0) maxRows = 5000;
-   if(maxRows > 20000) maxRows = 20000;
-   if(fromMs <= 0 || toMs <= fromMs)
-      return Err(reqId, "INVALID_RANGE", "Historical rate request requires a valid UTC from/to range.");
-
-   datetime fromTime = (datetime)(fromMs / 1000);
-   datetime toTime = (datetime)(toMs / 1000);
-
-   MqlRates rates[];
-   ResetLastError();
-   int copied = CopyRates(sym, tf, fromTime, toTime, rates);
-   if(copied <= 0)
-   {
-      int err = GetLastError();
-      return Err(reqId, "NO_RATE_HISTORY",
-         "CopyRates returned no data for " + sym + " error " + IntegerToString(err));
-   }
-
-   int digits = (int)SymbolInfoInteger(sym, SYMBOL_DIGITS);
-   double point = SymbolInfoDouble(sym, SYMBOL_POINT);
-   double pip = SnapshotPipSize(sym);
-   int count = MathMin(copied, maxRows);
-   string arr = "[";
-   for(int i = 0; i < count; i++)
-   {
-      if(i > 0) arr += ",";
-      double spreadPips = pip > 0.0 ? ((double)rates[i].spread * point) / pip : 0.0;
-      arr += "{";
-      arr += "\"TimestampUtc\":\"" + IsoUtcFromSeconds(rates[i].time) + "\",";
-      arr += "\"Symbol\":\"" + Esc(sym) + "\",";
-      arr += "\"Timeframe\":\"M1\",";
-      arr += "\"Open\":" + DoubleToString(rates[i].open, digits) + ",";
-      arr += "\"High\":" + DoubleToString(rates[i].high, digits) + ",";
-      arr += "\"Low\":" + DoubleToString(rates[i].low, digits) + ",";
-      arr += "\"Close\":" + DoubleToString(rates[i].close, digits) + ",";
-      arr += "\"SpreadPips\":" + DoubleToString(spreadPips, 2) + ",";
-      arr += "\"Volume\":" + IntegerToString((int)rates[i].tick_volume);
-      arr += "}";
-   }
-   arr += "]";
-   return Ok(reqId, arr);
-}
-
-string IsoUtcFromMillis(ulong unixMs)
-{
-   datetime t = (datetime)(unixMs / 1000);
-   int millis = (int)(unixMs % 1000);
-   MqlDateTime dt;
-   TimeToStruct(t, dt);
-   return StringFormat("%04d-%02d-%02dT%02d:%02d:%02d.%03dZ",
-      dt.year, dt.mon, dt.day, dt.hour, dt.min, dt.sec, millis);
-}
-
-string IsoUtcFromSeconds(datetime t)
-{
-   MqlDateTime dt;
-   TimeToStruct(t, dt);
-   return StringFormat("%04d-%02d-%02dT%02d:%02d:%02d.000Z",
-      dt.year, dt.mon, dt.day, dt.hour, dt.min, dt.sec);
-}
-
-ENUM_TIMEFRAMES TimeframeFromString(string value)
-{
-   StringToUpper(value);
-   if(value == "M1" || value == "PERIOD_M1") return PERIOD_M1;
-   if(value == "M5" || value == "PERIOD_M5") return PERIOD_M5;
-   if(value == "M15" || value == "PERIOD_M15") return PERIOD_M15;
-   if(value == "M30" || value == "PERIOD_M30") return PERIOD_M30;
-   if(value == "H1" || value == "PERIOD_H1") return PERIOD_H1;
-   if(value == "H4" || value == "PERIOD_H4") return PERIOD_H4;
-   if(value == "D1" || value == "PERIOD_D1") return PERIOD_D1;
-   return PERIOD_CURRENT;
 }
 
 // Extract a string or number value for a given key

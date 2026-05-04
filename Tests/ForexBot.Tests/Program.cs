@@ -156,14 +156,26 @@ internal static class Program
         new("market data auto sync startup trigger is nonblocking", MarketDataAutoSyncStartupTriggerIsNonblocking),
         new("market data auto sync skips when already running", MarketDataAutoSyncSkipsWhenAlreadyRunning),
         new("market data auto sync skips during critical trading", MarketDataAutoSyncSkipsDuringCriticalTrading),
+        new("market data CLI update command prints started banner", MarketDataCliUpdateCommandPrintsStartedBanner),
+        new("market data CLI update command returns failure code", MarketDataCliUpdateCommandReturnsFailureCode),
+        new("market data EA historical commands parse nested payload dates", MarketDataEaHistoricalCommandsParseNestedPayloadDates),
+        new("market data UI disabled status text is visible", MarketDataUiDisabledStatusTextIsVisible),
+        new("market data startup sync emits progress event", MarketDataStartupSyncEmitsProgressEvent),
+        new("market data startup sync failure is visible", MarketDataStartupSyncFailureIsVisible),
         new("market data updater creates new tick file", MarketDataUpdaterCreatesNewTickFile),
+        new("market data updater does not create generic ticks csv", MarketDataUpdaterDoesNotCreateGenericTicksCsv),
         new("market data updater appends only new rows", MarketDataUpdaterAppendsOnlyNewRows),
         new("market data updater removes duplicates", MarketDataUpdaterRemovesDuplicates),
+        new("market data updater accepts broker suffix symbols", MarketDataUpdaterAcceptsBrokerSuffixSymbols),
+        new("market data updater treats header-only cache as empty", MarketDataUpdaterTreatsHeaderOnlyCacheAsEmpty),
         new("market data updater trims old tick rows", MarketDataUpdaterTrimsOldTickRows),
         new("market data updater trims old M1 rows", MarketDataUpdaterTrimsOldM1Rows),
         new("market data updater falls back to OHLC when ticks unavailable", MarketDataUpdaterFallsBackToOhlcWhenTicksUnavailable),
+        new("market data updater zero tick rows fall back to M1", MarketDataUpdaterZeroTickRowsFallBackToM1),
+        new("market data updater zero tick and M1 rows fails clearly", MarketDataUpdaterZeroTickAndM1RowsFailsClearly),
         new("market data updater invalid symbol returns clear error", MarketDataUpdaterInvalidSymbolReturnsClearError),
         new("market data updater generated CSV validates with loader", MarketDataUpdaterGeneratedCsvValidatesWithLoader),
+        new("market data updater CLI output includes per-symbol path", MarketDataUpdaterCliOutputIncludesPerSymbolPath),
         new("market data updater emits progress events", MarketDataUpdaterEmitsProgressEvents),
         new("market data auto sync cancel stops safely", MarketDataAutoSyncCancelStopsSafely),
         new("market data updater CLI parses arguments", MarketDataUpdaterCliParsesArguments),
@@ -2654,11 +2666,135 @@ internal static class Program
         AssertEqual(0, provider.TickCalls, "Provider should not be called when trading skip gate is active.");
     }
 
+    private static async Task MarketDataCliUpdateCommandPrintsStartedBanner()
+    {
+        string folder = TestFolder();
+        var provider = new FakeHistoricalMarketDataProvider
+        {
+            Ticks = [Tick("EURUSD", 0, 1.10000, 1.10005)]
+        };
+        using var output = new StringWriter();
+        var command = new HistoricalMarketDataCommand(
+            () => new HistoricalMarketDataUpdater(provider),
+            output);
+
+        int exitCode = await command.RunUpdateAsync(
+            new AppSettings(),
+            ["--update-market-data", "--symbols", "EURUSD", "--type", "tick", "--data-dir", folder, "--lookback-days", "1"])
+            .ConfigureAwait(false);
+
+        string text = output.ToString();
+        AssertEqual(0, exitCode, "Successful CLI market-data update should return 0.");
+        AssertContains("MARKET_DATA_UPDATE_STARTED", text);
+        AssertContains("raw args:", text);
+        AssertContains("parsed symbols: EURUSD", text);
+        AssertContains("parsed data type: Tick", text);
+        AssertContains($"parsed data dir: {folder}", text);
+        AssertContains("lookback days: 1", text);
+        AssertContains("EURUSD: type=Tick", text);
+        AssertContains(Path.Combine(folder, "EURUSD_ticks.csv"), text);
+    }
+
+    private static async Task MarketDataCliUpdateCommandReturnsFailureCode()
+    {
+        string folder = TestFolder();
+        var provider = new FakeHistoricalMarketDataProvider
+        {
+            TickError = "MT5 unavailable"
+        };
+        using var output = new StringWriter();
+        var command = new HistoricalMarketDataCommand(
+            () => new HistoricalMarketDataUpdater(provider),
+            output);
+
+        int exitCode = await command.RunUpdateAsync(
+            new AppSettings(),
+            ["--update-market-data", "--symbols", "EURUSD", "--type", "tick", "--data-dir", folder])
+            .ConfigureAwait(false);
+
+        string text = output.ToString();
+        AssertEqual(1, exitCode, "Failed CLI market-data update should return non-zero.");
+        AssertContains("MARKET_DATA_UPDATE_STARTED", text);
+        AssertContains("failure reason:", text);
+        AssertContains("MT5 unavailable", text);
+    }
+
+    private static Task MarketDataEaHistoricalCommandsParseNestedPayloadDates()
+    {
+        string repo = FindRepoRoot();
+        string eaPath = Path.Combine(repo, "MT5_EA", "TradingBotEA.mq5");
+        string source = File.ReadAllText(eaPath);
+
+        AssertContains("if(StringLen(data) == 0 || JsonLong(data, \"from_unix_ms\") <= 0 || JsonLong(data, \"to_unix_ms\") <= 0)", source);
+        AssertContains("data = json;", source);
+        AssertContains("CopyTicksRange", source);
+        AssertContains("CopyRates", source);
+        return Task.CompletedTask;
+    }
+
+    private static Task MarketDataUiDisabledStatusTextIsVisible()
+    {
+        string text = MarketDataSyncStatusText.Format(new HistoricalMarketDataSyncProgress
+        {
+            Status = HistoricalMarketDataSyncStatus.Skipped,
+            Message = MarketDataSyncStatusText.Disabled
+        });
+
+        AssertEqual(MarketDataSyncStatusText.Disabled, text, "Disabled startup status should be directly visible.");
+        return Task.CompletedTask;
+    }
+
+    private static async Task MarketDataStartupSyncEmitsProgressEvent()
+    {
+        string folder = TestFolder();
+        var provider = new FakeHistoricalMarketDataProvider
+        {
+            Ticks = [Tick("EURUSD", 0, 1.10000, 1.10005)]
+        };
+        var events = new List<HistoricalMarketDataSyncProgress>();
+
+        await using var sync = CreateAutoSyncForTest(provider, folder, TimeSpan.FromMinutes(30));
+        sync.ProgressChanged += events.Add;
+
+        await sync.TriggerSyncAsync("startup").ConfigureAwait(false);
+
+        AssertTrue(events.Any(e => e.Message == MarketDataSyncStatusText.Starting),
+            "Startup sync should emit a starting progress event.");
+        AssertTrue(events.Any(e => e.Status == HistoricalMarketDataSyncStatus.Completed),
+            "Startup sync should emit completion when data is fetched.");
+    }
+
+    private static async Task MarketDataStartupSyncFailureIsVisible()
+    {
+        string folder = TestFolder();
+        var provider = new FakeHistoricalMarketDataProvider
+        {
+            Ticks = [Tick("EURUSD", 0, 1.10000, 1.10005)]
+        };
+        var events = new List<HistoricalMarketDataSyncProgress>();
+
+        await using var sync = CreateAutoSyncForTest(
+            provider,
+            folder,
+            TimeSpan.FromMinutes(30),
+            mt5AvailabilityCheck: () => Task.FromResult(false));
+        sync.ProgressChanged += events.Add;
+
+        var summary = await sync.TriggerSyncAsync("startup").ConfigureAwait(false);
+
+        AssertTrue(summary.Errors.Any(e => e == MarketDataSyncStatusText.Mt5Unavailable),
+            "MT5 preflight failure should be returned in the summary.");
+        AssertTrue(events.Any(e => e.Status == HistoricalMarketDataSyncStatus.Failed &&
+                                   e.Message == MarketDataSyncStatusText.Mt5Unavailable),
+            "MT5 preflight failure should be visible to the UI.");
+    }
+
     private static async Task MarketDataUpdaterCreatesNewTickFile()
     {
         string folder = TestFolder();
         var provider = new FakeHistoricalMarketDataProvider
         {
+            IgnoreSymbolFilter = true,
             Ticks =
             [
                 Tick("EURUSD", 0, 1.10000, 1.10005),
@@ -2673,6 +2809,20 @@ internal static class Program
         AssertEqual(2, summary.SymbolResults.Single().RowsAfter, "Two fetched ticks should be written.");
         var loaded = await new CsvBacktestTickDataLoader().LoadAsync(path, "EURUSD").ConfigureAwait(false);
         AssertEqual(2, loaded.Count, "Generated tick CSV should load through the existing loader.");
+    }
+
+    private static async Task MarketDataUpdaterDoesNotCreateGenericTicksCsv()
+    {
+        string folder = TestFolder();
+        var provider = new FakeHistoricalMarketDataProvider
+        {
+            Ticks = [Tick("EURUSD", 0, 1.10000, 1.10005)]
+        };
+
+        await RunMarketDataUpdateForTest(provider, folder, MarketDataUpdateType.Tick).ConfigureAwait(false);
+
+        AssertTrue(File.Exists(Path.Combine(folder, "EURUSD_ticks.csv")), "Per-symbol tick file should be created.");
+        AssertFalse(File.Exists(Path.Combine(folder, "ticks.csv")), "Updater must not create or use generic ticks.csv.");
     }
 
     private static async Task MarketDataUpdaterAppendsOnlyNewRows()
@@ -2722,6 +2872,70 @@ internal static class Program
         string path = Path.Combine(folder, "EURUSD_ticks.csv");
         var loaded = await new CsvBacktestTickDataLoader().LoadAsync(path, "EURUSD").ConfigureAwait(false);
         AssertEqual(1, loaded.Count, "Duplicate ticks should be removed before validation.");
+    }
+
+    private static async Task MarketDataUpdaterAcceptsBrokerSuffixSymbols()
+    {
+        string folder = TestFolder();
+        var provider = new FakeHistoricalMarketDataProvider
+        {
+            IgnoreSymbolFilter = true,
+            Ticks =
+            [
+                new BacktestTick
+                {
+                    TimestampUtc = new DateTime(2026, 5, 3, 10, 0, 0, DateTimeKind.Utc),
+                    Symbol = "XAUUSDM",
+                    Bid = 2300.10,
+                    Ask = 2300.30
+                }
+            ]
+        };
+
+        var summary = await RunMarketDataUpdateForTest(provider, folder, MarketDataUpdateType.Tick, "XAUUSD")
+            .ConfigureAwait(false);
+        var loaded = await new CsvBacktestTickDataLoader()
+            .LoadAsync(Path.Combine(folder, "XAUUSD_ticks.csv"), "XAUUSD")
+            .ConfigureAwait(false);
+
+        AssertTrue(summary.Errors.Count == 0, "Broker-suffixed provider symbols should not fail the update.");
+        AssertEqual(1, loaded.Count, "Broker-suffixed provider rows should be normalized into the requested symbol file.");
+        AssertEqual("XAUUSD", loaded[0].Symbol, "Persisted market data should use the requested symbol.");
+    }
+
+    private static async Task MarketDataUpdaterTreatsHeaderOnlyCacheAsEmpty()
+    {
+        string folder = TestFolder();
+        Directory.CreateDirectory(folder);
+        File.WriteAllText(Path.Combine(folder, "XAUUSD_M1.csv"), "timestamp,symbol,open,high,low,close,timeframe,spread" + Environment.NewLine);
+        var provider = new FakeHistoricalMarketDataProvider
+        {
+            IgnoreSymbolFilter = true,
+            Candles =
+            [
+                new BacktestOhlcCandle
+                {
+                    TimestampUtc = new DateTime(2026, 5, 3, 10, 0, 0, DateTimeKind.Utc),
+                    Symbol = "XAUUSDM",
+                    Timeframe = "M1",
+                    Open = 2300.0,
+                    High = 2301.0,
+                    Low = 2299.0,
+                    Close = 2300.5,
+                    SpreadPips = 2.0
+                }
+            ]
+        };
+
+        var summary = await RunMarketDataUpdateForTest(provider, folder, MarketDataUpdateType.OHLC, "XAUUSD")
+            .ConfigureAwait(false);
+        var loaded = await new CsvBacktestOhlcDataLoader()
+            .LoadAsync(Path.Combine(folder, "XAUUSD_M1.csv"), "XAUUSD")
+            .ConfigureAwait(false);
+
+        AssertTrue(summary.Errors.Count == 0, "Header-only cache should be treated as empty instead of crashing.");
+        AssertEqual(1, loaded.Count, "Header-only cache should be replaced with fetched OHLC rows.");
+        AssertEqual("XAUUSD", loaded[0].Symbol, "Persisted OHLC data should use the requested symbol.");
     }
 
     private static async Task MarketDataUpdaterTrimsOldTickRows()
@@ -2794,6 +3008,56 @@ internal static class Program
         AssertTrue(File.Exists(Path.Combine(folder, "EURUSD_M1.csv")), "OHLC fallback file should be created.");
     }
 
+    private static async Task MarketDataUpdaterZeroTickRowsFallBackToM1()
+    {
+        string folder = TestFolder();
+        var provider = new FakeHistoricalMarketDataProvider
+        {
+            Ticks = [],
+            Candles =
+            [
+                new BacktestOhlcCandle
+                {
+                    TimestampUtc = new DateTime(2026, 5, 3, 10, 0, 0, DateTimeKind.Utc),
+                    Symbol = "EURUSD",
+                    Timeframe = "M1",
+                    Open = 1.1000,
+                    High = 1.1005,
+                    Low = 1.0995,
+                    Close = 1.1002,
+                    SpreadPips = 1.0
+                }
+            ]
+        };
+
+        var summary = await RunMarketDataUpdateForTest(provider, folder, MarketDataUpdateType.TickThenOHLC).ConfigureAwait(false);
+        var result = summary.SymbolResults.Single();
+
+        AssertEqual(MarketDataUpdateType.OHLC.ToString(), result.DataTypeUsed.ToString(), "Zero tick rows should fall back to M1.");
+        AssertTrue(result.FallbackUsed, "Zero tick row fallback should set fallback flag.");
+        AssertTrue(summary.Warnings.Any(w => w.Contains("TICK_DATA_UNAVAILABLE_FALLING_BACK_TO_M1", StringComparison.Ordinal)),
+            "Fallback warning code should be present.");
+        AssertFalse(File.Exists(Path.Combine(folder, "EURUSD_ticks.csv")), "Empty tick response should not create an empty per-symbol tick file.");
+        AssertTrue(File.Exists(Path.Combine(folder, "EURUSD_M1.csv")), "M1 fallback file should be written.");
+    }
+
+    private static async Task MarketDataUpdaterZeroTickAndM1RowsFailsClearly()
+    {
+        string folder = TestFolder();
+        var provider = new FakeHistoricalMarketDataProvider
+        {
+            Ticks = [],
+            Candles = []
+        };
+
+        var summary = await RunMarketDataUpdateForTest(provider, folder, MarketDataUpdateType.TickThenOHLC).ConfigureAwait(false);
+
+        AssertTrue(summary.Errors.Any(e => e.Contains("NO_MARKET_DATA_AVAILABLE", StringComparison.Ordinal)),
+            "Zero tick and zero M1 rows should fail with NO_MARKET_DATA_AVAILABLE.");
+        AssertFalse(File.Exists(Path.Combine(folder, "EURUSD_ticks.csv")), "Empty tick file should not be created.");
+        AssertFalse(File.Exists(Path.Combine(folder, "EURUSD_M1.csv")), "Empty M1 file should not be created.");
+    }
+
     private static async Task MarketDataUpdaterInvalidSymbolReturnsClearError()
     {
         string folder = TestFolder();
@@ -2836,6 +3100,22 @@ internal static class Program
             .ConfigureAwait(false);
         AssertEqual(1, loaded.Count, "Generated OHLC CSV should validate through the existing loader.");
         AssertClose(1.2, loaded[0].SpreadPips.GetValueOrDefault(), 0.0001, "Loader should accept the generated spread column alias.");
+    }
+
+    private static async Task MarketDataUpdaterCliOutputIncludesPerSymbolPath()
+    {
+        string folder = TestFolder();
+        var provider = new FakeHistoricalMarketDataProvider
+        {
+            Ticks = [Tick("EURUSD", 0, 1.10000, 1.10005)]
+        };
+
+        var summary = await RunMarketDataUpdateForTest(provider, folder, MarketDataUpdateType.Tick).ConfigureAwait(false);
+        string output = string.Join(Environment.NewLine, MarketDataUpdateConsoleFormatter.Format(summary));
+
+        AssertContains(Path.Combine(folder, "EURUSD_ticks.csv"), output);
+        AssertContains("GET_TICKS", output);
+        AssertContains("mt5_rows_returned=1", output);
     }
 
     private static async Task MarketDataUpdaterEmitsProgressEvents()
@@ -6419,6 +6699,7 @@ internal static class Program
         public IReadOnlyList<BacktestOhlcCandle> Candles { get; init; } = [];
         public string TickError { get; init; } = "";
         public string OhlcError { get; init; } = "";
+        public bool IgnoreSymbolFilter { get; init; }
         public TimeSpan Delay { get; init; }
         public Action? OnFetchStarted { get; set; }
         public int TickCalls { get; private set; }
@@ -6440,14 +6721,19 @@ internal static class Program
                 return GetTicksDelayedAsync(symbol, fromUtc, toUtc, maxRows, cancellationToken);
 
             if (!string.IsNullOrWhiteSpace(TickError))
-                return Task.FromResult(HistoricalMarketDataProviderResult<BacktestTick>.Fail(TickError));
+                return Task.FromResult(HistoricalMarketDataProviderResult<BacktestTick>.Fail(
+                    TickError,
+                    "GET_TICKS",
+                    0,
+                    "Fake provider called GET_TICKS and returned an error."));
 
             return Task.FromResult(HistoricalMarketDataProviderResult<BacktestTick>.Ok(
                 Ticks
-                    .Where(t => string.Equals(t.Symbol, symbol, StringComparison.OrdinalIgnoreCase))
+                    .Where(t => IgnoreSymbolFilter || string.Equals(t.Symbol, symbol, StringComparison.OrdinalIgnoreCase))
                     .Where(t => t.TimestampUtc >= fromUtc && t.TimestampUtc <= toUtc)
                     .Take(maxRows)
-                    .ToList()));
+                    .ToList(),
+                "GET_TICKS"));
         }
 
         private async Task<HistoricalMarketDataProviderResult<BacktestTick>> GetTicksDelayedAsync(
@@ -6459,14 +6745,19 @@ internal static class Program
         {
             await Task.Delay(Delay, cancellationToken).ConfigureAwait(false);
             if (!string.IsNullOrWhiteSpace(TickError))
-                return HistoricalMarketDataProviderResult<BacktestTick>.Fail(TickError);
+                return HistoricalMarketDataProviderResult<BacktestTick>.Fail(
+                    TickError,
+                    "GET_TICKS",
+                    0,
+                    "Fake provider called GET_TICKS and returned an error.");
 
             return HistoricalMarketDataProviderResult<BacktestTick>.Ok(
                 Ticks
-                    .Where(t => string.Equals(t.Symbol, symbol, StringComparison.OrdinalIgnoreCase))
+                    .Where(t => IgnoreSymbolFilter || string.Equals(t.Symbol, symbol, StringComparison.OrdinalIgnoreCase))
                     .Where(t => t.TimestampUtc >= fromUtc && t.TimestampUtc <= toUtc)
                     .Take(maxRows)
-                    .ToList());
+                    .ToList(),
+                "GET_TICKS");
         }
 
         public Task<HistoricalMarketDataProviderResult<BacktestOhlcCandle>> GetOhlcM1Async(
@@ -6482,14 +6773,19 @@ internal static class Program
                 return GetOhlcDelayedAsync(symbol, fromUtc, toUtc, maxRows, cancellationToken);
 
             if (!string.IsNullOrWhiteSpace(OhlcError))
-                return Task.FromResult(HistoricalMarketDataProviderResult<BacktestOhlcCandle>.Fail(OhlcError));
+                return Task.FromResult(HistoricalMarketDataProviderResult<BacktestOhlcCandle>.Fail(
+                    OhlcError,
+                    "GET_RATES",
+                    0,
+                    "Fake provider called GET_RATES and returned an error."));
 
             return Task.FromResult(HistoricalMarketDataProviderResult<BacktestOhlcCandle>.Ok(
                 Candles
-                    .Where(c => string.Equals(c.Symbol, symbol, StringComparison.OrdinalIgnoreCase))
+                    .Where(c => IgnoreSymbolFilter || string.Equals(c.Symbol, symbol, StringComparison.OrdinalIgnoreCase))
                     .Where(c => c.TimestampUtc >= fromUtc && c.TimestampUtc <= toUtc)
                     .Take(maxRows)
-                    .ToList()));
+                    .ToList(),
+                "GET_RATES"));
         }
 
         private async Task<HistoricalMarketDataProviderResult<BacktestOhlcCandle>> GetOhlcDelayedAsync(
@@ -6501,14 +6797,19 @@ internal static class Program
         {
             await Task.Delay(Delay, cancellationToken).ConfigureAwait(false);
             if (!string.IsNullOrWhiteSpace(OhlcError))
-                return HistoricalMarketDataProviderResult<BacktestOhlcCandle>.Fail(OhlcError);
+                return HistoricalMarketDataProviderResult<BacktestOhlcCandle>.Fail(
+                    OhlcError,
+                    "GET_RATES",
+                    0,
+                    "Fake provider called GET_RATES and returned an error.");
 
             return HistoricalMarketDataProviderResult<BacktestOhlcCandle>.Ok(
                 Candles
-                    .Where(c => string.Equals(c.Symbol, symbol, StringComparison.OrdinalIgnoreCase))
+                    .Where(c => IgnoreSymbolFilter || string.Equals(c.Symbol, symbol, StringComparison.OrdinalIgnoreCase))
                     .Where(c => c.TimestampUtc >= fromUtc && c.TimestampUtc <= toUtc)
                     .Take(maxRows)
-                    .ToList());
+                    .ToList(),
+                "GET_RATES");
         }
     }
 
@@ -7160,7 +7461,8 @@ internal static class Program
         string folder,
         TimeSpan interval,
         bool allowSyncDuringTrading = false,
-        Func<bool>? criticalTradingInProgress = null) =>
+        Func<bool>? criticalTradingInProgress = null,
+        Func<Task<bool>>? mt5AvailabilityCheck = null) =>
         new(
             () => new HistoricalMarketDataUpdater(provider),
             () => new HistoricalMarketDataUpdateRequest
@@ -7174,7 +7476,8 @@ internal static class Program
             },
             interval,
             allowSyncDuringTrading,
-            criticalTradingInProgress);
+            criticalTradingInProgress,
+            mt5AvailabilityCheck);
 
     private static void AssertExit(
         IntrabarExitResult result,

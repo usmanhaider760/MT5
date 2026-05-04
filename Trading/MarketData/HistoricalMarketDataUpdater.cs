@@ -49,6 +49,9 @@ namespace MT5TradingBot.Modules.MarketData
         public DateTime ToUtc { get; init; }
         public DateTime? LastUpdatedUtc { get; init; }
         public string OutputFilePath { get; init; } = "";
+        public string ProviderCommand { get; init; } = "";
+        public int ProviderRowsReturned { get; init; }
+        public string ProviderDiagnostic { get; init; } = "";
         public IReadOnlyList<string> Warnings { get; init; } = [];
         public IReadOnlyList<string> Errors { get; init; } = [];
     }
@@ -79,12 +82,38 @@ namespace MT5TradingBot.Modules.MarketData
         public bool Success { get; init; }
         public IReadOnlyList<T> Rows { get; init; } = [];
         public string Error { get; init; } = "";
+        public string CommandName { get; init; } = "";
+        public int RowsReturned { get; init; }
+        public string Diagnostic { get; init; } = "";
 
-        public static HistoricalMarketDataProviderResult<T> Ok(IReadOnlyList<T> rows) =>
-            new() { Success = true, Rows = rows };
+        public static HistoricalMarketDataProviderResult<T> Ok(
+            IReadOnlyList<T> rows,
+            string commandName = "",
+            string diagnostic = "") =>
+            new()
+            {
+                Success = true,
+                Rows = rows,
+                CommandName = commandName,
+                RowsReturned = rows.Count,
+                Diagnostic = string.IsNullOrWhiteSpace(diagnostic)
+                    ? $"{commandName} returned {rows.Count} rows."
+                    : diagnostic
+            };
 
-        public static HistoricalMarketDataProviderResult<T> Fail(string error) =>
-            new() { Success = false, Error = error };
+        public static HistoricalMarketDataProviderResult<T> Fail(
+            string error,
+            string commandName = "",
+            int rowsReturned = 0,
+            string diagnostic = "") =>
+            new()
+            {
+                Success = false,
+                Error = error,
+                CommandName = commandName,
+                RowsReturned = rowsReturned,
+                Diagnostic = diagnostic
+            };
     }
 
     public interface IHistoricalMarketDataProvider
@@ -229,9 +258,23 @@ namespace MT5TradingBot.Modules.MarketData
                 symbol, dataDirectory, lookbackDays, maxDays, maxRows, ohlcRetentionDays, toUtc, fallbackUsed: true, cancellationToken)
                 .ConfigureAwait(false);
 
+            var warnings = new List<string>(tickResult.Warnings);
+            warnings.Add("TICK_DATA_UNAVAILABLE_FALLING_BACK_TO_M1");
+            warnings.Add($"Tick update unavailable for {symbol}; used OHLC M1 fallback.");
+            warnings.AddRange(ohlcResult.Warnings);
+
+            if (ohlcResult.Errors.Count > 0)
+            {
+                return ohlcResult with
+                {
+                    Warnings = warnings,
+                    Errors = ["NO_MARKET_DATA_AVAILABLE", .. tickResult.Errors, .. ohlcResult.Errors]
+                };
+            }
+
             return ohlcResult with
             {
-                Warnings = [.. tickResult.Warnings, $"Tick update unavailable for {symbol}; used OHLC M1 fallback.", .. ohlcResult.Warnings],
+                Warnings = warnings,
                 Errors = ohlcResult.Errors
             };
         }
@@ -254,10 +297,29 @@ namespace MT5TradingBot.Modules.MarketData
                 .ConfigureAwait(false);
 
             if (!fetched.Success)
-                return Failure(symbol, MarketDataUpdateType.Tick, fallbackUsed, existing.Count, fromUtc, toUtc, outputPath, fetched.Error);
+                return Failure(symbol, MarketDataUpdateType.Tick, fallbackUsed, existing.Count, fromUtc, toUtc, outputPath, fetched.Error, fetched);
+
+            if (fetched.Rows.Count == 0 && existing.Count == 0)
+                return Failure(
+                    symbol,
+                    MarketDataUpdateType.Tick,
+                    fallbackUsed,
+                    existing.Count,
+                    fromUtc,
+                    toUtc,
+                    outputPath,
+                    "TICK_DATA_UNAVAILABLE_FALLING_BACK_TO_M1: MT5 GET_TICKS returned 0 rows.",
+                    fetched);
+
+            var fetchedRows = fetched.Rows
+                .Select(r => r with
+                {
+                    Symbol = symbol.ToUpperInvariant(),
+                    TimestampUtc = EnsureUtc(r.TimestampUtc)
+                });
 
             var mergedBeforeRetention = existing
-                .Concat(fetched.Rows.Where(r => string.Equals(r.Symbol, symbol, StringComparison.OrdinalIgnoreCase)))
+                .Concat(fetchedRows)
                 .GroupBy(t => $"{t.Symbol.ToUpperInvariant()}|{EnsureUtc(t.TimestampUtc):O}", StringComparer.OrdinalIgnoreCase)
                 .Select(g => g.OrderByDescending(t => t.Volume.HasValue).First() with
                 {
@@ -276,7 +338,7 @@ namespace MT5TradingBot.Modules.MarketData
             WriteTicks(outputPath, merged);
             await new CsvBacktestTickDataLoader().LoadAsync(outputPath, symbol, cancellationToken).ConfigureAwait(false);
 
-            return Success(symbol, MarketDataUpdateType.Tick, fallbackUsed, existing.Count, fetched.Rows.Count, merged.Count, rowsRemovedByRetention, fromUtc, toUtc, outputPath, LastTimestamp(merged.Select(t => t.TimestampUtc)));
+            return Success(symbol, MarketDataUpdateType.Tick, fallbackUsed, existing.Count, fetched.Rows.Count, merged.Count, rowsRemovedByRetention, fromUtc, toUtc, outputPath, LastTimestamp(merged.Select(t => t.TimestampUtc)), fetched);
         }
 
         private async Task<HistoricalMarketDataSymbolResult> UpdateOhlcAsync(
@@ -297,10 +359,30 @@ namespace MT5TradingBot.Modules.MarketData
                 .ConfigureAwait(false);
 
             if (!fetched.Success)
-                return Failure(symbol, MarketDataUpdateType.OHLC, fallbackUsed, existing.Count, fromUtc, toUtc, outputPath, fetched.Error);
+                return Failure(symbol, MarketDataUpdateType.OHLC, fallbackUsed, existing.Count, fromUtc, toUtc, outputPath, fetched.Error, fetched);
+
+            if (fetched.Rows.Count == 0 && existing.Count == 0)
+                return Failure(
+                    symbol,
+                    MarketDataUpdateType.OHLC,
+                    fallbackUsed,
+                    existing.Count,
+                    fromUtc,
+                    toUtc,
+                    outputPath,
+                    "NO_MARKET_DATA_AVAILABLE: MT5 GET_RATES returned 0 rows.",
+                    fetched);
+
+            var fetchedRows = fetched.Rows
+                .Select(r => r with
+                {
+                    Symbol = symbol.ToUpperInvariant(),
+                    Timeframe = string.IsNullOrWhiteSpace(r.Timeframe) ? "M1" : r.Timeframe.ToUpperInvariant(),
+                    TimestampUtc = EnsureUtc(r.TimestampUtc)
+                });
 
             var mergedBeforeRetention = existing
-                .Concat(fetched.Rows.Where(r => string.Equals(r.Symbol, symbol, StringComparison.OrdinalIgnoreCase)))
+                .Concat(fetchedRows)
                 .GroupBy(c => $"{c.Symbol.ToUpperInvariant()}|{c.Timeframe.ToUpperInvariant()}|{EnsureUtc(c.TimestampUtc):O}", StringComparer.OrdinalIgnoreCase)
                 .Select(g => g.First() with
                 {
@@ -320,7 +402,7 @@ namespace MT5TradingBot.Modules.MarketData
             WriteOhlc(outputPath, merged);
             await new CsvBacktestOhlcDataLoader().LoadAsync(outputPath, symbol, cancellationToken).ConfigureAwait(false);
 
-            return Success(symbol, MarketDataUpdateType.OHLC, fallbackUsed, existing.Count, fetched.Rows.Count, merged.Count, rowsRemovedByRetention, fromUtc, toUtc, outputPath, LastTimestamp(merged.Select(c => c.TimestampUtc)));
+            return Success(symbol, MarketDataUpdateType.OHLC, fallbackUsed, existing.Count, fetched.Rows.Count, merged.Count, rowsRemovedByRetention, fromUtc, toUtc, outputPath, LastTimestamp(merged.Select(c => c.TimestampUtc)), fetched);
         }
 
         private static HistoricalMarketDataSymbolResult Success(
@@ -334,7 +416,8 @@ namespace MT5TradingBot.Modules.MarketData
             DateTime fromUtc,
             DateTime toUtc,
             string outputPath,
-            DateTime? lastUpdatedUtc) => new()
+            DateTime? lastUpdatedUtc,
+            object? providerResult = null) => new()
         {
             Symbol = symbol,
             DataTypeUsed = dataType,
@@ -346,7 +429,10 @@ namespace MT5TradingBot.Modules.MarketData
             FromUtc = fromUtc,
             ToUtc = toUtc,
             LastUpdatedUtc = lastUpdatedUtc,
-            OutputFilePath = outputPath
+            OutputFilePath = outputPath,
+            ProviderCommand = ProviderCommand(providerResult),
+            ProviderRowsReturned = ProviderRowsReturned(providerResult),
+            ProviderDiagnostic = ProviderDiagnostic(providerResult)
         };
 
         private static HistoricalMarketDataSymbolResult Failure(
@@ -357,7 +443,8 @@ namespace MT5TradingBot.Modules.MarketData
             DateTime fromUtc,
             DateTime toUtc,
             string outputPath,
-            string error) => new()
+            string error,
+            object? providerResult = null) => new()
         {
             Symbol = symbol,
             DataTypeUsed = dataType,
@@ -367,19 +454,56 @@ namespace MT5TradingBot.Modules.MarketData
             FromUtc = fromUtc,
             ToUtc = toUtc,
             OutputFilePath = outputPath,
+            ProviderCommand = ProviderCommand(providerResult),
+            ProviderRowsReturned = ProviderRowsReturned(providerResult),
+            ProviderDiagnostic = ProviderDiagnostic(providerResult),
             Errors = [string.IsNullOrWhiteSpace(error) ? $"No {dataType} data returned for {symbol}." : error]
         };
+
+        private static string ProviderCommand(object? providerResult) =>
+            providerResult switch
+            {
+                HistoricalMarketDataProviderResult<BacktestTick> tick => tick.CommandName,
+                HistoricalMarketDataProviderResult<BacktestOhlcCandle> ohlc => ohlc.CommandName,
+                _ => ""
+            };
+
+        private static int ProviderRowsReturned(object? providerResult) =>
+            providerResult switch
+            {
+                HistoricalMarketDataProviderResult<BacktestTick> tick => tick.RowsReturned,
+                HistoricalMarketDataProviderResult<BacktestOhlcCandle> ohlc => ohlc.RowsReturned,
+                _ => 0
+            };
+
+        private static string ProviderDiagnostic(object? providerResult) =>
+            providerResult switch
+            {
+                HistoricalMarketDataProviderResult<BacktestTick> tick => tick.Diagnostic,
+                HistoricalMarketDataProviderResult<BacktestOhlcCandle> ohlc => ohlc.Diagnostic,
+                _ => ""
+            };
 
         private static List<BacktestTick> LoadExistingTicks(string outputPath)
         {
             if (!File.Exists(outputPath)) return [];
-            return new CsvBacktestTickDataLoader().LoadAsync(outputPath).GetAwaiter().GetResult().ToList();
+            return IsHeaderOnlyCsv(outputPath)
+                ? []
+                : new CsvBacktestTickDataLoader().LoadAsync(outputPath).GetAwaiter().GetResult().ToList();
         }
 
         private static List<BacktestOhlcCandle> LoadExistingOhlc(string outputPath)
         {
             if (!File.Exists(outputPath)) return [];
-            return new CsvBacktestOhlcDataLoader().LoadAsync(outputPath).GetAwaiter().GetResult().ToList();
+            return IsHeaderOnlyCsv(outputPath)
+                ? []
+                : new CsvBacktestOhlcDataLoader().LoadAsync(outputPath).GetAwaiter().GetResult().ToList();
+        }
+
+        private static bool IsHeaderOnlyCsv(string outputPath)
+        {
+            string[] lines = File.ReadAllLines(outputPath);
+            return lines.Length <= 1 || lines.Skip(1).All(string.IsNullOrWhiteSpace);
         }
 
         private static DateTime ResolveFromUtc(IEnumerable<DateTime> timestampsUtc, int lookbackDays, int maxDays, DateTime toUtc)

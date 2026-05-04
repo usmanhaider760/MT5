@@ -20,13 +20,29 @@ namespace MT5TradingBot
         {
             if (args.Any(a => string.Equals(a, "--update-market-data", StringComparison.OrdinalIgnoreCase)))
             {
+                NativeConsole.TryAttachParent();
                 var settings = await LoadSettingsAsync().ConfigureAwait(false);
-                var summary = await RunMarketDataUpdateAsync(
-                    settings,
-                    HistoricalMarketDataCliOptions.Parse(args),
-                    writeConsole: true).ConfigureAwait(false);
+                using var bridge = new MT5Bridge(settings.Mt5);
+                var command = new HistoricalMarketDataCommand(
+                    () => new HistoricalMarketDataUpdater(new Mt5HistoricalMarketDataProvider(bridge)),
+                    Console.Out);
 
-                Environment.ExitCode = summary.Errors.Count == 0 ? 0 : 1;
+                Environment.ExitCode = await command.RunUpdateAsync(settings, args).ConfigureAwait(false);
+                return;
+            }
+
+            if (args.Any(a => string.Equals(a, "--diagnose-market-data-sync", StringComparison.OrdinalIgnoreCase)))
+            {
+                NativeConsole.TryAttachParent();
+                var settings = await LoadSettingsAsync().ConfigureAwait(false);
+                using var bridge = new MT5Bridge(settings.Mt5);
+                var command = new HistoricalMarketDataCommand(
+                    () => new HistoricalMarketDataUpdater(new Mt5HistoricalMarketDataProvider(bridge)),
+                    Console.Out);
+
+                Environment.ExitCode = await command
+                    .RunDiagnoseAsync(settings, args, bridge.PingAsync)
+                    .ConfigureAwait(false);
                 return;
             }
 
@@ -36,10 +52,11 @@ namespace MT5TradingBot
                 if (settings.Bot.EnableMarketDataAutoUpdate &&
                     (settings.Bot.UpdateMarketDataOnStartup || settings.Bot.UpdateOnStartup))
                 {
-                    await RunMarketDataUpdateAsync(
-                        settings,
-                        HistoricalMarketDataCliOptions.Parse(args),
-                        writeConsole: true).ConfigureAwait(false);
+                    using var bridge = new MT5Bridge(settings.Mt5);
+                    var command = new HistoricalMarketDataCommand(
+                        () => new HistoricalMarketDataUpdater(new Mt5HistoricalMarketDataProvider(bridge)),
+                        Console.Out);
+                    await command.RunUpdateAsync(settings, args).ConfigureAwait(false);
                 }
 
                 var result = await new EvidencePackageCommand()
@@ -161,23 +178,8 @@ namespace MT5TradingBot
 
         private static void WriteMarketDataUpdateSummary(HistoricalMarketDataUpdateSummary summary)
         {
-            Console.WriteLine("Market data update completed.");
-            foreach (var result in summary.SymbolResults)
-            {
-                Console.WriteLine(
-                    $"{result.Symbol}: type={result.DataTypeUsed}, rows before={result.RowsBefore}, fetched={result.RowsFetched}, after={result.RowsAfter}, removed by retention={result.RowsRemovedByRetention}, fallback={(result.FallbackUsed ? "yes" : "no")}");
-                Console.WriteLine($"  range={result.FromUtc:O} to {result.ToUtc:O}");
-                Console.WriteLine($"  output={result.OutputFilePath}");
-                foreach (string warning in result.Warnings)
-                    Console.WriteLine($"  warning={warning}");
-                foreach (string error in result.Errors)
-                    Console.WriteLine($"  error={error}");
-            }
-
-            foreach (string warning in summary.Warnings.Except(summary.SymbolResults.SelectMany(r => r.Warnings)))
-                Console.WriteLine($"Warning: {warning}");
-            foreach (string error in summary.Errors.Except(summary.SymbolResults.SelectMany(r => r.Errors)))
-                Console.WriteLine($"Error: {error}");
+            foreach (string line in MarketDataUpdateConsoleFormatter.Format(summary))
+                Console.WriteLine(line);
         }
 
         private static void LogMarketDataUpdateSummary(HistoricalMarketDataUpdateSummary summary)

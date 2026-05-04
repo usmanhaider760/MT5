@@ -23,8 +23,15 @@ namespace MT5TradingBot.Modules.BrokerIntegration
                 .ConfigureAwait(false);
 
             return result.Success
-                ? HistoricalMarketDataProviderResult<BacktestTick>.Ok(result.Ticks)
-                : HistoricalMarketDataProviderResult<BacktestTick>.Fail(result.Error);
+                ? HistoricalMarketDataProviderResult<BacktestTick>.Ok(
+                    result.Ticks,
+                    "GET_TICKS",
+                    $"MT5Bridge.TryGetHistoricalTicksAsync called GET_TICKS and parsed {result.Ticks.Count} rows.")
+                : HistoricalMarketDataProviderResult<BacktestTick>.Fail(
+                    result.Error,
+                    "GET_TICKS",
+                    0,
+                    "MT5Bridge.TryGetHistoricalTicksAsync called GET_TICKS but MT5/EA returned an error.");
         }
 
         public async Task<HistoricalMarketDataProviderResult<BacktestOhlcCandle>> GetOhlcM1Async(
@@ -38,8 +45,15 @@ namespace MT5TradingBot.Modules.BrokerIntegration
                 .ConfigureAwait(false);
 
             return result.Success
-                ? HistoricalMarketDataProviderResult<BacktestOhlcCandle>.Ok(result.Candles)
-                : HistoricalMarketDataProviderResult<BacktestOhlcCandle>.Fail(result.Error);
+                ? HistoricalMarketDataProviderResult<BacktestOhlcCandle>.Ok(
+                    result.Candles,
+                    "GET_RATES",
+                    $"MT5Bridge.TryGetHistoricalRatesAsync called GET_RATES and parsed {result.Candles.Count} rows.")
+                : HistoricalMarketDataProviderResult<BacktestOhlcCandle>.Fail(
+                    result.Error,
+                    "GET_RATES",
+                    0,
+                    "MT5Bridge.TryGetHistoricalRatesAsync called GET_RATES but MT5/EA returned an error.");
         }
     }
 }

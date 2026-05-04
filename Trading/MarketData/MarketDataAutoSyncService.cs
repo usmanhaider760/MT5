@@ -7,6 +7,7 @@ namespace MT5TradingBot.Modules.MarketData
         private readonly Func<HistoricalMarketDataUpdater> _updaterFactory;
         private readonly Func<HistoricalMarketDataUpdateRequest> _requestFactory;
         private readonly Func<bool> _criticalTradingInProgress;
+        private readonly Func<Task<bool>>? _mt5AvailabilityCheck;
         private readonly bool _allowSyncDuringTrading;
         private readonly SemaphoreSlim _syncGate = new(1, 1);
         private CancellationTokenSource? _loopCts;
@@ -18,13 +19,15 @@ namespace MT5TradingBot.Modules.MarketData
             Func<HistoricalMarketDataUpdateRequest> requestFactory,
             TimeSpan syncInterval,
             bool allowSyncDuringTrading,
-            Func<bool>? criticalTradingInProgress = null)
+            Func<bool>? criticalTradingInProgress = null,
+            Func<Task<bool>>? mt5AvailabilityCheck = null)
         {
             _updaterFactory = updaterFactory;
             _requestFactory = requestFactory;
             SyncInterval = syncInterval <= TimeSpan.Zero ? TimeSpan.FromMinutes(30) : syncInterval;
             _allowSyncDuringTrading = allowSyncDuringTrading;
             _criticalTradingInProgress = criticalTradingInProgress ?? (() => false);
+            _mt5AvailabilityCheck = mt5AvailabilityCheck;
         }
 
         public event Action<HistoricalMarketDataSyncProgress>? ProgressChanged;
@@ -74,7 +77,14 @@ namespace MT5TradingBot.Modules.MarketData
             try
             {
                 var request = _requestFactory();
-                Report(HistoricalMarketDataSyncStatus.Syncing, "", request.PreferredDataType, 0, 0, null, $"Market data sync started ({reason}).");
+                Report(HistoricalMarketDataSyncStatus.Syncing, "", request.PreferredDataType, 0, 0, null, MarketDataSyncStatusText.Starting);
+
+                if (_mt5AvailabilityCheck != null && !await _mt5AvailabilityCheck().ConfigureAwait(false))
+                {
+                    const string message = MarketDataSyncStatusText.Mt5Unavailable;
+                    Report(HistoricalMarketDataSyncStatus.Failed, "", request.PreferredDataType, 0, 0, null, message);
+                    return new HistoricalMarketDataUpdateSummary { Errors = [message] };
+                }
 
                 var progress = new Progress<HistoricalMarketDataSyncProgress>(Report);
                 var result = await _updaterFactory()
@@ -89,7 +99,7 @@ namespace MT5TradingBot.Modules.MarketData
                     100,
                     result.SymbolResults.Sum(r => r.RowsFetched),
                     result.SymbolResults.Select(r => r.LastUpdatedUtc).Where(d => d.HasValue).Max(),
-                    failed ? string.Join("; ", result.Errors) : "Market data sync completed.");
+                    failed ? FailureMessage(result.Errors) : "Market data sync completed.");
                 return result;
             }
             catch (OperationCanceledException)
@@ -152,5 +162,20 @@ namespace MT5TradingBot.Modules.MarketData
                 Message = message,
                 TimestampUtc = DateTime.UtcNow
             });
+
+        private static string FailureMessage(IReadOnlyList<string> errors)
+        {
+            if (errors.Any(e => e.Contains("NO_MARKET_DATA_AVAILABLE", StringComparison.OrdinalIgnoreCase) ||
+                                e.Contains("returned 0 rows", StringComparison.OrdinalIgnoreCase)))
+                return MarketDataSyncStatusText.NoData;
+
+            if (errors.Any(e => e.Contains("MT5", StringComparison.OrdinalIgnoreCase) ||
+                                e.Contains("EA", StringComparison.OrdinalIgnoreCase) ||
+                                e.Contains("connection", StringComparison.OrdinalIgnoreCase) ||
+                                e.Contains("response", StringComparison.OrdinalIgnoreCase)))
+                return MarketDataSyncStatusText.Mt5Unavailable;
+
+            return string.Join("; ", errors);
+        }
     }
 }

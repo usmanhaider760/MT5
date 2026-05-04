@@ -1,0 +1,10 @@
+﻿{
+    "deployed_at":  "2026-04-29T12:34:47.9616518Z",
+    "source":  "D:\\Repo\\MT5TradingBotPro\\MT5_EA\\TradingBotEA.mq5",
+    "terminal_data_path":  "C:\\Users\\A\\AppData\\Roaming\\MetaQuotes\\Terminal\\D0E8209F77C8CF37AD8BF550E51FF075",
+    "mq5_path":  "C:\\Users\\A\\AppData\\Roaming\\MetaQuotes\\Terminal\\D0E8209F77C8CF37AD8BF550E51FF075\\MQL5\\Experts\\TradingBotEA.mq5",
+    "ex5_path":  "C:\\Users\\A\\AppData\\Roaming\\MetaQuotes\\Terminal\\D0E8209F77C8CF37AD8BF550E51FF075\\MQL5\\Experts\\TradingBotEA.ex5",
+    "compile_result":  "0 errors, 0 warnings",
+    "needs_mt5_reload":  true,
+    "message":  "EA compiled successfully. Remove and re-attach TradingBotEA on the MT5 chart, or restart MT5."
+}

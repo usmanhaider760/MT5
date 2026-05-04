@@ -56,13 +56,13 @@ Scope: P3 final proof reporting only. This package does not change strategy logi
 - Backtest results are not live proof.
 - Real-money trading should remain blocked unless go criteria are met.
 - AI confirmation should not be trusted unless measured as improving expectancy.
+- Signal-quality metrics are unavailable.
+- No signals or realistic backtest outcomes were supplied for signal-quality metrics.
 - Cost sensitivity summary is unavailable.
 - Demo/paper reconciliation summary is unavailable.
 - Segmented performance summary is unavailable.
 - Robustness summary is unavailable.
 - AI filter impact summary is unavailable.
-- No completed trades were supplied; win/loss quality metrics were returned as zero.
-- One or more outcomes are missing signal source metadata and were grouped as unknown.
 - Backtest edge is not live proof.
 - Live demo/paper validation is still required.
 - AI should not be trusted unless AI impact analysis shows improvement.
@@ -75,20 +75,20 @@ Scope: P3 final proof reporting only. This package does not change strategy logi
 
 - ai_disabled_reason: AI disabled: no historical AI decisions were supplied and offline evidence generation must not call external AI APIs.
 - broker_connection: No MT5 or live broker connection required
-- candidates_generated_from_real_data: 3
-- candidate_generation_diagnostic: OFFLINE_AUTO_SCALPING_PRICE_MOVEMENT_CANDIDATES_GENERATED
+- candidates_generated_from_real_data: 0
+- candidate_generation_diagnostic: REAL_MARKET_DATA_LOADED_BUT_NO_STRATEGY_CANDIDATES
 - candidate_generation_source: offline-auto-scalping-price-movement
-- candidate_source: Externally provided candidates
-- candles_loaded: 0
+- candidate_source: No candidates supplied
+- candles_loaded: 1376
 - evidence_package_scope: Configured CSV market data was supplied; still not live proof.
 - execution_costs: BacktestExecutionCostModel spread, commission, and slippage estimates
 - incomplete_signals: 0
 - live_trading: Not enabled; no live orders are placed by this command.
-- market_data: CSV/provided bid-ask ticks
+- market_data: CSV/provided OHLC candles
 - market_data_source: Configured CSV market data
 - offline_live_logic_differences: Offline mirror uses the live auto-scalping price-movement fallback only. It does not call MT5 GetMarketSnapshot, does not use live M5/M15/H1 indicator snapshot scoring, does not call AI confirmation, does not inspect open positions, and does not execute orders.
-- real_strategy_candidates_used: Yes
+- real_strategy_candidates_used: No
 - sample_fixture_used: No
 - simulation_type: Realistic simulation only; not live proof
-- skipped_or_hold_signals: 2
-- ticks_loaded: 5
+- skipped_or_hold_signals: 1376
+- ticks_loaded: 0

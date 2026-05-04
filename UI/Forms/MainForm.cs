@@ -2071,12 +2071,34 @@ SAFETY RULES:
         {
             if (!_cfg.Bot.EnableMarketDataAutoUpdate)
             {
+                Log(MarketDataSyncStatusText.Disabled, C_MUTED);
                 UpdateMarketDataProgress(new HistoricalMarketDataSyncProgress
                 {
                     Status = HistoricalMarketDataSyncStatus.Skipped,
-                    Message = "Market data sync: disabled"
+                    Message = MarketDataSyncStatusText.Disabled
                 });
                 return;
+            }
+
+            bool runOnStartup = _cfg.Bot.UpdateMarketDataOnStartup || _cfg.Bot.UpdateOnStartup;
+            if (!runOnStartup)
+            {
+                Log(MarketDataSyncStatusText.Disabled, C_MUTED);
+                UpdateMarketDataProgress(new HistoricalMarketDataSyncProgress
+                {
+                    Status = HistoricalMarketDataSyncStatus.Skipped,
+                    DataType = _cfg.Bot.PreferredMarketDataType,
+                    Message = MarketDataSyncStatusText.Disabled
+                });
+            }
+            else
+            {
+                UpdateMarketDataProgress(new HistoricalMarketDataSyncProgress
+                {
+                    Status = HistoricalMarketDataSyncStatus.Syncing,
+                    DataType = _cfg.Bot.PreferredMarketDataType,
+                    Message = MarketDataSyncStatusText.Starting
+                });
             }
 
             _marketDataSync ??= new MarketDataAutoSyncService(
@@ -2084,10 +2106,11 @@ SAFETY RULES:
                 () => HistoricalMarketDataUpdater.FromConfig(_cfg.Bot),
                 TimeSpan.FromMinutes(Math.Max(1, _cfg.Bot.MarketDataSyncIntervalMinutes)),
                 _cfg.Bot.AllowSyncDuringTrading,
-                IsCriticalTradeExecutionInProgress);
+                IsCriticalTradeExecutionInProgress,
+                CheckMarketDataMt5AvailableAsync);
 
             _marketDataSync.ProgressChanged += p => UIThread(() => UpdateMarketDataProgress(p));
-            _marketDataSync.Start(_cfg.Bot.UpdateMarketDataOnStartup || _cfg.Bot.UpdateOnStartup);
+            _marketDataSync.Start(runOnStartup);
         }
 
         private async Task RestartMarketDataAutoSyncAsync()
@@ -2110,6 +2133,15 @@ SAFETY RULES:
             return new HistoricalMarketDataUpdater(new Mt5HistoricalMarketDataProvider(bridge));
         }
 
+        private async Task<bool> CheckMarketDataMt5AvailableAsync()
+        {
+            MT5Bridge bridge = _bridge?.IsConnected == true
+                ? _bridge
+                : (_marketDataBridge ??= new MT5Bridge(_cfg.Mt5));
+
+            return await bridge.PingAsync().ConfigureAwait(false);
+        }
+
         private bool IsCriticalTradeExecutionInProgress()
         {
             lock (_signalExecutionLock)
@@ -2118,19 +2150,8 @@ SAFETY RULES:
 
         private void UpdateMarketDataProgress(HistoricalMarketDataSyncProgress progress)
         {
-            int percent = Math.Clamp(progress.Percent, 0, 100);
-            _pbMarketDataSync.Value = percent;
-
-            string symbol = string.IsNullOrWhiteSpace(progress.Symbol) ? "-" : progress.Symbol;
-            string updated = progress.LastUpdatedUtc.HasValue
-                ? progress.LastUpdatedUtc.Value.ToString("u", CultureInfo.InvariantCulture)
-                : "-";
-            string message = string.IsNullOrWhiteSpace(progress.Message)
-                ? progress.Status.ToString()
-                : progress.Message;
-
-            _lblMarketDataSync.Text =
-                $"Market data sync: {progress.Status} | {symbol} | {progress.DataType} | {percent}% | rows {progress.RowsFetched} | updated {updated} | {message}";
+            _pbMarketDataSync.Value = Math.Clamp(progress.Percent, 0, 100);
+            _lblMarketDataSync.Text = MarketDataSyncStatusText.Format(progress);
 
             _lblMarketDataSync.ForeColor = progress.Status switch
             {

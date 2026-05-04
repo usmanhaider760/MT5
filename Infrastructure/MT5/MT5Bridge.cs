@@ -211,6 +211,7 @@ namespace MT5TradingBot.Modules.BrokerIntegration
             DateTime toUtc,
             int maxRows)
         {
+            Log($"GET_TICKS {symbol} {fromUtc:O} -> {toUtc:O} maxRows:{Math.Max(1, maxRows)}");
             var r = await SendAsync(
                 "GET_TICKS",
                 new
@@ -225,6 +226,7 @@ namespace MT5TradingBot.Modules.BrokerIntegration
                 return (false, [], r?.Error ?? "No historical tick response from MT5");
 
             var ticks = Deserialize<List<BacktestTick>>(r.Data);
+            Log($"GET_TICKS {symbol} parsed rows:{ticks?.Count ?? 0}");
             return ticks != null
                 ? (true, ticks, "")
                 : (false, [], "Invalid historical tick response from MT5");
@@ -237,12 +239,14 @@ namespace MT5TradingBot.Modules.BrokerIntegration
             DateTime toUtc,
             int maxRows)
         {
+            string resolvedTimeframe = string.IsNullOrWhiteSpace(timeframe) ? "M1" : timeframe;
+            Log($"GET_RATES {symbol} {resolvedTimeframe} {fromUtc:O} -> {toUtc:O} maxRows:{Math.Max(1, maxRows)}");
             var r = await SendAsync(
                 "GET_RATES",
                 new
                 {
                     symbol,
-                    timeframe = string.IsNullOrWhiteSpace(timeframe) ? "M1" : timeframe,
+                    timeframe = resolvedTimeframe,
                     from_unix_ms = ToUnixMilliseconds(fromUtc),
                     to_unix_ms = ToUnixMilliseconds(toUtc),
                     max_rows = Math.Max(1, maxRows)
@@ -252,6 +256,7 @@ namespace MT5TradingBot.Modules.BrokerIntegration
                 return (false, [], r?.Error ?? "No historical OHLC response from MT5");
 
             var candles = Deserialize<List<BacktestOhlcCandle>>(r.Data);
+            Log($"GET_RATES {symbol} {resolvedTimeframe} parsed rows:{candles?.Count ?? 0}");
             return candles != null
                 ? (true, candles, "")
                 : (false, [], "Invalid historical OHLC response from MT5");
