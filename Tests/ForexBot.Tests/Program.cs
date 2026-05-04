@@ -166,10 +166,12 @@ internal static class Program
         new("market data UI disabled status text is visible", MarketDataUiDisabledStatusTextIsVisible),
         new("market data startup sync emits progress event", MarketDataStartupSyncEmitsProgressEvent),
         new("market data startup sync failure is visible", MarketDataStartupSyncFailureIsVisible),
+        new("review dashboard merges rich MT5 price and account snapshot", ReviewDashboardMergesRichMt5PriceAndAccountSnapshot),
         new("market data updater creates new tick file", MarketDataUpdaterCreatesNewTickFile),
         new("market data updater does not create generic ticks csv", MarketDataUpdaterDoesNotCreateGenericTicksCsv),
         new("market data updater appends only new rows", MarketDataUpdaterAppendsOnlyNewRows),
         new("market data updater backfill ignores existing watermark", MarketDataUpdaterBackfillIgnoresExistingWatermark),
+        new("market data updater backfill chunks lookback requests", MarketDataUpdaterBackfillChunksLookbackRequests),
         new("market data updater removes duplicates", MarketDataUpdaterRemovesDuplicates),
         new("market data updater accepts broker suffix symbols", MarketDataUpdaterAcceptsBrokerSuffixSymbols),
         new("market data updater treats header-only cache as empty", MarketDataUpdaterTreatsHeaderOnlyCacheAsEmpty),
@@ -2640,7 +2642,7 @@ internal static class Program
         {
             Tick("EURUSD", 0, 1.10000, 1.10005),
             Tick("EURUSD", 60, 1.10010, 1.10015),
-            Tick("EURUSD", 120, 1.10090, 1.10095)
+            Tick("EURUSD", 120, 1.10200, 1.10205)
         };
         var generation = new EvidenceStrategyCandidateGenerator().Generate(ticks, []);
 
@@ -2905,6 +2907,17 @@ internal static class Program
             "MT5 preflight failure should be visible to the UI.");
     }
 
+    private static Task ReviewDashboardMergesRichMt5PriceAndAccountSnapshot()
+    {
+        string source = File.ReadAllText(Path.Combine(FindRepoRoot(), "UI", "Forms", "MainForm.cs"));
+
+        AssertContains("\"account\", \"price\", \"positions\", \"session\", \"candles\"", source);
+        AssertContains("\"account\", \"symbol\", \"price\", \"positions\"", source);
+        AssertContains("NormalizeReviewSnapshotForDisplay(snapshot);", source);
+        AssertContains("account[\"margin_level\"] = null;", source);
+        return Task.CompletedTask;
+    }
+
     private static async Task MarketDataUpdaterCreatesNewTickFile()
     {
         string folder = TestFolder();
@@ -3027,6 +3040,56 @@ internal static class Program
             "Backfill should request from the lookback window instead of the last existing timestamp.");
         AssertEqual(2, loaded.Count, "Backfill should merge older fetched rows with existing data.");
         AssertEqual(2, summary.SymbolResults.Single().RowsAfter, "Rows after should include deduped backfill rows.");
+    }
+
+    private static async Task MarketDataUpdaterBackfillChunksLookbackRequests()
+    {
+        string folder = TestFolder();
+        var provider = new FakeHistoricalMarketDataProvider
+        {
+            Candles =
+            [
+                new BacktestOhlcCandle
+                {
+                    TimestampUtc = new DateTime(2026, 4, 10, 10, 0, 0, DateTimeKind.Utc),
+                    Symbol = "EURUSD",
+                    Timeframe = "M1",
+                    Open = 1.0800,
+                    High = 1.0810,
+                    Low = 1.0790,
+                    Close = 1.0805,
+                    SpreadPips = 1.0
+                },
+                new BacktestOhlcCandle
+                {
+                    TimestampUtc = new DateTime(2026, 4, 24, 10, 0, 0, DateTimeKind.Utc),
+                    Symbol = "EURUSD",
+                    Timeframe = "M1",
+                    Open = 1.0900,
+                    High = 1.0910,
+                    Low = 1.0890,
+                    Close = 1.0905,
+                    SpreadPips = 1.0
+                }
+            ]
+        };
+        var updater = new HistoricalMarketDataUpdater(provider);
+
+        var summary = await updater.UpdateAsync(new HistoricalMarketDataUpdateRequest
+        {
+            Symbols = ["EURUSD"],
+            DataDirectory = folder,
+            PreferredDataType = MarketDataUpdateType.OHLC,
+            LookbackDays = 30,
+            MaxRowsPerUpdate = 100,
+            MaxDaysPerUpdate = 7,
+            Backfill = true,
+            NowUtc = new DateTime(2026, 5, 4, 0, 0, 0, DateTimeKind.Utc)
+        }).ConfigureAwait(false);
+
+        AssertTrue(provider.OhlcCalls > 1, "Backfill should request a large lookback in MaxDaysPerUpdate chunks.");
+        AssertEqual(2, summary.SymbolResults.Single().RowsFetched, "Chunked backfill should aggregate rows from all windows.");
+        AssertContains("Backfill requested GET_RATES", summary.SymbolResults.Single().ProviderDiagnostic);
     }
 
     private static async Task MarketDataUpdaterRemovesDuplicates()
@@ -3356,9 +3419,10 @@ internal static class Program
     private static Task MarketDataUpdaterCliParsesBackfill()
     {
         var options = HistoricalMarketDataCliOptions.Parse(
-            ["--update-market-data", "--symbols", "XAUUSD", "--lookback-days", "30", "--type", "ohlc", "--backfill"]);
+            ["--update-market-data", "--symbols", "XAUUSD", "--lookback-days", "30", "--type", "ohlc", "--backfill", "--max-days-per-update", "1"]);
 
         AssertTrue(options.Backfill, "CLI should parse explicit backfill mode.");
+        AssertEqual(1, options.MaxDaysPerUpdate.GetValueOrDefault(), "CLI should parse max days per update.");
         return Task.CompletedTask;
     }
 

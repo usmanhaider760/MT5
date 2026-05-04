@@ -190,6 +190,7 @@ namespace MT5TradingBot.UI
 
         // ── Log tab ───────────────────────────────────────────────
         private RichTextBox _txtLog;
+        private Button _btnLogDetails;
         private Button _btnClearLog;
         private Button _btnSaveLog;
         private Button _btnOpenLogFile;
@@ -361,6 +362,7 @@ namespace MT5TradingBot.UI
             _btnResetPrompt = new Button();
             _tabLog = new TabPage();
             _txtLog = new RichTextBox();
+            _btnLogDetails = new Button();
             _btnClearLog = new Button();
             _btnSaveLog = new Button();
             _btnOpenLogFile = new Button();
@@ -2250,6 +2252,7 @@ namespace MT5TradingBot.UI
             // _tabLog
             // 
             _tabLog.Controls.Add(_txtLog);
+            _tabLog.Controls.Add(_btnLogDetails);
             _tabLog.Controls.Add(_btnClearLog);
             _tabLog.Controls.Add(_btnSaveLog);
             _tabLog.Controls.Add(_btnOpenLogFile);
@@ -2268,6 +2271,22 @@ namespace MT5TradingBot.UI
             _txtLog.TabIndex = 0;
             _txtLog.Text = "";
             // 
+            // _btnLogDetails
+            // 
+            _btnLogDetails.Anchor = AnchorStyles.Bottom | AnchorStyles.Left;
+            _btnLogDetails.BackColor = Color.FromArgb(99, 179, 237);
+            _btnLogDetails.Cursor = Cursors.Hand;
+            _btnLogDetails.FlatAppearance.BorderSize = 0;
+            _btnLogDetails.FlatStyle = FlatStyle.Flat;
+            _btnLogDetails.Font = new Font("Segoe UI Semibold", 9F);
+            _btnLogDetails.ForeColor = Color.FromArgb(10, 10, 20);
+            _btnLogDetails.Location = new Point(12, 658);
+            _btnLogDetails.Name = "_btnLogDetails";
+            _btnLogDetails.Size = new Size(110, 30);
+            _btnLogDetails.TabIndex = 1;
+            _btnLogDetails.Text = "Details";
+            _btnLogDetails.UseVisualStyleBackColor = false;
+            // 
             // _btnClearLog
             // 
             _btnClearLog.Anchor = AnchorStyles.Bottom | AnchorStyles.Left;
@@ -2277,10 +2296,10 @@ namespace MT5TradingBot.UI
             _btnClearLog.FlatStyle = FlatStyle.Flat;
             _btnClearLog.Font = new Font("Segoe UI Semibold", 9F);
             _btnClearLog.ForeColor = Color.FromArgb(10, 10, 20);
-            _btnClearLog.Location = new Point(12, 658);
+            _btnClearLog.Location = new Point(132, 658);
             _btnClearLog.Name = "_btnClearLog";
             _btnClearLog.Size = new Size(100, 30);
-            _btnClearLog.TabIndex = 1;
+            _btnClearLog.TabIndex = 2;
             _btnClearLog.Text = "Clear";
             _btnClearLog.UseVisualStyleBackColor = false;
             // 
@@ -2293,10 +2312,10 @@ namespace MT5TradingBot.UI
             _btnSaveLog.FlatStyle = FlatStyle.Flat;
             _btnSaveLog.Font = new Font("Segoe UI Semibold", 9F);
             _btnSaveLog.ForeColor = Color.FromArgb(10, 10, 20);
-            _btnSaveLog.Location = new Point(122, 658);
+            _btnSaveLog.Location = new Point(242, 658);
             _btnSaveLog.Name = "_btnSaveLog";
             _btnSaveLog.Size = new Size(100, 30);
-            _btnSaveLog.TabIndex = 2;
+            _btnSaveLog.TabIndex = 3;
             _btnSaveLog.Text = "Save Log";
             _btnSaveLog.UseVisualStyleBackColor = false;
             // 
@@ -2309,10 +2328,10 @@ namespace MT5TradingBot.UI
             _btnOpenLogFile.FlatStyle = FlatStyle.Flat;
             _btnOpenLogFile.Font = new Font("Segoe UI Semibold", 9F);
             _btnOpenLogFile.ForeColor = Color.FromArgb(10, 10, 20);
-            _btnOpenLogFile.Location = new Point(232, 658);
+            _btnOpenLogFile.Location = new Point(352, 658);
             _btnOpenLogFile.Name = "_btnOpenLogFile";
             _btnOpenLogFile.Size = new Size(110, 30);
-            _btnOpenLogFile.TabIndex = 3;
+            _btnOpenLogFile.TabIndex = 4;
             _btnOpenLogFile.Text = "Open Log File";
             _btnOpenLogFile.UseVisualStyleBackColor = false;
             // 
@@ -2325,10 +2344,10 @@ namespace MT5TradingBot.UI
             _btnDeleteLogs.FlatStyle = FlatStyle.Flat;
             _btnDeleteLogs.Font = new Font("Segoe UI Semibold", 9F);
             _btnDeleteLogs.ForeColor = Color.FromArgb(10, 10, 20);
-            _btnDeleteLogs.Location = new Point(352, 658);
+            _btnDeleteLogs.Location = new Point(472, 658);
             _btnDeleteLogs.Name = "_btnDeleteLogs";
             _btnDeleteLogs.Size = new Size(100, 30);
-            _btnDeleteLogs.TabIndex = 4;
+            _btnDeleteLogs.TabIndex = 5;
             _btnDeleteLogs.Text = "Delete Logs";
             _btnDeleteLogs.UseVisualStyleBackColor = false;
             // 

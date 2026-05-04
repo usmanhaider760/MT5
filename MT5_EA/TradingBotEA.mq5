@@ -599,15 +599,32 @@ string CmdGetSymbolInfo(string reqId, string json)
    double spread= (ask - bid) / SymbolInfoDouble(sym, SYMBOL_POINT);
    double minLot= SymbolInfoDouble(sym, SYMBOL_VOLUME_MIN);
    double maxLot= SymbolInfoDouble(sym, SYMBOL_VOLUME_MAX);
+   double lotStep = SymbolInfoDouble(sym, SYMBOL_VOLUME_STEP);
+   double volumeLimit = SymbolInfoDouble(sym, SYMBOL_VOLUME_LIMIT);
+   double point = SymbolInfoDouble(sym, SYMBOL_POINT);
+   double tickSize = SymbolInfoDouble(sym, SYMBOL_TRADE_TICK_SIZE);
+   double tickValue = SymbolInfoDouble(sym, SYMBOL_TRADE_TICK_VALUE);
+   double contractSize = SymbolInfoDouble(sym, SYMBOL_TRADE_CONTRACT_SIZE);
+   long stopLevel = SymbolInfoInteger(sym, SYMBOL_TRADE_STOPS_LEVEL);
+   long freezeLevel = SymbolInfoInteger(sym, SYMBOL_TRADE_FREEZE_LEVEL);
+   int digits = (int)SymbolInfoInteger(sym, SYMBOL_DIGITS);
 
    string d = "{";
    d += "\"Symbol\":\""   + Esc(sym) + "\",";
-   d += "\"Ask\":"        + DoubleToString(ask,    5) + ",";
-   d += "\"Bid\":"        + DoubleToString(bid,    5) + ",";
+   d += "\"Ask\":"        + DoubleToString(ask,    digits) + ",";
+   d += "\"Bid\":"        + DoubleToString(bid,    digits) + ",";
    d += "\"Spread\":"     + DoubleToString(spread, 1) + ",";
    d += "\"MinLot\":"     + DoubleToString(minLot, 2) + ",";
    d += "\"MaxLot\":"     + DoubleToString(maxLot, 2) + ",";
-   d += "\"Digits\":"     + IntegerToString(SymbolInfoInteger(sym, SYMBOL_DIGITS));
+   d += "\"LotStep\":"    + DoubleToString(lotStep, 2) + ",";
+   d += "\"VolumeLimit\":" + DoubleToString(volumeLimit, 2) + ",";
+   d += "\"PointSize\":"  + DoubleToString(point, digits + 2) + ",";
+   d += "\"TickSize\":"   + DoubleToString(tickSize, digits + 2) + ",";
+   d += "\"TickValue\":"  + DoubleToString(tickValue, 2) + ",";
+   d += "\"ContractSize\":" + DoubleToString(contractSize, 2) + ",";
+   d += "\"StopLevelPoints\":" + IntegerToString(stopLevel) + ",";
+   d += "\"FreezeLevelPoints\":" + IntegerToString(freezeLevel) + ",";
+   d += "\"Digits\":"     + IntegerToString(digits);
    d += "}";
    return Ok(reqId, d);
 }

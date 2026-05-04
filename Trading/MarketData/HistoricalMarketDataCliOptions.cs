@@ -6,6 +6,7 @@ namespace MT5TradingBot.Modules.MarketData
     {
         public IReadOnlyList<string> Symbols { get; init; } = [];
         public int? LookbackDays { get; init; }
+        public int? MaxDaysPerUpdate { get; init; }
         public string? DataDirectory { get; init; }
         public MarketDataUpdateType? PreferredDataType { get; init; }
         public bool Backfill { get; init; }
@@ -16,6 +17,7 @@ namespace MT5TradingBot.Modules.MarketData
             {
                 Symbols = SplitSymbols(Value(args, "--symbols")),
                 LookbackDays = int.TryParse(Value(args, "--lookback-days"), out int days) ? days : null,
+                MaxDaysPerUpdate = int.TryParse(Value(args, "--max-days-per-update"), out int maxDays) ? maxDays : null,
                 DataDirectory = Value(args, "--data-dir"),
                 PreferredDataType = ParseType(Value(args, "--type")),
                 Backfill = HasArg(args, "--backfill") || HasArg(args, "--full-window")

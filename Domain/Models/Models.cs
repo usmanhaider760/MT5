@@ -615,7 +615,7 @@ namespace MT5TradingBot.Models
         public int MaxTrades { get; set; } = 3;
 
         [JsonProperty("max_minutes")]
-        public int MaxMinutes { get; set; } = 15;
+        public int MaxMinutes { get; set; } = 60;
 
         [JsonProperty("max_session_loss_usd")]
         public double MaxSessionLossUsd { get; set; } = 20;
@@ -627,16 +627,31 @@ namespace MT5TradingBot.Models
         public double StopLossPips { get; set; } = 10;
 
         [JsonProperty("tp_pips")]
-        public double TakeProfitPips { get; set; } = 6;
+        public double TakeProfitPips { get; set; } = 15;
 
         [JsonProperty("max_spread_pips")]
         public double MaxSpreadPips { get; set; } = 3;
+
+        [JsonProperty("dynamic_values_enabled")]
+        public bool DynamicValuesEnabled { get; set; } = true;
+
+        [JsonProperty("min_sl_pips")]
+        public double MinStopLossPips { get; set; }
+
+        [JsonProperty("max_sl_pips")]
+        public double MaxStopLossPips { get; set; }
+
+        [JsonProperty("min_tp_pips")]
+        public double MinTakeProfitPips { get; set; }
+
+        [JsonProperty("max_tp_pips")]
+        public double MaxTakeProfitPips { get; set; }
 
         [JsonProperty("poll_interval_ms")]
         public int PollIntervalMs { get; set; } = 2000;
 
         [JsonProperty("cooldown_seconds")]
-        public int CooldownSeconds { get; set; } = 20;
+        public int CooldownSeconds { get; set; } = 60;
 
         [JsonProperty("direction_mode")]
         public ScalpingDirectionMode DirectionMode { get; set; } = ScalpingDirectionMode.Auto;
@@ -648,7 +663,7 @@ namespace MT5TradingBot.Models
         public bool RequireSnapshotConfirmation { get; set; } = true;
 
         [JsonProperty("min_decision_score")]
-        public int MinDecisionScore { get; set; } = 4;
+        public int MinDecisionScore { get; set; } = 6;
 
         [JsonProperty("use_ai_confirmation")]
         public bool UseAiConfirmation { get; set; } = false;
@@ -681,7 +696,7 @@ namespace MT5TradingBot.Models
         public double MinTpPips { get; set; } = 8;
 
         [JsonProperty("scalping_min_rr")]
-        public double ScalpingMinRR { get; set; } = 1.0;
+        public double ScalpingMinRR { get; set; } = 1.5;
 
         [JsonProperty("preferred_rr")]
         public double PreferredRR { get; set; } = 1.5;
@@ -876,6 +891,9 @@ namespace MT5TradingBot.Models
         public double? LotStep { get; set; }
         public double? VolumeLimit { get; set; }
         public double? PointSize { get; set; }
+        public double? TickSize { get; set; }
+        public double? TickValue { get; set; }
+        public double? ContractSize { get; set; }
         public double? StopLevelPoints { get; set; }
         public double? FreezeLevelPoints { get; set; }
         public int Digits { get; set; }

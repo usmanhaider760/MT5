@@ -24,6 +24,8 @@ x86/
 
 [Bb]uild/
 [Ll]og/
+bin-test/
+**/bin-test/
 *.log
 
 # =========================
@@ -92,6 +94,21 @@ publish/
 
 appsettings.Development.json
 secrets.json
+.env
+.env.*
+Data/Config/settings.local.json
+
+# =========================
+
+# ForexBot runtime data
+
+# =========================
+
+Data/Logs/
+Data/Database/*.db-shm
+Data/Database/*.db-wal
+Data/Database/*.db-journal
+Data/Deployment/ea_deploy_status.local.json
 
 # =========================
 

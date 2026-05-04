@@ -161,9 +161,7 @@ namespace MT5TradingBot.Modules.MarketData
 
             int lookbackDays = Math.Max(1, request.LookbackDays);
             int maxRows = Math.Max(1, request.MaxRowsPerUpdate);
-            int maxDays = request.Backfill
-                ? Math.Max(1, lookbackDays)
-                : Math.Max(1, request.MaxDaysPerUpdate);
+            int maxDays = Math.Max(1, request.MaxDaysPerUpdate);
             DateTime toUtc = EnsureUtc(request.NowUtc ?? DateTime.UtcNow);
             Directory.CreateDirectory(request.DataDirectory);
 
@@ -234,7 +232,7 @@ namespace MT5TradingBot.Modules.MarketData
                 PreferredDataType = cliOptions?.PreferredDataType ?? config.PreferredMarketDataType,
                 LookbackDays = cliOptions?.LookbackDays ?? config.MarketDataLookbackDays,
                 MaxRowsPerUpdate = config.MaxRowsPerUpdate,
-                MaxDaysPerUpdate = config.MaxDaysPerUpdate,
+                MaxDaysPerUpdate = cliOptions?.MaxDaysPerUpdate ?? config.MaxDaysPerUpdate,
                 TickRetentionDays = config.TickRetentionDays,
                 OhlcRetentionDays = config.OhlcRetentionDays,
                 Backfill = cliOptions?.Backfill ?? false
@@ -299,8 +297,9 @@ namespace MT5TradingBot.Modules.MarketData
             string outputPath = TickPath(dataDirectory, symbol);
             var existing = LoadExistingTicks(outputPath);
             DateTime fromUtc = ResolveFromUtc(existing.Select(t => t.TimestampUtc), lookbackDays, maxDays, toUtc, backfill);
-            var fetched = await _provider.GetTicksAsync(symbol, fromUtc, toUtc, maxRows, cancellationToken)
-                .ConfigureAwait(false);
+            var fetched = backfill
+                ? await FetchTicksBackfillAsync(symbol, fromUtc, toUtc, maxDays, maxRows, cancellationToken).ConfigureAwait(false)
+                : await _provider.GetTicksAsync(symbol, fromUtc, toUtc, maxRows, cancellationToken).ConfigureAwait(false);
 
             if (!fetched.Success)
                 return Failure(symbol, MarketDataUpdateType.Tick, fallbackUsed, existing.Count, fromUtc, toUtc, outputPath, fetched.Error, fetched);
@@ -362,8 +361,9 @@ namespace MT5TradingBot.Modules.MarketData
             string outputPath = OhlcPath(dataDirectory, symbol);
             var existing = LoadExistingOhlc(outputPath);
             DateTime fromUtc = ResolveFromUtc(existing.Select(c => c.TimestampUtc), lookbackDays, maxDays, toUtc, backfill);
-            var fetched = await _provider.GetOhlcM1Async(symbol, fromUtc, toUtc, maxRows, cancellationToken)
-                .ConfigureAwait(false);
+            var fetched = backfill
+                ? await FetchOhlcBackfillAsync(symbol, fromUtc, toUtc, maxDays, maxRows, cancellationToken).ConfigureAwait(false)
+                : await _provider.GetOhlcM1Async(symbol, fromUtc, toUtc, maxRows, cancellationToken).ConfigureAwait(false);
 
             if (!fetched.Success)
                 return Failure(symbol, MarketDataUpdateType.OHLC, fallbackUsed, existing.Count, fromUtc, toUtc, outputPath, fetched.Error, fetched);
@@ -527,9 +527,102 @@ namespace MT5TradingBot.Modules.MarketData
                     return EnsureUtc(last.Value).AddMilliseconds(1);
             }
 
-            int days = Math.Min(Math.Max(1, lookbackDays), Math.Max(1, maxDays));
+            int days = backfill
+                ? Math.Max(1, lookbackDays)
+                : Math.Min(Math.Max(1, lookbackDays), Math.Max(1, maxDays));
             return toUtc.AddDays(-days);
         }
+
+        private async Task<HistoricalMarketDataProviderResult<BacktestTick>> FetchTicksBackfillAsync(
+            string symbol,
+            DateTime fromUtc,
+            DateTime toUtc,
+            int maxDays,
+            int maxRows,
+            CancellationToken cancellationToken)
+        {
+            var rows = new List<BacktestTick>();
+            var errors = new List<string>();
+            int windows = 0;
+
+            for (DateTime windowFrom = fromUtc; windowFrom < toUtc; windowFrom = windowFrom.AddDays(Math.Max(1, maxDays)))
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                DateTime windowTo = MinUtc(windowFrom.AddDays(Math.Max(1, maxDays)), toUtc);
+                windows++;
+                var fetched = await _provider.GetTicksAsync(symbol, windowFrom, windowTo, maxRows, cancellationToken)
+                    .ConfigureAwait(false);
+
+                if (fetched.Success)
+                {
+                    rows.AddRange(fetched.Rows);
+                }
+                else if (!string.IsNullOrWhiteSpace(fetched.Error))
+                {
+                    errors.Add(fetched.Error);
+                }
+            }
+
+            if (rows.Count == 0 && errors.Count > 0)
+                return HistoricalMarketDataProviderResult<BacktestTick>.Fail(
+                    errors[0],
+                    "GET_TICKS",
+                    0,
+                    $"Backfill requested GET_TICKS in {windows} window(s); all failed or returned no rows.");
+
+            return HistoricalMarketDataProviderResult<BacktestTick>.Ok(
+                rows,
+                "GET_TICKS",
+                $"Backfill requested GET_TICKS in {windows} window(s); parsed {rows.Count} rows.");
+        }
+
+        private async Task<HistoricalMarketDataProviderResult<BacktestOhlcCandle>> FetchOhlcBackfillAsync(
+            string symbol,
+            DateTime fromUtc,
+            DateTime toUtc,
+            int maxDays,
+            int maxRows,
+            CancellationToken cancellationToken)
+        {
+            var rows = new List<BacktestOhlcCandle>();
+            var errors = new List<string>();
+            int windows = 0;
+
+            for (DateTime windowFrom = fromUtc; windowFrom < toUtc; windowFrom = windowFrom.AddDays(Math.Max(1, maxDays)))
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                DateTime windowTo = MinUtc(windowFrom.AddDays(Math.Max(1, maxDays)), toUtc);
+                windows++;
+                var fetched = await _provider.GetOhlcM1Async(symbol, windowFrom, windowTo, maxRows, cancellationToken)
+                    .ConfigureAwait(false);
+
+                if (fetched.Success)
+                {
+                    rows.AddRange(fetched.Rows);
+                }
+                else if (!string.IsNullOrWhiteSpace(fetched.Error))
+                {
+                    errors.Add(fetched.Error);
+                }
+            }
+
+            if (rows.Count == 0 && errors.Count > 0)
+                return HistoricalMarketDataProviderResult<BacktestOhlcCandle>.Fail(
+                    errors[0],
+                    "GET_RATES",
+                    0,
+                    $"Backfill requested GET_RATES in {windows} window(s); all failed or returned no rows.");
+
+            return HistoricalMarketDataProviderResult<BacktestOhlcCandle>.Ok(
+                rows,
+                "GET_RATES",
+                $"Backfill requested GET_RATES in {windows} window(s); parsed {rows.Count} rows.");
+        }
+
+        private static DateTime MinUtc(DateTime left, DateTime right) =>
+            EnsureUtc(left) <= EnsureUtc(right)
+                ? EnsureUtc(left)
+                : EnsureUtc(right);
 
         private static int Percent(int completed, int total) =>
             total <= 0 ? 0 : Math.Clamp((int)Math.Round(100.0 * completed / total), 0, 100);

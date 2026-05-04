@@ -81,6 +81,7 @@ namespace MT5TradingBot.Modules.MarketData
             _output.WriteLine($"data type: {request.PreferredDataType}");
             _output.WriteLine($"data dir: {request.DataDirectory}");
             _output.WriteLine($"lookback days: {request.LookbackDays}");
+            _output.WriteLine($"max days per update: {request.MaxDaysPerUpdate}");
 
             bool mt5Available;
             try
@@ -113,6 +114,7 @@ namespace MT5TradingBot.Modules.MarketData
             _output.WriteLine($"parsed data type: {request.PreferredDataType}");
             _output.WriteLine($"parsed data dir: {request.DataDirectory}");
             _output.WriteLine($"lookback days: {request.LookbackDays}");
+            _output.WriteLine($"max days per update: {request.MaxDaysPerUpdate}");
             _output.WriteLine($"backfill: {(request.Backfill ? "yes" : "no")}");
         }
 
