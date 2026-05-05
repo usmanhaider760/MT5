@@ -104,8 +104,6 @@ namespace MT5TradingBot.UI
         private TextBox _txtWatchFolder;
         private Label _lblRiskLabel;
         private NumericUpDown _nudRisk;
-        private Label _lblMaxTradesLabel;
-        private NumericUpDown _nudMaxTrades;
         private Label _lblPollMsLabel;
         private NumericUpDown _nudPollMs;
         private Label _lblRetryLabel;
@@ -275,8 +273,6 @@ namespace MT5TradingBot.UI
             _txtWatchFolder = new TextBox();
             _lblRiskLabel = new Label();
             _nudRisk = new NumericUpDown();
-            _lblMaxTradesLabel = new Label();
-            _nudMaxTrades = new NumericUpDown();
             _lblPollMsLabel = new Label();
             _nudPollMs = new NumericUpDown();
             _lblRetryLabel = new Label();
@@ -401,7 +397,6 @@ namespace MT5TradingBot.UI
             _tabBot.SuspendLayout();
             _pnlBotCard.SuspendLayout();
             ((System.ComponentModel.ISupportInitialize)_nudRisk).BeginInit();
-            ((System.ComponentModel.ISupportInitialize)_nudMaxTrades).BeginInit();
             ((System.ComponentModel.ISupportInitialize)_nudPollMs).BeginInit();
             ((System.ComponentModel.ISupportInitialize)_nudRetry).BeginInit();
             ((System.ComponentModel.ISupportInitialize)_nudDrawdownPct).BeginInit();
@@ -1251,8 +1246,6 @@ namespace MT5TradingBot.UI
             _pnlBotCard.Controls.Add(_txtWatchFolder);
             _pnlBotCard.Controls.Add(_lblRiskLabel);
             _pnlBotCard.Controls.Add(_nudRisk);
-            _pnlBotCard.Controls.Add(_lblMaxTradesLabel);
-            _pnlBotCard.Controls.Add(_nudMaxTrades);
             _pnlBotCard.Controls.Add(_lblPollMsLabel);
             _pnlBotCard.Controls.Add(_nudPollMs);
             _pnlBotCard.Controls.Add(_lblRetryLabel);
@@ -1328,29 +1321,6 @@ namespace MT5TradingBot.UI
             _nudRisk.Size = new Size(100, 19);
             _nudRisk.TabIndex = 4;
             _nudRisk.Value = new decimal(new int[] { 1, 0, 0, 0 });
-            // 
-            // _lblMaxTradesLabel
-            // 
-            _lblMaxTradesLabel.AutoSize = true;
-            _lblMaxTradesLabel.Font = new Font("Segoe UI", 9F);
-            _lblMaxTradesLabel.ForeColor = Color.FromArgb(110, 110, 130);
-            _lblMaxTradesLabel.Location = new Point(14, 146);
-            _lblMaxTradesLabel.Name = "_lblMaxTradesLabel";
-            _lblMaxTradesLabel.Size = new Size(91, 15);
-            _lblMaxTradesLabel.TabIndex = 7;
-            _lblMaxTradesLabel.Text = "Max Trades/Day";
-            // 
-            // _nudMaxTrades
-            // 
-            _nudMaxTrades.BackColor = Color.FromArgb(22, 22, 32);
-            _nudMaxTrades.BorderStyle = BorderStyle.None;
-            _nudMaxTrades.ForeColor = Color.FromArgb(218, 218, 230);
-            _nudMaxTrades.Location = new Point(200, 144);
-            _nudMaxTrades.Minimum = new decimal(new int[] { 1, 0, 0, 0 });
-            _nudMaxTrades.Name = "_nudMaxTrades";
-            _nudMaxTrades.Size = new Size(100, 19);
-            _nudMaxTrades.TabIndex = 8;
-            _nudMaxTrades.Value = new decimal(new int[] { 5, 0, 0, 0 });
             // 
             // _lblPollMsLabel
             // 
@@ -2491,7 +2461,6 @@ namespace MT5TradingBot.UI
             _pnlBotCard.ResumeLayout(false);
             _pnlBotCard.PerformLayout();
             ((System.ComponentModel.ISupportInitialize)_nudRisk).EndInit();
-            ((System.ComponentModel.ISupportInitialize)_nudMaxTrades).EndInit();
             ((System.ComponentModel.ISupportInitialize)_nudPollMs).EndInit();
             ((System.ComponentModel.ISupportInitialize)_nudRetry).EndInit();
             ((System.ComponentModel.ISupportInitialize)_nudDrawdownPct).EndInit();

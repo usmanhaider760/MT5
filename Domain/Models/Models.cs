@@ -28,9 +28,6 @@ namespace MT5TradingBot.Models
 
     public enum SignalCardStatus { Pending, Executing, Executed, Rejected, Error }
 
-    // Monitor=0  ManualApproval=1  FullAuto=2  (index order must not change — ReviewTradeForm uses cast)
-    public enum BotMode { Monitor, ManualApproval, FullAuto }
-
     public enum ScalpingDirectionMode { Auto, SignalDirection, BuyOnly, SellOnly }
 
     public sealed record class SignalCardInfo
@@ -103,9 +100,6 @@ namespace MT5TradingBot.Models
 
         [JsonProperty("move_sl_to_be_after_tp1")]
         public bool MoveSLToBreakevenAfterTP1 { get; set; } = true;
-
-        [JsonProperty("sl_to_be_trigger_pct")]
-        public double SlToBeTrigerPct { get; set; } = 0.6; // trigger BE at 60% of TP distance
 
         [JsonProperty("created_at")]
         public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
@@ -316,9 +310,6 @@ namespace MT5TradingBot.Models
         [JsonProperty("max_risk_percent")]
         public double MaxRiskPercent { get; set; } = 1.0;
 
-        [JsonProperty("max_trades_per_day")]
-        public int MaxTradesPerDay { get; set; } = 5;
-
         [JsonProperty("enable_daily_loss_limit")]
         public bool EnableDailyLossLimit { get; set; } = false;
 
@@ -459,13 +450,6 @@ namespace MT5TradingBot.Models
         public double MaxSlippagePips { get; set; } = 3.0;
 
         /// <summary>
-        /// Price must move this fraction of the TP distance before SL is moved to breakeven.
-        /// 0.6 = 60% of the way to TP. Range: 0.1 to 1.0.
-        /// </summary>
-        [JsonProperty("sl_to_be_trigger_pct")]
-        public double SlToBeTrigerPct { get; set; } = 0.6;
-
-        /// <summary>
         /// Broker symbol suffix appended to pair names before sending to MT5 (e.g. "m" → GBPUSDm).
         /// Leave empty for brokers that use plain names (GBPUSD). The EA also resolves suffixes
         /// automatically, but setting this avoids a round-trip failure on GetSymbolInfo.
@@ -492,15 +476,12 @@ namespace MT5TradingBot.Models
         [JsonProperty("max_consecutive_losses")]
         public int MaxConsecutiveLosses { get; set; } = 5;
 
-        [JsonProperty("operating_mode")]
-        public BotMode OperatingMode { get; set; } = BotMode.ManualApproval;
-
         /// <summary>
-        /// When true all validation runs normally but trades are NOT sent to MT5.
+        /// True when TradingMode is PaperTrading — validation runs normally but trades are NOT sent to MT5.
         /// Simulated fills are tracked in memory; SL/TP auto-close is detected in the heartbeat.
         /// </summary>
-        [JsonProperty("paper_trading")]
-        public bool PaperTrading { get; set; } = false;
+        [JsonIgnore]
+        public bool PaperTrading => CommonTrading.TradingMode == TradingControlMode.PaperTrading;
 
         [JsonProperty("enable_final_live_readiness_gate")]
         public bool EnableFinalLiveReadinessGate { get; set; } = true;
@@ -917,7 +898,7 @@ namespace MT5TradingBot.Models
     public sealed class CommonTradingSettings
     {
         [JsonProperty("trading_mode")]
-        public TradingControlMode TradingMode { get; set; } = TradingControlMode.Manual;
+        public TradingControlMode TradingMode { get; set; } = TradingControlMode.ManualApproval;
 
         [JsonProperty("use_ai_confirmation")]
         public bool UseAiConfirmation { get; set; } = false;
@@ -930,6 +911,10 @@ namespace MT5TradingBot.Models
 
         [JsonProperty("profit_target_usd")]
         public double ProfitTargetUsd { get; set; }
+
+        /// <summary>Fraction of the Trade Page TP pips needed before moving SL to breakeven.</summary>
+        [JsonProperty("be_trigger_percent_of_tp")]
+        public double BeTriggerPercentOfTp { get; set; } = 0.60;
     }
 
     public sealed class NormalTradingSettings
@@ -959,7 +944,49 @@ namespace MT5TradingBot.Models
     public enum TradingControlMode
     {
         Auto = 0,
-        Manual = 1
+        ManualApproval = 1,
+        PaperTrading = 2
+    }
+
+    /// <summary>
+    /// Fully resolved trade settings for one execution cycle.
+    /// Build once via <see cref="Resolve"/> and pass to validation, snapshot, and execution layers.
+    /// </summary>
+    public sealed record EffectiveTradeSettings(
+        string Strategy,
+        double LotSize,
+        double SlPips,
+        double TpPips,
+        double RiskRewardRatio,
+        double MaxSpreadPips,
+        int MaxTrades,
+        TradingControlMode TradingMode,
+        double BeTriggerPercentOfTp)
+    {
+        /// <param name="requestSpreadOverride">Pass <c>request.MaxSpreadPips</c> — overrides config spread when &gt; 0.</param>
+        public static EffectiveTradeSettings Resolve(
+            BotConfig cfg,
+            string strategy,
+            double lotSize,
+            double requestSpreadOverride = 0)
+        {
+            bool scalping = string.Equals(strategy, "Scalping", StringComparison.OrdinalIgnoreCase)
+                || (!string.Equals(strategy, "Normal", StringComparison.OrdinalIgnoreCase) && cfg.Scalping.Enabled);
+            double configSpread = Math.Max(0, scalping ? cfg.Scalping.MaxSpreadPips : cfg.NormalTrading.MaxSpreadPips);
+            double spread = requestSpreadOverride > 0 ? requestSpreadOverride : configSpread;
+            double bePercent = cfg.CommonTrading.BeTriggerPercentOfTp > 0 && cfg.CommonTrading.BeTriggerPercentOfTp <= 1.0
+                ? cfg.CommonTrading.BeTriggerPercentOfTp : 0.60;
+            return new EffectiveTradeSettings(
+                scalping ? "Scalping" : "Normal",
+                lotSize,
+                Math.Max(0.1, scalping ? cfg.Scalping.StopLossPips    : cfg.NormalTrading.StopLossPips),
+                Math.Max(0.1, scalping ? cfg.Scalping.TakeProfitPips   : cfg.NormalTrading.TakeProfitPips),
+                Math.Max(0.1, scalping ? cfg.Scalping.RiskRewardRatio  : cfg.NormalTrading.RiskRewardRatio),
+                spread,
+                Math.Max(1,   scalping ? cfg.Scalping.MaxTrades        : cfg.NormalTrading.MaxTrades),
+                cfg.CommonTrading.TradingMode,
+                bePercent);
+        }
     }
 
     public sealed class PairTradingSettings
@@ -984,9 +1011,6 @@ namespace MT5TradingBot.Models
 
         [JsonProperty("minimum_distance_from_key_level_pips")]
         public double MinimumDistanceFromKeyLevelPips { get; set; }
-
-        [JsonProperty("break_even_after_profit_pips")]
-        public double BreakEvenAfterProfitPips { get; set; }
 
         [JsonProperty("trailing_start_pips")]
         public double TrailingStartPips { get; set; }

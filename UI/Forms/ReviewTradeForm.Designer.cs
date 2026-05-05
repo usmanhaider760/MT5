@@ -22,8 +22,6 @@ namespace MT5TradingBot.UI
         // ── Numeric fields ──────────────────────────────────────────────────
         private Label         _lblRiskLabel;
         private NumericUpDown _nudRisk;
-        private Label         _lblMaxTradesLabel;
-        private NumericUpDown _nudMaxTrades;
         private Label         _lblPollMsLabel;
         private NumericUpDown _nudPollMs;
         private Label         _lblRetryLabel;
@@ -46,8 +44,6 @@ namespace MT5TradingBot.UI
             _pnlSettings      = new Panel();
             _lblRiskLabel     = new Label();
             _nudRisk          = new NumericUpDown();
-            _lblMaxTradesLabel = new Label();
-            _nudMaxTrades     = new NumericUpDown();
             _lblPollMsLabel   = new Label();
             _nudPollMs        = new NumericUpDown();
             _lblRetryLabel    = new Label();
@@ -88,23 +84,21 @@ namespace MT5TradingBot.UI
             const int FieldW = 110;
 
             PlaceRow(_lblRiskLabel,      "Max Risk %",           _nudRisk,      16,  FieldX, FieldW);
-            PlaceRow(_lblMaxTradesLabel, "Max Trades / Day",     _nudMaxTrades, 54,  FieldX, FieldW);
-            PlaceRow(_lblPollMsLabel,    "Poll Interval (ms)",   _nudPollMs,    92, FieldX, FieldW);
-            PlaceRow(_lblRetryLabel,     "Retry Count",          _nudRetry,     130, FieldX, FieldW);
-            PlaceRow(_lblDrawdownLabel,  "Drawdown Stop %",      _nudDrawdownPct, 168, FieldX, FieldW);
+            PlaceRow(_lblPollMsLabel,    "Poll Interval (ms)",   _nudPollMs,    54, FieldX, FieldW);
+            PlaceRow(_lblRetryLabel,     "Retry Count",          _nudRetry,     92, FieldX, FieldW);
+            PlaceRow(_lblDrawdownLabel,  "Drawdown Stop %",      _nudDrawdownPct, 130, FieldX, FieldW);
 
             _nudRisk.DecimalPlaces  = 1; _nudRisk.Minimum  = 0.1m;  _nudRisk.Maximum  = 50m;    _nudRisk.Increment  = 0.1m;
-            _nudMaxTrades.Minimum   = 1;                             _nudMaxTrades.Maximum = 100;
             _nudPollMs.Minimum      = 500; _nudPollMs.Maximum = 60000; _nudPollMs.Increment = 500;
             _nudRetry.Minimum       = 1;   _nudRetry.Maximum  = 10;
             _nudDrawdownPct.DecimalPlaces = 1; _nudDrawdownPct.Minimum = 1m; _nudDrawdownPct.Maximum = 50m; _nudDrawdownPct.Increment = 0.5m;
 
-            PlaceCheckBox(_chkDrawdown,  "Enable drawdown protection (emergency stop)", 218);
-            PlaceCheckBox(_chkAutoStart, "Auto-start bot on app launch", 252);
+            PlaceCheckBox(_chkDrawdown,  "Enable drawdown protection (emergency stop)", 180);
+            PlaceCheckBox(_chkAutoStart, "Auto-start bot on app launch", 214);
 
             foreach (var c in new Control[] {
                 _lblRiskLabel, _nudRisk,
-                _lblMaxTradesLabel, _nudMaxTrades, _lblPollMsLabel, _nudPollMs,
+                _lblPollMsLabel, _nudPollMs,
                 _lblRetryLabel, _nudRetry, _lblDrawdownLabel, _nudDrawdownPct,
                 _chkDrawdown, _chkAutoStart })
             {

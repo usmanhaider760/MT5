@@ -12,6 +12,10 @@ namespace MT5TradingBot.UI
             @"Price:\s*bid\s*(?<bid>[0-9]+(?:\.[0-9]+)?),\s*ask\s*(?<ask>[0-9]+(?:\.[0-9]+)?)\.\s*Spread:\s*(?<spread>[0-9]+(?:\.[0-9]+)?)\s*pips\s*\(max\s*(?<maxSpread>[0-9]+(?:\.[0-9]+)?)\)\.\s*Lot\s*(?<lot>[0-9]+(?:\.[0-9]+)?);\s*each pip about\s*\$(?<pipValue>[0-9]+(?:\.[0-9]+)?)\.\s*Risk if SL hits:\s*(?<slPips>[0-9]+(?:\.[0-9]+)?)\s*pips\s*/\s*about\s*\$(?<risk>[0-9]+(?:\.[0-9]+)?)\.\s*Profit target:\s*(?<tpPips>[0-9]+(?:\.[0-9]+)?)\s*pips\s*/\s*about\s*\$(?<profit>[0-9]+(?:\.[0-9]+)?)",
             RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
+        private static readonly Regex DetailedPriceSummaryRegex = new(
+            @"Price:\s*bid\s*(?<bid>[0-9]+(?:\.[0-9]+)?),\s*ask\s*(?<ask>[0-9]+(?:\.[0-9]+)?).*?Spread:\s*price gap\s*(?<gap>[0-9]+(?:\.[0-9]+)?)\s*=\s*(?<points>[0-9]+(?:\.[0-9]+)?)\s*points\s*=\s*(?<spread>[0-9]+(?:\.[0-9]+)?)\s*pips\s*\([^)]*?max\s*(?<maxSpread>[0-9]+(?:\.[0-9]+)?).*?Lot\s*(?<lot>[0-9]+(?:\.[0-9]+)?);\s*each pip about\s*\$(?<pipValue>[0-9]+(?:\.[0-9]+)?)\.\s*Risk if SL hits:\s*(?<slPips>[0-9]+(?:\.[0-9]+)?)\s*pips\s*/\s*about\s*\$(?<risk>[0-9]+(?:\.[0-9]+)?)\.\s*Profit target:\s*(?<tpPips>[0-9]+(?:\.[0-9]+)?)\s*pips\s*/\s*about\s*\$(?<profit>[0-9]+(?:\.[0-9]+)?)",
+            RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
         public static AppLogDetail Explain(string rawLine)
         {
             try
@@ -23,8 +27,17 @@ namespace MT5TradingBot.UI
                 if (Contains(message, "Waiting: spread") && Contains(message, "above the user ceiling"))
                     return ExplainSpreadBlock(line, message, summary);
 
+                if (Contains(message, "live conditions require about") &&
+                    Contains(message, "TP pips") &&
+                    Contains(message, "Trade Page TP"))
+                    return ExplainTpRequirementBlock(line, message, summary);
+
                 if (Contains(message, "market volatility is too high for scalping") || Contains(message, "live conditions require about"))
                     return ExplainVolatilityBlock(line, message, summary);
+
+                if (Contains(message, "No trade because neither side passed") ||
+                    (Contains(message, "BUY confirmations") && Contains(message, "SELL confirmations")))
+                    return ExplainScalpNoTrade(line, message, summary);
 
                 if (Contains(message, "broker stop/freeze-level data is unavailable") || Contains(message, "BROKER_STOP_LEVEL_DATA_UNAVAILABLE"))
                     return ExplainBrokerStopData(line, message, summary);
@@ -112,6 +125,30 @@ namespace MT5TradingBot.UI
                 "Wait for ATR/volatility to cool down. Do not simply raise the 500-pip guardrail unless account risk, TP distance, session conditions, spread, and backtest/demo evidence also support the wider stop. For XAUUSD, high ATR often appears around news, session opens, sharp momentum, or poor liquidity.");
         }
 
+        private static AppLogDetail ExplainTpRequirementBlock(string original, string message, PriceSummary? summary)
+        {
+            double? requiredTp = ReadDouble(message, $@"require about\s*(?<v>{NumberPattern})\s*TP pips");
+            double? tradePageTp = ReadDouble(message, $@"Trade Page TP\s*(?<v>{NumberPattern})\s*pips");
+            var values = new StringBuilder();
+            AppendValue(values, "Required TP from live spread/R:R rules", requiredTp, "pips");
+            AppendValue(values, "Trade Page TP", tradePageTp, "pips");
+            if (requiredTp > 0 && tradePageTp > 0)
+            {
+                AppendValue(values, "TP shortfall", requiredTp - tradePageTp, "pips");
+                AppendValue(values, "Required TP as percent of Trade Page TP", requiredTp / tradePageTp * 100.0, "%");
+            }
+            AppendSummary(values, summary);
+
+            return Detail(
+                original,
+                "Technical meaning: the current TP is too small for the live spread and required R:R guardrails. Spread is acceptable by the max-spread input, but the take-profit distance still needs to be wide enough that spread cost and reward/risk remain healthy.\n\nNon-technical meaning: the trade is not blocked because spread is over 50 pips. It is blocked because a 120-pip TP is too tight for this live setup; the bot estimates it needs about 150 TP pips.",
+                values.ToString(),
+                BuildFormula(summary, "Dynamic TP rule: required TP = max(SL pips * required R:R, spread pips / allowed spread-share-of-TP). Decision rule: if required TP > Trade Page TP, the bot must wait or use a larger TP. In this log, required TP was above the Trade Page TP, so the setup failed the TP/R:R safety check."),
+                "No trade was opened. This is a safety block: the bot refused a scalp where the configured TP was too small for the live spread/R:R requirements.",
+                BuildExpectedPl(summary),
+                "Either wait for spread/conditions to improve, or intentionally raise the Trade Page TP only if the wider target still fits the session, market structure, and account risk plan.");
+        }
+
         private static AppLogDetail ExplainBrokerStopData(string original, string message, PriceSummary? summary)
         {
             return Detail(
@@ -122,6 +159,26 @@ namespace MT5TradingBot.UI
                 "No trade was opened. Blocking is correct because sending an order without broker limits can cause rejection, missing SL/TP, or uncontrolled execution behavior.",
                 BuildExpectedPl(summary),
                 "Reload or re-attach the MT5 EA, confirm the exact broker symbol name in Market Watch, and verify the EA returns StopLevelPoints and FreezeLevelPoints.");
+        }
+
+        private static AppLogDetail ExplainScalpNoTrade(string original, string message, PriceSummary? summary)
+        {
+            var values = new StringBuilder();
+            AppendText(values, "Decision", "No trade");
+            AppendText(values, "Reason", ExtractScalpNoTradeReason(message));
+            AppendConfirmation(values, message, "BUY");
+            AppendConfirmation(values, message, "SELL");
+            AppendText(values, "Rule Audit", FormatRuleAudit(message));
+            AppendSummary(values, summary);
+
+            return Detail(
+                original,
+                "The auto-scalping check evaluated both BUY and SELL, but neither direction had enough confirmations to qualify. This is a wait/no-trade decision, not an execution attempt.",
+                values.ToString().Trim(),
+                BuildFormula(summary, "Scalping direction rule: evaluate BUY and SELL independently. Hard rules can block immediately; scored rules add confirmations. Continue only when one side reaches the configured confirmation count and no hard rule blocks. If neither side passes, the bot must wait."),
+                "No trade was opened. The setup was blocked because neither BUY nor SELL passed the confirmation checks.",
+                BuildExpectedPl(summary),
+                "Wait for a later SCALP line where one side has enough confirmations, or inspect the market-check details to see which confirmation inputs are missing.");
         }
 
         private static AppLogDetail ExplainTradeNotOpened(string original, string message, PriceSummary? summary)
@@ -279,6 +336,55 @@ namespace MT5TradingBot.UI
             return values.Length == 0 ? "Session values were not parsed from this line." : values.ToString();
         }
 
+        private static string ExtractScalpNoTradeReason(string message)
+        {
+            int index = message.IndexOf("No trade because", StringComparison.OrdinalIgnoreCase);
+            if (index < 0)
+                return "Neither side passed the scalping confirmation checks.";
+
+            string reason = message[index..].Trim().TrimEnd('.');
+            return string.IsNullOrWhiteSpace(reason)
+                ? "Neither side passed the scalping confirmation checks."
+                : reason;
+        }
+
+        private static void AppendConfirmation(StringBuilder values, string message, string side)
+        {
+            var match = Regex.Match(
+                message,
+                $@"{Regex.Escape(side)}\s+confirmations\s+(?<got>[0-9]+)\s*/\s*(?<total>[0-9]+)",
+                RegexOptions.IgnoreCase);
+            if (!match.Success) return;
+
+            values.Append(side.ToUpperInvariant())
+                .Append(" confirmations: ")
+                .Append(match.Groups["got"].Value)
+                .Append('/')
+                .Append(match.Groups["total"].Value)
+                .AppendLine();
+        }
+
+        private static string? FormatRuleAudit(string message)
+        {
+            var matches = Regex.Matches(
+                message,
+                @"Rule audit:\s*(?<audit>.*?)(?=\s+\|\s+(?:BUY details|SELL details|Stronger side details)|$)",
+                RegexOptions.IgnoreCase);
+            if (matches.Count == 0) return null;
+
+            var output = new StringBuilder();
+            foreach (Match match in matches)
+            {
+                string audit = match.Groups["audit"].Value.Trim();
+                if (string.IsNullOrWhiteSpace(audit)) continue;
+
+                foreach (string item in audit.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+                    output.AppendLine(item);
+            }
+
+            return output.Length == 0 ? null : output.ToString().Trim();
+        }
+
         private static string BuildValues(PriceSummary? summary, params string[] extra)
         {
             var values = new StringBuilder();
@@ -326,6 +432,8 @@ namespace MT5TradingBot.UI
         private static PriceSummary? ParsePriceSummary(string message)
         {
             var match = PriceSummaryRegex.Match(message);
+            if (!match.Success)
+                match = DetailedPriceSummaryRegex.Match(message);
             if (!match.Success) return null;
 
             return new PriceSummary(

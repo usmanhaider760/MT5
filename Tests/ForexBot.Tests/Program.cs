@@ -1,4 +1,4 @@
-using System.Reflection;
+﻿using System.Reflection;
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
@@ -28,7 +28,7 @@ internal static class Program
     [
         new("lot sizing uses equity risk and stop distance", LotSizingUsesRiskFormula),
         new("risk manager returns normalized selected lot size", RiskManagerReturnsValidatedLotSize),
-        new("daily trade count stop blocks when limit reached", DailyTradeLimitBlocksAtConfiguredLimit),
+        new("strategy trade count stop blocks when limit reached", StrategyTradeLimitBlocksAtConfiguredLimit),
         new("daily loss below limit allows live trade to continue", DailyLossBelowLimitAllowsLiveTrade),
         new("daily realized loss at limit blocks live trade", DailyRealizedLossAtLimitBlocksLiveTrade),
         new("daily realized loss above limit blocks live trade", DailyRealizedLossAboveLimitBlocksLiveTrade),
@@ -353,7 +353,13 @@ internal static class Program
         new("paper mode allows missing symbol data separately", PaperModeAllowsMissingSymbolDataSeparately),
         new("duplicate signal id registry persists processed ids", DuplicateSignalRegistryPersistsIds),
         new("maximum open trade limit blocks at cap", MaximumOpenTradeLimitBlocksAtCap),
-        new("disabled market session blocks scalping decision", DisabledSessionBlocksScalpingDecision)
+        new("disabled market session blocks scalping decision", DisabledSessionBlocksScalpingDecision),
+        new("inside bar does not hard block scalping decision", InsideBarDoesNotHardBlockScalpingDecision),
+        new("doji still hard blocks scalping decision", DojiStillHardBlocksScalpingDecision),
+        new("scalping ADX 20 passes with normal score", ScalpingAdxTwentyPassesWithNormalScore),
+        new("scalping ADX soft pass allows strong score", ScalpingAdxSoftPassAllowsStrongScore),
+        new("scalping ADX soft pass requires stronger score", ScalpingAdxSoftPassRequiresStrongerScore),
+        new("scalping ADX below fifteen hard blocks", ScalpingAdxBelowFifteenHardBlocks)
     ];
 
     public static async Task<int> Main()
@@ -395,12 +401,16 @@ internal static class Program
 
     private static async Task RiskManagerReturnsValidatedLotSize()
     {
+        var config = Config();
+        var request = BuyRequest();
+        var effective = EffectiveTradeSettings.Resolve(config, request.Strategy ?? "", request.LotSize);
         var result = await NewRiskManager().ValidateAsync(
-            BuyRequest(),
+            request,
             Account(),
             Symbol(spreadPoints: 10),
             [],
-            Config()).ConfigureAwait(false);
+            config,
+            effective).ConfigureAwait(false);
 
         AssertTrue(result.IsApproved, result.Reason);
         AssertClose(0.10, result.ValidatedLotSize, 0.0001, "RiskManager should use the selected request lot size.");
@@ -408,18 +418,24 @@ internal static class Program
         AssertClose(2.00, result.RiskRewardRatio, 0.01, "R:R should be based on entry, SL, and TP.");
     }
 
-    private static async Task DailyTradeLimitBlocksAtConfiguredLimit()
+    private static async Task StrategyTradeLimitBlocksAtConfiguredLimit()
     {
         string folder = TestFolder();
         Directory.CreateDirectory(folder);
 
+        await using var mt5 = new FakeMt5Server(Account(), Symbol(spreadPoints: 10));
+        var config = ConfigWithFolder(folder);
+        config.NormalTrading.MaxTrades = 1;
         await using var bot = new AutoBotService(
-            Bridge(),
-            ConfigWithFolder(folder, maxTradesPerDay: 0));
+            Bridge(mt5.Port),
+            config,
+            apiConfig: NewsDisabled());
 
+        var first = await bot.ExecuteTradeWithValidationAsync(BuyRequest()).ConfigureAwait(false);
         var result = await bot.ExecuteTradeWithValidationAsync(BuyRequest()).ConfigureAwait(false);
 
-        AssertEqual("DAILY_LIMIT", result.ErrorCode, "Existing daily trade-count limit should reject immediately at zero.");
+        AssertTrue(first.IsSuccess, "First normal trade should consume the trade-page limit.");
+        AssertEqual("DAILY_LIMIT", result.ErrorCode, "Strategy trade-page limit should reject the next same-pair normal trade.");
         AssertFalse(result.IsSuccess, "Daily limit rejection must not be successful.");
     }
 
@@ -530,7 +546,7 @@ internal static class Program
     private static async Task PaperModeIsSeparateFromDailyLossHardStop()
     {
         var config = DailyLossConfig(maxDailyLossAmount: 100);
-        config.PaperTrading = true;
+        config.CommonTrading.TradingMode = TradingControlMode.PaperTrading;
 
         await using var mt5 = new FakeMt5Server(Account(), Symbol(spreadPoints: 10));
         await using var bot = new AutoBotService(
@@ -669,7 +685,7 @@ internal static class Program
     private static async Task PaperModeIsSeparateFromWeeklyLossHardStop()
     {
         var config = WeeklyLossConfig(maxWeeklyLossAmount: 100);
-        config.PaperTrading = true;
+        config.CommonTrading.TradingMode = TradingControlMode.PaperTrading;
 
         await using var mt5 = new FakeMt5Server(Account(), Symbol(spreadPoints: 10));
         await using var bot = new AutoBotService(
@@ -827,7 +843,8 @@ internal static class Program
     private static async Task PaperModeIncludesPaperPositionsInExposureChecks()
     {
         var config = SymbolExposureConfig(maxSameSymbolPositions: 2);
-        config.PaperTrading = true;
+        config.CommonTrading.TradingMode = TradingControlMode.PaperTrading;
+        config.NormalTrading.MaxTrades = 2;
 
         await using var mt5 = new FakeMt5Server(Account(), Symbol(spreadPoints: 10));
         await using var bot = new AutoBotService(
@@ -936,7 +953,7 @@ internal static class Program
     private static async Task PaperModeIsSeparateFromProjectedMarginValidation()
     {
         var config = MarginConfig(minProjectedMarginLevelPercent: 200);
-        config.PaperTrading = true;
+        config.CommonTrading.TradingMode = TradingControlMode.PaperTrading;
 
         await using var mt5 = new FakeMt5Server(
             Account(margin: -1),
@@ -1083,7 +1100,7 @@ internal static class Program
         WriteKillSwitchFile(folder, "Live emergency stop still active");
 
         var config = ConfigWithFolder(folder);
-        config.PaperTrading = true;
+        config.CommonTrading.TradingMode = TradingControlMode.PaperTrading;
 
         await using var mt5 = new FakeMt5Server(Account(), Symbol(spreadPoints: 10));
         await using var bot = new AutoBotService(
@@ -1115,7 +1132,7 @@ internal static class Program
         Directory.CreateDirectory(folder);
 
         var config = CommissionConfig(commissionPerLotPerSide: 3.50);
-        config.PaperTrading = true;
+        config.CommonTrading.TradingMode = TradingControlMode.PaperTrading;
         config.WatchFolder = folder;
         config.KillSwitchStateFile = Path.Combine(folder, "kill_switch.json");
 
@@ -1252,7 +1269,7 @@ internal static class Program
         Directory.CreateDirectory(folder);
 
         var config = SlippageConfig(estimatedSlippagePips: 1.0, maxAllowedSlippagePips: 3.0);
-        config.PaperTrading = true;
+        config.CommonTrading.TradingMode = TradingControlMode.PaperTrading;
         config.WatchFolder = folder;
         config.KillSwitchStateFile = Path.Combine(folder, "kill_switch.json");
 
@@ -1409,7 +1426,7 @@ internal static class Program
     private static async Task PaperModeIsSeparateFromBrokerStopMetadata()
     {
         var config = Config();
-        config.PaperTrading = true;
+        config.CommonTrading.TradingMode = TradingControlMode.PaperTrading;
 
         await using var mt5 = new FakeMt5Server(Account(), SymbolWithoutStopLevelMetadata());
         await using var bot = new AutoBotService(
@@ -1532,7 +1549,7 @@ internal static class Program
     private static async Task PaperModeIsSeparateFromBrokerFreezeMetadata()
     {
         var config = Config();
-        config.PaperTrading = true;
+        config.CommonTrading.TradingMode = TradingControlMode.PaperTrading;
 
         await using var mt5 = new FakeMt5Server(Account(), SymbolWithoutFreezeLevelMetadata());
         await using var bot = new AutoBotService(
@@ -1648,7 +1665,7 @@ internal static class Program
     private static async Task PaperModeIsSeparateFromBrokerLotMetadata()
     {
         var config = Config();
-        config.PaperTrading = true;
+        config.CommonTrading.TradingMode = TradingControlMode.PaperTrading;
 
         await using var mt5 = new FakeMt5Server(Account(), SymbolWithoutLotMetadata());
         await using var bot = new AutoBotService(
@@ -1752,7 +1769,7 @@ internal static class Program
     {
         var now = new DateTime(2026, 1, 15, 12, 0, 0, DateTimeKind.Utc);
         var config = RolloverConfig("11:30", "12:30");
-        config.PaperTrading = true;
+        config.CommonTrading.TradingMode = TradingControlMode.PaperTrading;
 
         await using var mt5 = new FakeMt5Server(Account(), Symbol(spreadPoints: 10));
         await using var bot = new AutoBotService(
@@ -1902,7 +1919,7 @@ internal static class Program
         var now = new DateTime(2026, 1, 15, 12, 0, 0, DateTimeKind.Utc);
         var config = SessionSpreadConfig(defaultMaxSpreadPips: 10, oldMaxSpreadPips: 20,
             SpreadRule("London", "11:30", "12:30", 0.5));
-        config.PaperTrading = true;
+        config.CommonTrading.TradingMode = TradingControlMode.PaperTrading;
 
         await using var mt5 = new FakeMt5Server(Account(), Symbol(spreadPoints: 10));
         await using var bot = new AutoBotService(
@@ -2001,7 +2018,7 @@ internal static class Program
     private static async Task PaperModeIsSeparateFromOrderCheck()
     {
         var config = Config();
-        config.PaperTrading = true;
+        config.CommonTrading.TradingMode = TradingControlMode.PaperTrading;
 
         await using var mt5 = new FakeMt5Server(
             Account(),
@@ -2159,7 +2176,7 @@ internal static class Program
     private static async Task PaperModeDoesNotUseLiveOrderRetryPolicy()
     {
         var config = OrderRetryConfig(maxRetries: 2);
-        config.PaperTrading = true;
+        config.CommonTrading.TradingMode = TradingControlMode.PaperTrading;
 
         await using var mt5 = new FakeMt5Server(
             Account(),
@@ -2218,12 +2235,15 @@ internal static class Program
         config.MaxTinyLiveRiskPercent = 0.25;
         config.MaxTinyLiveLotMultiplier = 0.50;
 
+        var request = BuyRequest();
+        var effective = EffectiveTradeSettings.Resolve(config, request.Strategy ?? "", request.LotSize);
         var result = await NewRiskManager().ValidateAsync(
-            BuyRequest(),
+            request,
             Account(),
             Symbol(spreadPoints: 10),
             [],
-            config).ConfigureAwait(false);
+            config,
+            effective).ConfigureAwait(false);
 
         AssertTrue(result.IsApproved, result.Reason);
         AssertClose(0.05, result.ValidatedLotSize, 0.0001, "TinyLive should reduce auto-lot size to the tiny risk cap.");
@@ -6055,12 +6075,16 @@ internal static class Program
 
     private static async Task MaxSpreadFilterBlocksHighSpread()
     {
+        var config = Config(maxSpreadPips: 3);
+        var request = BuyRequest();
+        var effective = EffectiveTradeSettings.Resolve(config, request.Strategy ?? "", request.LotSize);
         var result = await NewRiskManager().ValidateAsync(
-            BuyRequest(),
+            request,
             Account(),
             Symbol(spreadPoints: 50),
             [],
-            Config(maxSpreadPips: 3)).ConfigureAwait(false);
+            config,
+            effective).ConfigureAwait(false);
 
         AssertFalse(result.IsApproved, "High spread should be blocked.");
         AssertContains("spread", result.Reason);
@@ -6234,7 +6258,7 @@ internal static class Program
     private static async Task PaperModeAllowsMissingSymbolDataSeparately()
     {
         var config = Config();
-        config.PaperTrading = true;
+        config.CommonTrading.TradingMode = TradingControlMode.PaperTrading;
 
         await using var mt5 = new FakeMt5Server(Account(), symbol: null);
         await using var bot = new AutoBotService(
@@ -6274,12 +6298,16 @@ internal static class Program
             Position(ticket: 3)
         };
 
+        var config = Config(maxConcurrentPositions: 3);
+        var request = BuyRequest();
+        var effective = EffectiveTradeSettings.Resolve(config, request.Strategy ?? "", request.LotSize);
         var result = await NewRiskManager().ValidateAsync(
-            BuyRequest(),
+            request,
             Account(),
             Symbol(spreadPoints: 10),
             open,
-            Config(maxConcurrentPositions: 3)).ConfigureAwait(false);
+            config,
+            effective).ConfigureAwait(false);
 
         AssertFalse(result.IsApproved, "Max open trade cap should block at configured limit.");
         AssertContains("max 3", result.Reason);
@@ -6296,7 +6324,9 @@ internal static class Program
 
         var decision = EvaluateScalpingSnapshot(closedMarket);
         AssertFalse(decision.Approved, "Closed market should block scalping decision.");
-        AssertContains("closed", decision.Reason);
+        AssertContains("BUY confirmations", decision.Reason);
+        AssertContains("not enough", decision.Reason);
+        AssertContains("Hard market open: BLOCK", decision.Detail);
 
         var disabledTrading = JObject.Parse("""
         {
@@ -6307,7 +6337,93 @@ internal static class Program
 
         decision = EvaluateScalpingSnapshot(disabledTrading);
         AssertFalse(decision.Approved, "Trading-disabled symbol should block scalping decision.");
-        AssertContains("disabled", decision.Reason);
+        AssertContains("BUY confirmations", decision.Reason);
+        AssertContains("not enough", decision.Reason);
+        AssertContains("Hard trade allowed: BLOCK", decision.Detail);
+
+        return Task.CompletedTask;
+    }
+
+    private static Task InsideBarDoesNotHardBlockScalpingDecision()
+    {
+        var snapshot = StrongBullishScalpingSnapshot();
+        snapshot["candles"]!["m5_last"]!["is_inside_bar"] = true;
+
+        var decision = EvaluateScalpingSnapshot(snapshot);
+
+        AssertTrue(decision.Approved, "Inside bar alone should not hard block an otherwise valid scalping decision.");
+        AssertContains("Hard clear M5 candle: PASS (doji no; inside yes; required doji no)", decision.Detail);
+        AssertContains("Score clear candle structure: FAIL +0 (inside yes; required inside no)", decision.Detail);
+        AssertContains("Score inside bar breakout: FAIL +0", decision.Detail);
+
+        return Task.CompletedTask;
+    }
+
+    private static Task DojiStillHardBlocksScalpingDecision()
+    {
+        var snapshot = StrongBullishScalpingSnapshot();
+        snapshot["candles"]!["m5_last"]!["is_doji"] = true;
+
+        var decision = EvaluateScalpingSnapshot(snapshot);
+
+        AssertFalse(decision.Approved, "Doji M5 candle should remain a hard scalping block.");
+        AssertContains("BUY score passed", decision.Reason);
+        AssertContains("trade blocked by hard rule: Hard clear M5 candle", decision.Reason);
+        AssertContains("Hard clear M5 candle: BLOCK (doji yes; required doji no)", decision.Detail);
+
+        return Task.CompletedTask;
+    }
+
+    private static Task ScalpingAdxTwentyPassesWithNormalScore()
+    {
+        var snapshot = TenScoreBullishScalpingSnapshot(adx: 22.4);
+
+        var decision = EvaluateScalpingSnapshot(snapshot, new ScalpingConfig { MinDecisionScore = 7 });
+
+        AssertTrue(decision.Approved, "ADX >= 20 should pass scalping ADX without a raised score requirement.");
+        AssertEqual(7, decision.RequiredScore, "ADX >= 20 should keep the normal required score.");
+        AssertContains("Hard M5 ADX: PASS (value 22.4; required >= 20)", decision.Detail);
+
+        return Task.CompletedTask;
+    }
+
+    private static Task ScalpingAdxSoftPassAllowsStrongScore()
+    {
+        var snapshot = TenScoreBullishScalpingSnapshot(adx: 17.6);
+
+        var decision = EvaluateScalpingSnapshot(snapshot, new ScalpingConfig { MinDecisionScore = 7 });
+
+        AssertTrue(decision.Approved, "ADX 15-19.9 should allow scalping only when the strong-score threshold is met.");
+        AssertEqual(9, decision.RequiredScore, "Soft ADX should raise required score by two.");
+        AssertContains("BUY score passed 10/7. M5 ADX soft-pass 17.6, strong-score condition passed.", decision.Reason);
+        AssertContains("Hard M5 ADX: SOFT PASS (value 17.6; required >= 15 with strong score >= 9)", decision.Detail);
+
+        return Task.CompletedTask;
+    }
+
+    private static Task ScalpingAdxSoftPassRequiresStrongerScore()
+    {
+        var snapshot = EightScoreBullishScalpingSnapshot(adx: 17.6);
+
+        var decision = EvaluateScalpingSnapshot(snapshot, new ScalpingConfig { MinDecisionScore = 7 });
+
+        AssertFalse(decision.Approved, "ADX 15-19.9 should fail when the raised strong-score threshold is not met.");
+        AssertEqual(9, decision.RequiredScore, "Soft ADX should require normal score plus two confirmations.");
+        AssertContains("BUY confirmations 8/9, not enough because ADX is below 20 and strong-score confirmation is required.", decision.Reason);
+        AssertContains("Hard M5 ADX: SOFT PASS (value 17.6; required >= 15 with strong score >= 9)", decision.Detail);
+
+        return Task.CompletedTask;
+    }
+
+    private static Task ScalpingAdxBelowFifteenHardBlocks()
+    {
+        var snapshot = TenScoreBullishScalpingSnapshot(adx: 14.2);
+
+        var decision = EvaluateScalpingSnapshot(snapshot, new ScalpingConfig { MinDecisionScore = 7 });
+
+        AssertFalse(decision.Approved, "ADX below 15 should remain a hard scalping block.");
+        AssertContains("BUY score passed 10/7, but trade blocked by hard rule: M5 ADX below 15", decision.Reason);
+        AssertContains("Hard M5 ADX: BLOCK (value 14.2; required >= 15)", decision.Detail);
 
         return Task.CompletedTask;
     }
@@ -6437,7 +6553,6 @@ internal static class Program
     };
 
     private static BotConfig Config(
-        int maxTradesPerDay = 5,
         double maxSpreadPips = 3,
         int maxConcurrentPositions = 3)
     {
@@ -6447,7 +6562,6 @@ internal static class Program
             WatchFolder = folder,
             KillSwitchStateFile = Path.Combine(folder, "kill_switch.json"),
             MaxRiskPercent = 1,
-            MaxTradesPerDay = maxTradesPerDay,
             MaxSpreadPips = maxSpreadPips,
             MaxConcurrentPositions = maxConcurrentPositions,
             MaxTotalRiskPercent = 0,
@@ -6471,11 +6585,10 @@ internal static class Program
 
     private static BotConfig ConfigWithFolder(
         string folder,
-        int maxTradesPerDay = 5,
         double maxSpreadPips = 3,
         int maxConcurrentPositions = 3)
     {
-        var config = Config(maxTradesPerDay, maxSpreadPips, maxConcurrentPositions);
+        var config = Config(maxSpreadPips, maxConcurrentPositions);
         config.WatchFolder = folder;
         config.KillSwitchStateFile = Path.Combine(folder, "kill_switch.json");
         return config;
@@ -6887,22 +7000,120 @@ internal static class Program
         MaxReconnectAttempts = 1
     });
 
-    private static (bool Approved, string Reason) EvaluateScalpingSnapshot(JObject snapshot)
+    private static JObject StrongBullishScalpingSnapshot() => JObject.Parse("""
+    {
+      "session": { "market_open": true, "vwap": 1.09900 },
+      "symbol": { "trade_allowed": true },
+      "price": { "bid": 1.10000, "ask": 1.10010, "spread_pips": 1.0 },
+      "structure": {
+        "trend_m5": "BULLISH",
+        "trend_m15": "BULLISH",
+        "trend_h1": "BULLISH",
+        "bos_detected": true
+      },
+      "candles": {
+        "m5_last": {
+          "direction": "BULLISH",
+          "is_doji": false,
+          "is_inside_bar": false,
+          "is_engulfing": true,
+          "high": 1.10100,
+          "low": 1.09900
+        }
+      },
+      "indicators": {
+        "m5": {
+          "adx": 25.0,
+          "rsi": 55.0,
+          "stoch_k": 50.0,
+          "macd_bias": "BULLISH",
+          "price_vs_ema20": "ABOVE",
+          "price_vs_ema50": "ABOVE"
+        },
+        "m15": { "macd_bias": "BULLISH" }
+      },
+      "levels": {
+        "distance_to_resistance_pips": 100.0,
+        "distance_to_support_pips": 100.0,
+        "asian_high": 1.20000,
+        "asian_low": 1.00000
+      }
+    }
+    """);
+
+    private static JObject TenScoreBullishScalpingSnapshot(double adx)
+    {
+        var snapshot = EightScoreBullishScalpingSnapshot(adx);
+        snapshot["candles"]!["m5_last"]!["is_inside_bar"] = false;
+        snapshot["indicators"]!["m5"]!["price_vs_ema50"] = "ABOVE";
+        return snapshot;
+    }
+
+    private static JObject EightScoreBullishScalpingSnapshot(double adx) => JObject.Parse($$"""
+    {
+      "session": { "market_open": true, "vwap": 1.20000 },
+      "symbol": { "trade_allowed": true },
+      "price": { "bid": 1.10000, "ask": 1.10010, "spread_pips": 1.0 },
+      "structure": {
+        "trend_m5": "BULLISH",
+        "trend_m15": "BULLISH",
+        "trend_h1": "BULLISH",
+        "bos_detected": false
+      },
+      "candles": {
+        "m5_last": {
+          "direction": "BULLISH",
+          "is_doji": false,
+          "is_inside_bar": true,
+          "is_engulfing": false,
+          "high": 1.10100,
+          "low": 1.09900
+        }
+      },
+      "indicators": {
+        "m5": {
+          "adx": {{adx.ToString(System.Globalization.CultureInfo.InvariantCulture)}},
+          "rsi": 40.0,
+          "stoch_k": 90.0,
+          "macd_bias": "BULLISH",
+          "price_vs_ema20": "ABOVE",
+          "price_vs_ema50": "BELOW"
+        },
+        "m15": { "macd_bias": "BULLISH" }
+      },
+      "levels": {
+        "distance_to_resistance_pips": 100.0,
+        "distance_to_support_pips": 100.0,
+        "asian_high": 1.20000,
+        "asian_low": 1.00000
+      }
+    }
+    """);
+
+    private static (bool Approved, string Reason, string Detail, int Score, int RequiredScore) EvaluateScalpingSnapshot(
+        JObject snapshot,
+        ScalpingConfig? config = null)
     {
         var method = typeof(ScalpingSessionService).GetMethod(
             "EvaluateSnapshot",
             BindingFlags.NonPublic | BindingFlags.Static);
 
         AssertNotNull(method, "Scalping snapshot evaluator should exist.");
-        object decision = method!.Invoke(null, [snapshot, TradeType.BUY, new ScalpingConfig()])!;
+        object decision = method!.Invoke(null, [snapshot, TradeType.BUY, config ?? new ScalpingConfig()])!;
         Type decisionType = decision.GetType();
 
         bool approved = (bool)(decisionType.GetProperty("Approved")?.GetValue(decision)
             ?? throw new InvalidOperationException("Missing Approved property."));
         string reason = (string)(decisionType.GetProperty("Reason")?.GetValue(decision)
             ?? throw new InvalidOperationException("Missing Reason property."));
+        string detail = (string)(decisionType.GetProperty("Detail")?.GetValue(decision)
+            ?? throw new InvalidOperationException("Missing Detail property."));
+        int score = (int)(decisionType.GetProperty("Score")?.GetValue(decision)
+            ?? throw new InvalidOperationException("Missing Score property."));
+        int requiredScore = (int)(decisionType.GetProperty("RequiredScore")?.GetValue(decision)
+            ?? throw new InvalidOperationException("Missing RequiredScore property."));
 
-        return (approved, reason);
+        return (approved, reason, detail, score, requiredScore);
     }
 
     private static void InvokePrivate(object target, string methodName, params object[] args)
@@ -8190,6 +8401,7 @@ internal static class Program
             SymbolInfo? symbolInfo,
             IReadOnlyList<LivePosition> openPositions,
             BotConfig config,
+            EffectiveTradeSettings effective,
             CancellationToken cancellationToken = default) =>
             throw new InvalidOperationException("risk data source unavailable");
     }
@@ -8202,6 +8414,7 @@ internal static class Program
             SymbolInfo? symbolInfo,
             IReadOnlyList<LivePosition> openPositions,
             BotConfig config,
+            EffectiveTradeSettings effective,
             CancellationToken cancellationToken = default) =>
             Task.FromResult(new RiskValidationResult
             {

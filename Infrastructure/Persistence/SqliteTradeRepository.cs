@@ -35,12 +35,12 @@ namespace MT5TradingBot.Data
                     using var cmd = conn.CreateCommand();
                     cmd.CommandText = @"
                         INSERT OR IGNORE INTO trades
-                            (request_id, created_at, executed_at, pair, direction,
+                            (request_id, created_at, executed_at, pair, strategy, direction,
                              order_type, lot_size, entry_price, stop_loss, take_profit,
                              comment, magic_number, ticket, status,
                              executed_price, executed_lots, error_code, error_message)
                         VALUES
-                            ($rid, $cat, $eat, $pair, $dir,
+                            ($rid, $cat, $eat, $pair, $strategy, $dir,
                              $ot, $ls, $ep, $sl, $tp,
                              $cmt, $mn, $tkt, $st,
                              $xp, $xl, $ec, $em)";
@@ -49,6 +49,7 @@ namespace MT5TradingBot.Data
                     cmd.Parameters.AddWithValue("$cat", req.CreatedAt.ToString("o"));
                     cmd.Parameters.AddWithValue("$eat", result.ExecutedAt.ToString("o"));
                     cmd.Parameters.AddWithValue("$pair", req.Pair);
+                    cmd.Parameters.AddWithValue("$strategy", req.Strategy ?? "");
                     cmd.Parameters.AddWithValue("$dir",  req.TradeType.ToString());
                     cmd.Parameters.AddWithValue("$ot",   req.OrderType.ToString());
                     cmd.Parameters.AddWithValue("$ls",   req.LotSize);
@@ -208,6 +209,7 @@ namespace MT5TradingBot.Data
                     created_at     TEXT    NOT NULL,
                     executed_at    TEXT    NOT NULL,
                     pair           TEXT    NOT NULL,
+                    strategy       TEXT    NOT NULL DEFAULT '',
                     direction      TEXT    NOT NULL,
                     order_type     TEXT    NOT NULL,
                     lot_size       REAL    NOT NULL,
@@ -236,8 +238,13 @@ namespace MT5TradingBot.Data
             catch { /* column already exists */ }
             try { await RunAsync("ALTER TABLE trades ADD COLUMN closed_at TEXT DEFAULT NULL", ct).ConfigureAwait(false); }
             catch { /* column already exists */ }
+            try { await RunAsync("ALTER TABLE trades ADD COLUMN strategy TEXT NOT NULL DEFAULT ''", ct).ConfigureAwait(false); }
+            catch { /* column already exists */ }
             await RunAsync(
                 "CREATE INDEX IF NOT EXISTS idx_trades_closed_at ON trades(closed_at DESC)",
+                ct).ConfigureAwait(false);
+            await RunAsync(
+                "CREATE INDEX IF NOT EXISTS idx_trades_pair_strategy_executed_at ON trades(pair, strategy, executed_at DESC)",
                 ct).ConfigureAwait(false);
             _initialized = true;
         }
@@ -266,6 +273,7 @@ namespace MT5TradingBot.Data
                     CreatedAt     = DateTime.Parse(reader.GetString(reader.GetOrdinal("created_at"))),
                     ExecutedAt    = DateTime.Parse(reader.GetString(reader.GetOrdinal("executed_at"))),
                     Pair          = reader.GetString(reader.GetOrdinal("pair")),
+                    Strategy      = reader.GetString(reader.GetOrdinal("strategy")),
                     Direction     = reader.GetString(reader.GetOrdinal("direction")),
                     OrderType     = reader.GetString(reader.GetOrdinal("order_type")),
                     LotSize       = reader.GetDouble(reader.GetOrdinal("lot_size")),

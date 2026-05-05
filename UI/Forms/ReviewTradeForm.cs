@@ -14,13 +14,6 @@ namespace MT5TradingBot.UI
         private static readonly Color C_BORDER  = Color.FromArgb(45,  48,  64);
 
         private readonly BotConfig _cfg;
-        private readonly CheckBox _chkPaperTrading = new() { Text = "Paper Trading (simulate, no real orders)" };
-        private readonly ComboBox _cmbOperatingMode = new()
-        {
-            DropDownStyle = ComboBoxStyle.DropDownList,
-            Width         = 160
-        };
-        private readonly Label _lblOperatingModeLabel = new() { Text = "Operating Mode" };
         private readonly NumericUpDown _nudMaxConcurrent = new()
         {
             Minimum  = 0,
@@ -33,16 +26,6 @@ namespace MT5TradingBot.UI
         {
             Text = "Max Concurrent Positions"
         };
-        private readonly NumericUpDown _nudBeTrigger = new()
-        {
-            Minimum = 0.10m,
-            Maximum = 1.00m,
-            DecimalPlaces = 2,
-            Increment = 0.05m,
-            Value = 0.60m
-        };
-        private readonly Label _lblBeTriggerLabel = new() { Text = "BE Trigger (% of TP)" };
-
         public ReviewTradeForm(BotConfig config)
         {
             _cfg = config;
@@ -58,35 +41,24 @@ namespace MT5TradingBot.UI
         private void PopulateFromConfig()
         {
             SetNud(_nudRisk,        (decimal)_cfg.MaxRiskPercent);
-            SetNud(_nudMaxTrades,   _cfg.MaxTradesPerDay);
             SetNud(_nudMaxConcurrent, _cfg.MaxConcurrentPositions);
             SetNud(_nudPollMs,      _cfg.PollIntervalMs);
             SetNud(_nudRetry,       _cfg.RetryCount);
             SetNud(_nudDrawdownPct, (decimal)_cfg.EmergencyCloseDrawdownPct);
-            SetNud(_nudBeTrigger,   (decimal)_cfg.SlToBeTrigerPct);
             _chkDrawdown.Checked  = _cfg.DrawdownProtectionEnabled;
             _chkAutoStart.Checked = _cfg.AutoStartOnLaunch;
 
-            _cmbOperatingMode.Items.Clear();
-            _cmbOperatingMode.Items.AddRange(new object[]
-                { "Monitor (heartbeat only)", "Manual Approval", "Full Auto" });
-            _cmbOperatingMode.SelectedIndex = (int)_cfg.OperatingMode;
-            _chkPaperTrading.Checked        = _cfg.PaperTrading;
         }
 
         private void BtnSave_Click(object? sender, EventArgs e)
         {
             _cfg.MaxRiskPercent            = (double)_nudRisk.Value;
-            _cfg.MaxTradesPerDay           = (int)_nudMaxTrades.Value;
             _cfg.MaxConcurrentPositions    = (int)_nudMaxConcurrent.Value;
             _cfg.PollIntervalMs            = (int)_nudPollMs.Value;
             _cfg.RetryCount                = (int)_nudRetry.Value;
             _cfg.EmergencyCloseDrawdownPct = (double)_nudDrawdownPct.Value;
-            _cfg.SlToBeTrigerPct           = (double)_nudBeTrigger.Value;
             _cfg.DrawdownProtectionEnabled = _chkDrawdown.Checked;
             _cfg.AutoStartOnLaunch         = _chkAutoStart.Checked;
-            _cfg.OperatingMode             = (BotMode)_cmbOperatingMode.SelectedIndex;
-            _cfg.PaperTrading              = _chkPaperTrading.Checked;
             DialogResult = DialogResult.OK;
             Close();
         }
@@ -120,24 +92,17 @@ namespace MT5TradingBot.UI
                 e.Graphics.DrawLine(pen, 0, 0, _pnlSettings.Width, 0);
             };
 
-            // Operating mode ComboBox
-            _cmbOperatingMode.BackColor = C_SURFACE;
-            _cmbOperatingMode.ForeColor = C_TEXT;
-            _cmbOperatingMode.FlatStyle = FlatStyle.Flat;
-            _cmbOperatingMode.Font      = new Font("Segoe UI", 9F);
-
             // Labels
-            foreach (var lbl in new[] { _lblRiskLabel, _lblMaxTradesLabel,
+            foreach (var lbl in new[] { _lblRiskLabel,
                                          _lblMaxConcurrentLabel,
-                                         _lblPollMsLabel, _lblRetryLabel, _lblDrawdownLabel,
-                                         _lblBeTriggerLabel, _lblOperatingModeLabel })
+                                         _lblPollMsLabel, _lblRetryLabel, _lblDrawdownLabel })
             {
                 lbl.Font      = new Font("Segoe UI", 9F);
                 lbl.ForeColor = C_MUTED;
             }
 
             // Draw horizontal separator lines between rows inside panel
-            int[] separatorYs = { 38, 76, 114, 152, 190, 232 };
+            int[] separatorYs = { 38, 76, 114, 152, 190 };
             _pnlSettings.Paint += (_, e) =>
             {
                 using var pen = new Pen(Color.FromArgb(38, 40, 56));
@@ -146,7 +111,7 @@ namespace MT5TradingBot.UI
             };
 
             // NumericUpDowns
-            foreach (var nud in new[] { _nudRisk, _nudMaxTrades, _nudMaxConcurrent, _nudPollMs, _nudRetry, _nudDrawdownPct, _nudBeTrigger })
+            foreach (var nud in new[] { _nudRisk, _nudMaxConcurrent, _nudPollMs, _nudRetry, _nudDrawdownPct })
             {
                 nud.BackColor    = C_SURFACE;
                 nud.ForeColor    = C_TEXT;
@@ -155,7 +120,7 @@ namespace MT5TradingBot.UI
             }
 
             // Checkboxes
-            foreach (var chk in new[] { _chkDrawdown, _chkAutoStart, _chkPaperTrading })
+            foreach (var chk in new[] { _chkDrawdown, _chkAutoStart })
             {
                 chk.Font                  = new Font("Segoe UI", 9F);
                 chk.ForeColor             = C_TEXT;
@@ -187,7 +152,7 @@ namespace MT5TradingBot.UI
             const int rowHeight = 38;
             const int fieldX = 210;
             const int fieldW = 110;
-            const int addedRows = 4;
+            const int addedRows = 1;
             int delta = rowHeight * addedRows;
 
             ClientSize = new Size(ClientSize.Width, ClientSize.Height + delta);
@@ -199,20 +164,11 @@ namespace MT5TradingBot.UI
             PlaceRow(_lblPollMsLabel, _lblPollMsLabel.Text, _nudPollMs, 168, fieldX, fieldW);
             PlaceRow(_lblRetryLabel, _lblRetryLabel.Text, _nudRetry, 206, fieldX, fieldW);
             PlaceRow(_lblDrawdownLabel, _lblDrawdownLabel.Text, _nudDrawdownPct, 244, fieldX, fieldW);
-            PlaceRow(_lblBeTriggerLabel, _lblBeTriggerLabel.Text, _nudBeTrigger, 282, fieldX, fieldW);
-            PlaceRow(_lblOperatingModeLabel, _lblOperatingModeLabel.Text, _cmbOperatingMode, 320, fieldX, 160);
-            _chkPaperTrading.Location = new Point(16, 360);
-            _chkPaperTrading.AutoSize = true;
             _chkDrawdown.Location = new Point(_chkDrawdown.Left, _chkDrawdown.Top + delta);
             _chkAutoStart.Location = new Point(_chkAutoStart.Left, _chkAutoStart.Top + delta);
 
             _pnlSettings.Controls.Add(_lblMaxConcurrentLabel);
             _pnlSettings.Controls.Add(_nudMaxConcurrent);
-            _pnlSettings.Controls.Add(_lblBeTriggerLabel);
-            _pnlSettings.Controls.Add(_nudBeTrigger);
-            _pnlSettings.Controls.Add(_lblOperatingModeLabel);
-            _pnlSettings.Controls.Add(_cmbOperatingMode);
-            _pnlSettings.Controls.Add(_chkPaperTrading);
         }
 
         private static void SetNud(NumericUpDown nud, decimal value)

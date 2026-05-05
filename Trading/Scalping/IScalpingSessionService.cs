@@ -31,5 +31,10 @@ namespace MT5TradingBot.Modules.Scalping
         string Reason,
         string Detail = "",
         double? SuggestedSlPips = null,
-        double? SuggestedTpPips = null);
+        double? SuggestedTpPips = null,
+        int RequiredScore = 0,
+        string FirstHardBlock = "",
+        bool AdxSoftPass = false,
+        double M5Adx = double.NaN,
+        int NormalRequiredScore = 0);
 }

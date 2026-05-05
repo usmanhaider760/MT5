@@ -92,7 +92,6 @@ namespace MT5TradingBot.Modules.BrokerIntegration
             req.MagicNumber,
             req.ExpiryMinutes,
             req.MoveSLToBreakevenAfterTP1,
-            req.SlToBeTrigerPct,
             req.CreatedAt
         };
 

@@ -63,7 +63,7 @@ namespace MT5TradingBot.Services
         private readonly Dictionary<long, LivePosition> _knownPositions = []; // for close detection
         private readonly Dictionary<long, string> _entryH1Trends = []; // H1 trend at entry per ticket
         private volatile bool _running;
-        private int _tradesToday;
+        private readonly Dictionary<string, int> _tradesTodayByPairStrategy = new(StringComparer.OrdinalIgnoreCase);
         private DateTime _dayReset = DateTime.Today;
         private double _startOfDayEquity;
         private bool _emergencyStopFired;
@@ -81,7 +81,7 @@ namespace MT5TradingBot.Services
 
         public bool IsRunning => _running;
         public bool IsEdgePaused => _edgePaused;
-        public bool IsPaperTrading => _cfg.PaperTrading;
+        public bool IsPaperTrading => _cfg.CommonTrading.TradingMode == TradingControlMode.PaperTrading;
         public bool IsKillSwitchActive
         {
             get
@@ -100,31 +100,7 @@ namespace MT5TradingBot.Services
             }
         }
 
-        private BotMode _currentMode = BotMode.ManualApproval;
-        public BotMode CurrentMode => _currentMode;
-
-        // Derived read-only for backward compatibility with card logic that reads this.
-        public bool ManualExecuteOnly => _currentMode == BotMode.ManualApproval;
-
-        public event Action<BotMode>? OnModeChanged;
-
-        public void SetMode(BotMode newMode)
-        {
-            if (newMode == _currentMode) return;
-            EnsureKillSwitchLoaded();
-
-            if (newMode == BotMode.FullAuto && (_edgePaused || _emergencyStopFired))
-            {
-                Log($"[Mode] Cannot switch to FullAuto — " +
-                    (_edgePaused ? "edge paused" : "emergency stop active") + ".");
-                return;
-            }
-
-            BotMode previous = _currentMode;
-            _currentMode = newMode;
-            Log($"[Mode] {previous} → {newMode}");
-            OnModeChanged?.Invoke(newMode);
-        }
+        public TradingControlMode TradingMode => _cfg.CommonTrading.TradingMode;
 
         // ── Paths ─────────────────────────────────────────────────
         private string ExecutedDir    => Path.Combine(_cfg.WatchFolder, "executed");
@@ -174,7 +150,6 @@ namespace MT5TradingBot.Services
         public async Task StartAsync()
         {
             if (_running) return;
-            _currentMode = _cfg.OperatingMode;
             _running = true;
             EnsureKillSwitchLoaded();
             _emergencyStopFired = _killSwitchState.KillSwitchActive;
@@ -343,14 +318,11 @@ namespace MT5TradingBot.Services
                     // SL → Breakeven for paper positions
                     if (!_slMovedTickets.Contains(pos.Ticket) && pos.TakeProfit > 0)
                     {
-                        double tpDist  = Math.Abs(pos.TakeProfit - pos.OpenPrice);
-                        double moved   = pos.Type == TradeType.BUY
-                            ? closePrice - pos.OpenPrice
-                            : pos.OpenPrice - closePrice;
-                        double bePct   = _cfg.SlToBeTrigerPct > 0 && _cfg.SlToBeTrigerPct <= 1.0
-                            ? _cfg.SlToBeTrigerPct : 0.6;
+                        double pipSize = LotCalculator.GetPipSize(pos.Symbol.ToUpperInvariant());
+                        double moved = PipCalculator.MoveInPips(pos.Type, pos.OpenPrice, closePrice, pipSize);
+                        double beTriggerPips = GetTradePageBeTriggerPips(pos);
 
-                        if (tpDist > 0 && moved >= tpDist * bePct)
+                        if (beTriggerPips > 0 && moved >= beTriggerPips)
                         {
                             pos.StopLoss = pos.OpenPrice;
                             _slMovedTickets.Add(pos.Ticket);
@@ -461,7 +433,7 @@ namespace MT5TradingBot.Services
                     // Reset daily counter at midnight
                     if (DateTime.Today != _dayReset)
                     {
-                        _tradesToday = 0;
+                        _tradesTodayByPairStrategy.Clear();
                         _dayReset = DateTime.Today;
                         EnsureKillSwitchLoaded();
                         _emergencyStopFired = _killSwitchState.KillSwitchActive;
@@ -585,15 +557,8 @@ namespace MT5TradingBot.Services
 
         private async Task ProcessSignalFileAsync(string path)
         {
-            // Monitor mode: ignore signal files entirely — heartbeat still runs
-            if (_currentMode == BotMode.Monitor)
-            {
-                Log($"[BOT] Signal ignored in Monitor mode: {Path.GetFileName(path)}");
-                return;
-            }
-
             // ManualApproval mode: skip files already shown to the user
-            if (_currentMode == BotMode.ManualApproval)
+            if (_cfg.CommonTrading.TradingMode == TradingControlMode.ManualApproval)
             {
                 await _fileLock.WaitAsync(_cts.Token).ConfigureAwait(false);
                 bool already = _shownPaths.Contains(path);
@@ -636,7 +601,7 @@ namespace MT5TradingBot.Services
                 OnSignalUpdate?.Invoke(MakeCard(request, path, SignalCardStatus.Pending, "Pending", rawJson: json));
 
                 // Manual-execute mode: show card and stop — user clicks ▶ to trade
-                if (ManualExecuteOnly)
+                if (_cfg.CommonTrading.TradingMode == TradingControlMode.ManualApproval)
                 {
                     await _fileLock.WaitAsync(CancellationToken.None).ConfigureAwait(false);
                     _shownPaths.Add(path);
@@ -787,6 +752,10 @@ namespace MT5TradingBot.Services
             try
             {
                 bool liveMode = !_cfg.PaperTrading;
+                var auditBlock = await RunExecutionGateAuditAsync(request, liveMode).ConfigureAwait(false);
+                if (auditBlock != null)
+                    return auditBlock;
+
                 var layerLog = new List<LayerResult>();
                 bool tradeExecuted = false;
                 try
@@ -800,16 +769,9 @@ namespace MT5TradingBot.Services
                 if (noTradeWindowBlock != null)
                     return noTradeWindowBlock;
 
-                // ── Session time gate (London + NY: 07:00–16:00 UTC) ───────
-                {
-                    int utcHour = DateTime.UtcNow.Hour;
-                    bool sessionOk = utcHour >= 7 && utcHour < 16;
-                    layerLog.Add(new LayerResult("SESSION_GATE", sessionOk, $"UTC={DateTime.UtcNow:HH:mm}"));
-                    if (!sessionOk)
-                        return Fail(request.Id, "SESSION_CLOSED",
-                            $"UTC {DateTime.UtcNow:HH:mm} is outside the London/NY session window " +
-                            $"(07:00–16:00 UTC). No trade.");
-                }
+                var sessionBlock = CheckPairSessionWindow(request.Id, request, liveMode, layerLog);
+                if (sessionBlock != null)
+                    return sessionBlock;
 
                 // ── 1b. Signal age check ───────────────────────────
                 if (request.ExpiryMinutes > 0)
@@ -834,10 +796,12 @@ namespace MT5TradingBot.Services
                     Log($"[BOT] Symbol suffix applied: {request.Pair}");
                 }
 
-                // ── 3. Daily limit ─────────────────────────────────
-                if (_tradesToday >= _cfg.MaxTradesPerDay)
+                // ── 3. Resolve effective settings + daily limit ────
+                var effective = EffectiveTradeSettings.Resolve(_cfg, request.Strategy, request.LotSize, request.MaxSpreadPips);
+                int tradesToday = await GetTradesTodayAsync(request.Pair, effective.Strategy).ConfigureAwait(false);
+                if (tradesToday >= effective.MaxTrades)
                     return Fail(request.Id, "DAILY_LIMIT",
-                        $"Daily trade limit {_cfg.MaxTradesPerDay} reached");
+                        $"{effective.Strategy} trade page limit {effective.MaxTrades} reached for {request.Pair}");
 
                 // ── 4. Get live account ────────────────────────────
                 AccountInfo? account;
@@ -893,7 +857,7 @@ namespace MT5TradingBot.Services
                 double livePrice = symbolInfo != null
                     ? (request.TradeType == Models.TradeType.BUY ? symbolInfo.Ask : symbolInfo.Bid)
                     : 0;
-                ApplyTradePageSlTp(request, symbolInfo, livePrice);
+                ApplyTradePageSlTp(request, symbolInfo, livePrice, effective);
 
                 // ── 6. Risk validation (delegated to RiskManager) ──
                 var stopLevelBlock = CheckBrokerStopLevel(
@@ -1006,7 +970,7 @@ namespace MT5TradingBot.Services
                 try
                 {
                     riskResult = await _riskManager.ValidateAsync(
-                        request, account, symbolInfo, openPositions, _cfg, _cts.Token)
+                        request, account, symbolInfo, openPositions, _cfg, effective, _cts.Token)
                         .ConfigureAwait(false);
                 }
                 catch (Exception ex)
@@ -1245,8 +1209,9 @@ namespace MT5TradingBot.Services
                         result.EstimatedSlippagePips = slippageEstimate.Pips;
                     }
 
-                    _tradesToday++;
-                    Log($"[OK] MT5 accepted ticket #{result.Ticket} | Trades today: {_tradesToday}/{_cfg.MaxTradesPerDay}");
+                    RecordTradeOpenedToday(request.Pair, effective.Strategy);
+                    int updatedTradesToday = GetTradesToday(request.Pair, effective.Strategy);
+                    Log($"[OK] MT5 accepted ticket #{result.Ticket} | {request.Pair} {effective.Strategy} trades today: {updatedTradesToday}/{effective.MaxTrades}");
                     await _telegram.NotifyTradeOpenedAsync(result, request)
                         .ConfigureAwait(false);
 
@@ -1354,13 +1319,10 @@ namespace MT5TradingBot.Services
                     continue;
                 }
 
-                double tpDistance = Math.Abs(pos.TakeProfit - pos.OpenPrice);
-                double currentMove = pos.Type == Models.TradeType.BUY
-                    ? pos.CurrentPrice - pos.OpenPrice
-                    : pos.OpenPrice - pos.CurrentPrice;
-
-                double beTriggerPct = _cfg.SlToBeTrigerPct > 0 && _cfg.SlToBeTrigerPct <= 1.0 ? _cfg.SlToBeTrigerPct : 0.6;
-                bool shouldMoveSL = currentMove >= tpDistance * beTriggerPct;
+                double pipSize = LotCalculator.GetPipSize(pos.Symbol.ToUpperInvariant());
+                double currentMovePips = PipCalculator.MoveInPips(pos.Type, pos.OpenPrice, pos.CurrentPrice, pipSize);
+                double beTriggerPips = GetTradePageBeTriggerPips(pos);
+                bool shouldMoveSL = beTriggerPips > 0 && currentMovePips >= beTriggerPips;
 
                 if (shouldMoveSL)
                 {
@@ -1380,6 +1342,44 @@ namespace MT5TradingBot.Services
         // ══════════════════════════════════════════════════════════
         //  H1 TREND REVERSAL MANAGEMENT
         // ══════════════════════════════════════════════════════════
+
+        private double GetTradePageBeTriggerPips(LivePosition position)
+        {
+            double tpPips = ResolveTradePageTakeProfitPips(position);
+            if (!IsFinitePositive(tpPips)) return 0;
+
+            double bePercent = _cfg.CommonTrading.BeTriggerPercentOfTp > 0 && _cfg.CommonTrading.BeTriggerPercentOfTp <= 1.0
+                ? _cfg.CommonTrading.BeTriggerPercentOfTp
+                : 0.60;
+
+            return tpPips * bePercent;
+        }
+
+        private double ResolveTradePageTakeProfitPips(LivePosition position)
+        {
+            double scalpingTp = _cfg.Scalping.TakeProfitPips;
+            double normalTp = _cfg.NormalTrading.TakeProfitPips;
+
+            if (position.Comment.Contains("Scalping", StringComparison.OrdinalIgnoreCase))
+                return scalpingTp;
+            if (position.Comment.Contains("Normal", StringComparison.OrdinalIgnoreCase))
+                return normalTp;
+
+            double pipSize = LotCalculator.GetPipSize(position.Symbol.ToUpperInvariant());
+            double actualTpPips = position.TakeProfit > 0 && pipSize > 0
+                ? Math.Abs(position.TakeProfit - position.OpenPrice) / pipSize
+                : double.NaN;
+
+            if (IsFinitePositive(actualTpPips) && IsFinitePositive(scalpingTp) && IsFinitePositive(normalTp))
+                return Math.Abs(actualTpPips - scalpingTp) <= Math.Abs(actualTpPips - normalTp)
+                    ? scalpingTp
+                    : normalTp;
+
+            if (_cfg.Scalping.Enabled && !_cfg.NormalTrading.Enabled && IsFinitePositive(scalpingTp))
+                return scalpingTp;
+
+            return IsFinitePositive(normalTp) ? normalTp : scalpingTp;
+        }
 
         private async Task CheckH1TrendReversalAsync()
         {
@@ -1925,6 +1925,340 @@ namespace MT5TradingBot.Services
             return Fail(requestId, code, check.Message);
         }
 
+        private async Task<TradeResult?> RunExecutionGateAuditAsync(TradeRequest originalRequest, bool liveMode)
+        {
+            var request = ShallowClone(originalRequest);
+            var audit = new List<LayerResult>();
+            TradeResult? firstBlock = null;
+
+            void Add(string layer, bool passed, string detail, string code = "", string message = "")
+            {
+                audit.Add(new LayerResult(layer, passed, detail));
+                if (!passed && firstBlock == null)
+                {
+                    firstBlock = new TradeResult
+                    {
+                        RequestId = request.Id,
+                        Status = TradeStatus.Rejected,
+                        ErrorCode = string.IsNullOrWhiteSpace(code) ? layer : code,
+                        ErrorMessage = string.IsNullOrWhiteSpace(message) ? detail : message
+                    };
+                }
+            }
+
+            void AddBlock(string layer, TradeResult? block)
+            {
+                Add(layer, block == null, block?.ErrorMessage ?? "OK", block?.ErrorCode ?? "", block?.ErrorMessage ?? "");
+            }
+
+            AddBlock("ROLLOUT_STAGE", CheckRolloutStage(request.Id, liveMode));
+            AddBlock("NO_TRADE_WINDOW", CheckNoTradeWindow(request.Id, liveMode));
+            int sessionAuditCount = audit.Count;
+            var sessionBlock = CheckPairSessionWindow(request.Id, request, liveMode, audit);
+            if (sessionBlock != null && firstBlock == null)
+                firstBlock = sessionBlock;
+            if (audit.Count == sessionAuditCount)
+                Add("SESSION_GATE", true, liveMode ? "No pair session gate configured" : "Skipped in paper mode");
+
+            if (request.ExpiryMinutes > 0)
+            {
+                double ageMinutes = (_utcNow() - request.CreatedAt).TotalMinutes;
+                Add("SIGNAL_AGE", ageMinutes <= request.ExpiryMinutes,
+                    $"age={ageMinutes:F1} min; limit={request.ExpiryMinutes:F1} min",
+                    "SIGNAL_EXPIRED",
+                    $"Signal is {ageMinutes:F0} min old (limit {request.ExpiryMinutes} min). Discard.");
+            }
+            else
+            {
+                Add("SIGNAL_AGE", true, "No expiry configured");
+            }
+
+            bool pairAllowed = _cfg.AllowedPairs.Count == 0 || _cfg.AllowedPairs.Contains(request.Pair.ToUpperInvariant());
+            Add("PAIR_ALLOWLIST", pairAllowed,
+                _cfg.AllowedPairs.Count == 0
+                    ? "No pair allowlist configured"
+                    : $"pair={request.Pair}; allowed=[{string.Join(", ", _cfg.AllowedPairs)}]",
+                "REJECTED_CONFIG",
+                $"Pair {request.Pair} not in allowed list: [{string.Join(", ", _cfg.AllowedPairs)}]");
+
+            if (!string.IsNullOrEmpty(_cfg.SymbolSuffix) &&
+                !request.Pair.EndsWith(_cfg.SymbolSuffix, StringComparison.OrdinalIgnoreCase))
+            {
+                request.Pair = request.Pair.ToUpperInvariant() + _cfg.SymbolSuffix;
+            }
+
+            var effective = EffectiveTradeSettings.Resolve(_cfg, request.Strategy, request.LotSize, request.MaxSpreadPips);
+            int tradesToday = await GetTradesTodayAsync(request.Pair, effective.Strategy).ConfigureAwait(false);
+            Add("TRADE_PAGE_LIMIT", tradesToday < effective.MaxTrades,
+                $"{effective.Strategy} trades today {tradesToday}/{effective.MaxTrades}",
+                "DAILY_LIMIT",
+                $"{effective.Strategy} trade page limit {effective.MaxTrades} reached for {request.Pair}");
+
+            AccountInfo? account = null;
+            try { account = await _bridge.GetAccountInfoAsync().ConfigureAwait(false); }
+            catch (Exception ex) { Add("ACCOUNT_DATA", false, ex.Message, "NO_ACCOUNT", "Could not fetch account info from MT5"); }
+            if (account != null)
+                Add("ACCOUNT_DATA", HasUsableAccountData(account), "account data present", "NO_ACCOUNT", "Could not fetch account info from MT5");
+
+            SymbolInfo? symbolInfo = null;
+            try
+            {
+                symbolInfo = await _bridge.GetSymbolInfoAsync(request.Pair).ConfigureAwait(false);
+                Add("SYMBOL_DATA", !liveMode || HasUsableSymbolSafetyData(symbolInfo),
+                    symbolInfo == null ? "symbol data unavailable" : $"bid={symbolInfo.Bid:F5}; ask={symbolInfo.Ask:F5}; spread={symbolInfo.SpreadPips:F1}p",
+                    "NO_SYMBOL_DATA",
+                    $"Could not fetch valid symbol/spread data for {request.Pair} from MT5");
+            }
+            catch (Exception ex)
+            {
+                Add("SYMBOL_DATA", !liveMode, ex.Message, "NO_SYMBOL_DATA",
+                    $"Could not fetch valid symbol/spread data for {request.Pair} from MT5");
+            }
+
+            var pairRules = _pairSettings?.GetForPair(request.Pair);
+            if (symbolInfo != null)
+                AddBlock("SESSION_SPREAD", CheckSessionSpread(request.Id, request.Pair, symbolInfo, liveMode));
+            else
+                Add("SESSION_SPREAD", !liveMode, "Skipped: symbol data unavailable", "NO_SYMBOL_DATA",
+                    $"Could not fetch valid symbol/spread data for {request.Pair} from MT5");
+
+            double livePrice = symbolInfo != null
+                ? (request.TradeType == Models.TradeType.BUY ? symbolInfo.Ask : symbolInfo.Bid)
+                : 0;
+            if (symbolInfo != null)
+                ApplyTradePageSlTp(request, symbolInfo, livePrice, effective);
+
+            if (symbolInfo != null)
+            {
+                AddBlock("BROKER_STOP_LEVEL", CheckBrokerStopLevel(request.Id, request, symbolInfo, livePrice, liveMode));
+                AddBlock("BROKER_FREEZE_LEVEL", CheckBrokerFreezeLevel(request.Id, request, symbolInfo, livePrice, liveMode));
+            }
+            else
+            {
+                Add("BROKER_STOP_LEVEL", !liveMode, "Skipped: symbol data unavailable", "BROKER_STOP_LEVEL_DATA_UNAVAILABLE", "Broker stop-level metadata unavailable");
+                Add("BROKER_FREEZE_LEVEL", !liveMode, "Skipped: symbol data unavailable", "BROKER_FREEZE_LEVEL_DATA_UNAVAILABLE", "Broker freeze-level metadata unavailable");
+            }
+
+            List<LivePosition> openPositions = [];
+            bool positionsAvailable = true;
+            try
+            {
+                var positionsResult = await _bridge.TryGetPositionsAsync().ConfigureAwait(false);
+                positionsAvailable = positionsResult.Success;
+                openPositions = positionsResult.Success ? positionsResult.Positions : [];
+            }
+            catch
+            {
+                positionsAvailable = false;
+            }
+
+            if (_cfg.PaperTrading && _paperPositions.Count > 0)
+            {
+                lock (_paperPositions)
+                    openPositions = [.. openPositions, .. _paperPositions];
+            }
+
+            Add("POSITION_DATA", !liveMode || positionsAvailable,
+                positionsAvailable ? $"open positions={openPositions.Count}" : "open-position data unavailable",
+                IsSymbolExposureLimitEnabled(_cfg) ? "SYMBOL_EXPOSURE_DATA_UNAVAILABLE" : "RISK_DATA_UNAVAILABLE",
+                IsSymbolExposureLimitEnabled(_cfg)
+                    ? "Could not fetch open-position exposure data from MT5"
+                    : "Could not fetch open-position risk data from MT5");
+
+            if (account != null && positionsAvailable)
+            {
+                AddBlock("DAILY_LOSS", await CheckDailyLossHardStopAsync(request.Id, account, openPositions, liveMode).ConfigureAwait(false));
+                AddBlock("WEEKLY_LOSS", await CheckWeeklyLossHardStopAsync(request.Id, account, openPositions, liveMode).ConfigureAwait(false));
+                AddBlock("SYMBOL_EXPOSURE", CheckSymbolExposureLimit(request.Id, request, account, openPositions, livePrice, liveMode));
+            }
+            else
+            {
+                Add("DAILY_LOSS", !liveMode, "Skipped: account or position data unavailable", "DAILY_LOSS_DATA_UNAVAILABLE", "Daily loss safety data unavailable");
+                Add("WEEKLY_LOSS", !liveMode, "Skipped: account or position data unavailable", "WEEKLY_LOSS_DATA_UNAVAILABLE", "Weekly loss safety data unavailable");
+                Add("SYMBOL_EXPOSURE", !liveMode, "Skipped: account or position data unavailable", "SYMBOL_EXPOSURE_DATA_UNAVAILABLE", "Symbol exposure safety data unavailable");
+            }
+
+            if (_cfg.MaxConcurrentPositions > 0)
+            {
+                int botPositions = openPositions.Count(p => p.MagicNumber == _cfg.MagicNumber);
+                Add("MAX_CONCURRENT_POSITIONS", botPositions < _cfg.MaxConcurrentPositions,
+                    $"bot positions={botPositions}; max={_cfg.MaxConcurrentPositions}",
+                    "MAX_CONCURRENT_POSITIONS",
+                    $"Already have {botPositions} open position(s) (max {_cfg.MaxConcurrentPositions}). Close one first.");
+            }
+            else
+            {
+                Add("MAX_CONCURRENT_POSITIONS", true, "No max concurrent position limit configured");
+            }
+
+            RiskValidationResult? riskResult = null;
+            if (account != null && symbolInfo != null && positionsAvailable)
+            {
+                try
+                {
+                    riskResult = await _riskManager.ValidateAsync(request, account, symbolInfo, openPositions, _cfg, effective, _cts.Token)
+                        .ConfigureAwait(false);
+                    bool riskOk = riskResult != null && (!liveMode || HasCompleteRiskData(riskResult)) && riskResult.IsApproved;
+                    Add("RISK", riskOk,
+                        riskResult == null ? "risk validation returned no result" : $"RR={riskResult.RiskRewardRatio:F2}; risk={riskResult.RiskPercent:F1}%; reason={riskResult.Reason}",
+                        riskResult == null || (liveMode && !HasCompleteRiskData(riskResult)) ? "RISK_DATA_UNAVAILABLE" : "RISK_BLOCKED",
+                        riskResult?.Reason ?? "Risk validation returned no result");
+                }
+                catch (Exception ex)
+                {
+                    Add("RISK", false, ex.Message, "RISK_DATA_UNAVAILABLE", "Risk validation failed or safety data was unavailable");
+                }
+            }
+            else
+            {
+                Add("RISK", !liveMode, "Skipped: account, symbol, or position data unavailable", "RISK_DATA_UNAVAILABLE", "Risk validation safety data unavailable");
+            }
+
+            if (riskResult?.ValidatedLotSize >= 0.01)
+                request.LotSize = riskResult.ValidatedLotSize;
+
+            if (symbolInfo != null)
+                AddBlock("BROKER_LOT_SIZE", CheckBrokerLotSize(request.Id, request, symbolInfo, liveMode));
+            else
+                Add("BROKER_LOT_SIZE", !liveMode, "Skipped: symbol data unavailable", "BROKER_LOT_DATA_UNAVAILABLE", "Broker lot metadata unavailable");
+
+            AddBlock("COMMISSION_MODEL", CheckCommissionModel(request.Id, request, liveMode, out _));
+            AddBlock("SLIPPAGE_MODEL", CheckSlippageModel(request.Id, request, liveMode, out _));
+
+            if (account != null && positionsAvailable)
+                AddBlock("SYMBOL_EXPOSURE_FINAL", CheckSymbolExposureLimit(request.Id, request, account, openPositions, livePrice, liveMode));
+
+            if (account != null && symbolInfo != null)
+                AddBlock("PROJECTED_MARGIN", await CheckProjectedMarginHardStopAsync(request.Id, request, account, livePrice, liveMode).ConfigureAwait(false));
+            else
+                Add("PROJECTED_MARGIN", !liveMode, "Skipped: account or symbol data unavailable", "MARGIN_DATA_UNAVAILABLE", "Projected margin safety data unavailable");
+
+            if (_cfg.CorrelationCheckEnabled)
+            {
+                string? blocking = Core.CorrelationGroups.FindBlockingSymbol(
+                    request.Pair,
+                    openPositions.Where(p => p.MagicNumber == _cfg.MagicNumber).Select(p => p.Symbol),
+                    _cfg.SymbolSuffix);
+                Add("CORRELATION", blocking == null,
+                    blocking == null ? "No correlated bot position found" : $"Correlated position already open: {blocking}",
+                    "CORRELATION_BLOCK",
+                    blocking == null ? "" : $"Correlated position already open: {blocking}. Close it first or set correlation_check_enabled=false to override.");
+            }
+
+            bool newsProviderDisabled = string.Equals(_apiConfig.NewsProvider, "None", StringComparison.OrdinalIgnoreCase);
+            if (liveMode && !newsProviderDisabled && _newsCalendar == null)
+            {
+                Add("NEWS", false, "News calendar service unavailable", "NEWS_UNAVAILABLE", "News calendar service is unavailable in live mode");
+            }
+            else if (_newsCalendar != null)
+            {
+                try
+                {
+                    var news = await _newsCalendar.GetRiskSnapshotAsync(request.Pair, _apiConfig).ConfigureAwait(false);
+                    bool newsOk = newsProviderDisabled ||
+                        (news != null && news.IsConfigured &&
+                         (!_apiConfig.BlockTradesOnHighImpactNews || (!news.IsBlackoutActive && !news.HighImpactNext60Minutes)));
+                    Add("NEWS", newsOk, news?.Reason ?? "News risk data is unavailable",
+                        newsOk ? "" : "NEWS_BLACKOUT",
+                        news?.Reason ?? "News risk data is unavailable");
+                }
+                catch (Exception ex)
+                {
+                    Add("NEWS", !liveMode || newsProviderDisabled, ex.Message, "NEWS_UNAVAILABLE", "News risk data is unavailable in live mode");
+                }
+            }
+            else
+            {
+                Add("NEWS", true, "News provider disabled or unavailable in non-live mode");
+            }
+
+            if (symbolInfo != null)
+            {
+                try
+                {
+                    JObject? adxSnapshot = await _bridge.GetMarketSnapshotAsync(request, _cfg).ConfigureAwait(false);
+                    double snapshotAdx = adxSnapshot?["indicators"]?["m5"]?["adx"]?.Value<double>() ?? 0;
+                    bool adxOk = !(snapshotAdx > 0 && snapshotAdx < 20);
+                    Add("ADX_RANGING", adxOk, $"ADX={snapshotAdx:F1}", "ADX_RANGING", $"ADX {snapshotAdx:F1} - market is ranging. No trade.");
+                }
+                catch (Exception ex)
+                {
+                    Add("ADX_RANGING", true, $"Snapshot unavailable; gate skipped: {ex.Message}");
+                }
+            }
+
+            int passed = audit.Count(l => l.Passed);
+            string failed = string.Join(", ", audit.Where(l => !l.Passed).Select(l => l.Layer));
+            string details = string.Join(" | ", audit.Select(l => $"{l.Layer}:{(l.Passed ? "PASS" : "BLOCK")}({l.Reason})"));
+            Log($"TRADE_AUDIT_FULL | {request.Pair} {request.TradeType} | {passed}/{audit.Count} layers passed | Failed: [{failed}] | Details: {details}");
+
+            return firstBlock;
+        }
+
+        private TradeResult? CheckPairSessionWindow(
+            string requestId,
+            TradeRequest request,
+            bool liveMode,
+            List<LayerResult> layerLog)
+        {
+            if (!liveMode)
+                return null;
+
+            DateTime utcNow = _utcNow();
+            string utcText = utcNow.ToString("HH:mm", System.Globalization.CultureInfo.InvariantCulture);
+            var pairRules = _pairSettings?.GetForPair(request.Pair);
+
+            if (pairRules != null)
+            {
+                var avoidSessions = ResolveSessionWindows(pairRules.AvoidSessions);
+                var matchedAvoid = avoidSessions.FirstOrDefault(s => IsInSession(utcNow, s));
+                if (matchedAvoid != null)
+                {
+                    layerLog.Add(new LayerResult("SESSION_GATE", false, $"UTC={utcText}; avoid={matchedAvoid.Name}"));
+                    return Fail(requestId, "SESSION_CLOSED",
+                        $"UTC {utcText} is inside avoided session {matchedAvoid.Name} for {pairRules.Pair} " +
+                        $"({FormatSessionWindow(matchedAvoid)} UTC). No trade.");
+                }
+
+                var recommendedSessions = ResolveSessionWindows(pairRules.RecommendedSessions);
+                if (recommendedSessions.Count > 0)
+                {
+                    bool sessionOk = recommendedSessions.Any(s => IsInSession(utcNow, s));
+                    string windows = string.Join(", ", recommendedSessions.Select(FormatSessionWindow));
+                    layerLog.Add(new LayerResult("SESSION_GATE", sessionOk, $"UTC={utcText}; pair={pairRules.Pair}; recommended=[{windows}]"));
+                    if (!sessionOk)
+                    {
+                        return Fail(requestId, "SESSION_CLOSED",
+                            $"UTC {utcText} is outside recommended sessions for {pairRules.Pair} " +
+                            $"({windows} UTC). No trade.");
+                    }
+
+                    Log($"[SAFETY] Pair session OK for {pairRules.Pair}: UTC {utcText} inside recommended session(s) {windows} UTC.");
+                    return null;
+                }
+
+                if (avoidSessions.Count > 0)
+                {
+                    string avoidWindows = string.Join(", ", avoidSessions.Select(FormatSessionWindow));
+                    layerLog.Add(new LayerResult("SESSION_GATE", true, $"UTC={utcText}; pair={pairRules.Pair}; avoid=[{avoidWindows}]"));
+                    Log($"[SAFETY] Pair session OK for {pairRules.Pair}: UTC {utcText} outside avoided session(s) {avoidWindows} UTC.");
+                    return null;
+                }
+            }
+
+            int utcHour = utcNow.Hour;
+            bool fallbackOk = utcHour >= 7 && utcHour < 16;
+            layerLog.Add(new LayerResult("SESSION_GATE", fallbackOk, $"UTC={utcText}; fallback=London/NY"));
+            if (!fallbackOk)
+            {
+                return Fail(requestId, "SESSION_CLOSED",
+                    $"UTC {utcText} is outside the fallback London/NY session window " +
+                    $"(07:00-16:00 UTC). No pair session settings were configured for {request.Pair}.");
+            }
+
+            return null;
+        }
+
         private TradeResult? CheckRolloutStage(string requestId, bool liveMode)
         {
             if (!liveMode || !_cfg.EnableStagedRollout)
@@ -1970,6 +2304,52 @@ namespace MT5TradingBot.Services
                 ? "SPREAD_SESSION_CONFIG_INVALID"
                 : "SPREAD_SESSION_LIMIT";
             return Fail(requestId, code, check.Message);
+        }
+
+        private static List<SessionWindow> ResolveSessionWindows(IEnumerable<string> sessionNames)
+        {
+            var sessions = new List<SessionWindow>();
+            foreach (string raw in sessionNames.Where(s => !string.IsNullOrWhiteSpace(s)))
+            {
+                var session = ResolveSessionWindow(raw);
+                if (session != null)
+                    sessions.Add(session);
+            }
+
+            return sessions;
+        }
+
+        private static SessionWindow? ResolveSessionWindow(string name)
+        {
+            string normalized = name.Trim().Replace("-", "_", StringComparison.Ordinal).Replace(" ", "_", StringComparison.Ordinal);
+            return normalized.ToUpperInvariant() switch
+            {
+                "ASIAN" => new SessionWindow("Asian", 0, 7 * 60),
+                "ASIAN_LOW_LIQUIDITY" => new SessionWindow("Asian_Low_Liquidity", 0, 2 * 60),
+                "LONDON" => new SessionWindow("London", 7 * 60, 12 * 60),
+                "NEWYORK" or "NEW_YORK" => new SessionWindow("NewYork", 12 * 60, 21 * 60),
+                "LONDON_NEWYORK_OVERLAP" or "LONDON_NEW_YORK_OVERLAP" => new SessionWindow("London_NewYork_Overlap", 12 * 60, 16 * 60),
+                "ROLLOVER" => new SessionWindow("Rollover", 21 * 60 + 55, 22 * 60 + 10),
+                _ => null
+            };
+        }
+
+        private static bool IsInSession(DateTime utcNow, SessionWindow session)
+        {
+            int minuteOfDay = utcNow.Hour * 60 + utcNow.Minute;
+            if (session.StartMinute <= session.EndMinute)
+                return minuteOfDay >= session.StartMinute && minuteOfDay < session.EndMinute;
+
+            return minuteOfDay >= session.StartMinute || minuteOfDay < session.EndMinute;
+        }
+
+        private static string FormatSessionWindow(SessionWindow session) =>
+            $"{session.Name} {FormatMinuteOfDay(session.StartMinute)}-{FormatMinuteOfDay(session.EndMinute)}";
+
+        private static string FormatMinuteOfDay(int minuteOfDay)
+        {
+            int normalized = ((minuteOfDay % (24 * 60)) + 24 * 60) % (24 * 60);
+            return $"{normalized / 60:00}:{normalized % 60:00}";
         }
 
         private async Task<TradeResult?> CheckProjectedMarginHardStopAsync(
@@ -2524,34 +2904,71 @@ namespace MT5TradingBot.Services
         private static bool IsFinite(double value) =>
             !double.IsNaN(value) && !double.IsInfinity(value);
 
-        private void ApplyTradePageSlTp(TradeRequest request, SymbolInfo? symbolInfo, double livePrice)
+        private static void ApplyTradePageSlTp(TradeRequest request, SymbolInfo? symbolInfo, double livePrice, EffectiveTradeSettings effective)
         {
             if (symbolInfo == null || !IsFinitePositive(livePrice))
                 return;
-
-            bool scalpingStrategy = string.Equals(request.Strategy, "Scalping", StringComparison.OrdinalIgnoreCase)
-                || (!string.Equals(request.Strategy, "Normal", StringComparison.OrdinalIgnoreCase) && _cfg.Scalping.Enabled);
-            double slPips = scalpingStrategy
-                ? _cfg.Scalping.StopLossPips
-                : _cfg.NormalTrading.StopLossPips;
-            double tpPips = scalpingStrategy
-                ? _cfg.Scalping.TakeProfitPips
-                : _cfg.NormalTrading.TakeProfitPips;
-            if (!IsFinitePositive(slPips) || !IsFinitePositive(tpPips))
+            if (!IsFinitePositive(effective.SlPips) || !IsFinitePositive(effective.TpPips))
                 return;
 
             double pipSize = LotCalculator.GetPipSize(request.Pair.ToUpperInvariant());
             if (request.TradeType == Models.TradeType.BUY)
             {
-                request.StopLoss = livePrice - slPips * pipSize;
-                request.TakeProfit = livePrice + tpPips * pipSize;
+                request.StopLoss = livePrice - effective.SlPips * pipSize;
+                request.TakeProfit = livePrice + effective.TpPips * pipSize;
             }
             else
             {
-                request.StopLoss = livePrice + slPips * pipSize;
-                request.TakeProfit = livePrice - tpPips * pipSize;
+                request.StopLoss = livePrice + effective.SlPips * pipSize;
+                request.TakeProfit = livePrice - effective.TpPips * pipSize;
             }
-            request.Strategy = scalpingStrategy ? "Scalping" : "Normal";
+            request.Strategy = effective.Strategy;
+        }
+
+        private int GetTradesToday(string pair, string strategy) =>
+            _tradesTodayByPairStrategy.TryGetValue($"{pair.ToUpperInvariant()}|{strategy}", out int count) ? count : 0;
+
+        private async Task<int> GetTradesTodayAsync(string pair, string strategy)
+        {
+            if (_tradeDb == null)
+                return GetTradesToday(pair, strategy);
+
+            DateTime dayStartUtc = DateTime.UtcNow.Date;
+            DateTime dayEndUtc = dayStartUtc.AddDays(1);
+            try
+            {
+                var trades = await _tradeDb.GetByDateRangeAsync(dayStartUtc, dayEndUtc, _cts.Token)
+                    .ConfigureAwait(false);
+                return trades.Count(t =>
+                    IsSameTradePair(t.Pair, pair) &&
+                    string.Equals(ResolveTradeRecordStrategy(t), strategy, StringComparison.OrdinalIgnoreCase));
+            }
+            catch (Exception ex)
+            {
+                Log($"[WARN] Daily trade-limit history unavailable, using in-memory counter: {ex.Message}");
+                return GetTradesToday(pair, strategy);
+            }
+        }
+
+        private void RecordTradeOpenedToday(string pair, string strategy)
+        {
+            string key = $"{pair.ToUpperInvariant()}|{strategy}";
+            _tradesTodayByPairStrategy[key] = GetTradesToday(pair, strategy) + 1;
+        }
+
+        private static bool IsSameTradePair(string storedPair, string pair) =>
+            storedPair.StartsWith(pair, StringComparison.OrdinalIgnoreCase) ||
+            pair.StartsWith(storedPair, StringComparison.OrdinalIgnoreCase);
+
+        private static string ResolveTradeRecordStrategy(TradeRecord record)
+        {
+            if (!string.IsNullOrWhiteSpace(record.Strategy))
+                return record.Strategy;
+
+            return record.Comment.Contains("Scalp", StringComparison.OrdinalIgnoreCase)
+                || record.Comment.Contains("Scalping", StringComparison.OrdinalIgnoreCase)
+                    ? "Scalping"
+                    : "Normal";
         }
 
         private readonly record struct SymbolExposure(
@@ -2572,8 +2989,8 @@ namespace MT5TradingBot.Services
         {
             SignalId = request.Id,
             IsApproved = true,
-            ApprovedBy = _cfg.PaperTrading ? "PaperTrading" : "ExecutionGate",
-            ApprovalMode = _cfg.PaperTrading ? "PaperTrading" : _currentMode.ToString(),
+            ApprovedBy = _cfg.CommonTrading.TradingMode == TradingControlMode.PaperTrading ? "PaperTrading" : "ExecutionGate",
+            ApprovalMode = _cfg.CommonTrading.TradingMode.ToString(),
             Notes = "Approved by existing workflow before centralized execution gate."
         };
 
@@ -2668,6 +3085,11 @@ namespace MT5TradingBot.Services
             _tradeLock.Dispose();
             _fileLock.Dispose();
         }
+
+        private sealed record SessionWindow(
+            string Name,
+            int StartMinute,
+            int EndMinute);
 
         private record LayerResult(string Layer, bool Passed, string Reason);
     }

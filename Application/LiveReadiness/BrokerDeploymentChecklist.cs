@@ -261,7 +261,6 @@ namespace MT5TradingBot.Modules.LiveReadiness
             MagicNumber = request.MagicNumber,
             ExpiryMinutes = request.ExpiryMinutes,
             MoveSLToBreakevenAfterTP1 = request.MoveSLToBreakevenAfterTP1,
-            SlToBeTrigerPct = request.SlToBeTrigerPct,
             CreatedAt = request.CreatedAt
         };
 

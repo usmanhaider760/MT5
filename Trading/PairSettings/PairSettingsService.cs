@@ -131,7 +131,6 @@ namespace MT5TradingBot.Modules.PairSettings
                 throw new InvalidOperationException("max_atr_pips_m15 must be greater than or equal to min_atr_pips_m15.");
             if (settings.MinimumDistanceFromKeyLevelPips < 0)
                 throw new InvalidOperationException("minimum_distance_from_key_level_pips cannot be negative.");
-            if (settings.BreakEvenAfterProfitPips < 0) throw new InvalidOperationException("break_even_after_profit_pips cannot be negative.");
             if (settings.TrailingStartPips < 0) throw new InvalidOperationException("trailing_start_pips cannot be negative.");
             if (settings.TrailingStepPips < 0) throw new InvalidOperationException("trailing_step_pips cannot be negative.");
             if (settings.MaxSlippagePips < 0) throw new InvalidOperationException("max_slippage_pips cannot be negative.");
@@ -155,7 +154,6 @@ namespace MT5TradingBot.Modules.PairSettings
             MinAtrPipsM15 = settings.MinAtrPipsM15,
             MaxAtrPipsM15 = settings.MaxAtrPipsM15,
             MinimumDistanceFromKeyLevelPips = settings.MinimumDistanceFromKeyLevelPips,
-            BreakEvenAfterProfitPips = settings.BreakEvenAfterProfitPips,
             TrailingStartPips = settings.TrailingStartPips,
             TrailingStepPips = settings.TrailingStepPips,
             MaxSlippagePips = settings.MaxSlippagePips,

@@ -95,6 +95,13 @@ You have been given live market data collected directly from MetaTrader 5 connec
 LIVE MARKET DATA — {{collected_at_utc}} UTC
 ═══════════════════════════════════════
 
+DATA SOURCES:
+- MT5 Direct Fields: {{data_sources.mt5_direct}}
+- External Service Fields: {{data_sources.external_services}}
+- SQLite Trade History Fields: {{data_sources.sqlite_trade_history}}
+- Trade Page / App Computed Fields: {{data_sources.trade_page_effective_settings}} + {{data_sources.app_computed}}
+- Trade History Scope: {{account_daily_summary.pair}} | {{account_daily_summary.strategy}} | {{account_daily_summary.date_utc}}
+
 ACCOUNT:
 - Balance: ${{account.balance}}
 - Equity: ${{account.equity}}
@@ -104,8 +111,8 @@ ACCOUNT:
 - Leverage: 1:{{account.leverage}}
 - Currency: {{account.currency}}
 - Floating P&L: ${{account.floating_pnl}}
-- Daily P&L: ${{account.daily_pnl}}
-- Trades Taken Today: {{account.daily_trades_taken}}
+- Daily P&L: ${{account_daily_summary.daily_pnl}}
+- Trades Taken Today: {{account_daily_summary.daily_trades_taken}}
 - Consecutive Losses: {{account.consecutive_losses}}
 - Win Rate Today: {{account.win_rate_today_pct}}%
 - Daily Loss Limit Reached: {{account.daily_loss_limit_reached}}
@@ -259,32 +266,40 @@ OPEN POSITIONS:
 - Pending Orders: {{positions.pending_orders}}
 
 TRADE HISTORY:
-- Total Trades Today: {{history.total_trades_today}}
+- Total Trades Today: {{account_daily_summary.total_trades_today}}
 - Consecutive Losses: {{history.consecutive_losses}}
 - Win Rate Today: {{history.win_rate_today_pct}}%
-- Total PnL Today: ${{history.total_pnl_today}}
-- Last 5 Trades: {{history.last_5_trades}}
+- Total PnL Today: ${{account_daily_summary.total_pnl_today}}
+- Last 5 Trades: {{account_daily_summary.last_5_trades}}
 
 RISK PARAMETERS:
 - Max Risk: {{risk.max_risk_pct}}% = ${{risk.max_risk_dollar}}
-- R:R Ratio: {{risk.rr_ratio}}
-- Calculated Lot: {{risk.calculated_lot}}
-- Dollar Risk: ${{risk.dollar_risk}}
-- Dollar Profit TP1: ${{risk.dollar_profit_tp1}}
-- Dollar Profit TP2: ${{risk.dollar_profit_tp2}}
+- R:R Ratio: {{risk_summary.actual_risk_reward_ratio}}
+- Required R:R Ratio: {{risk_summary.required_risk_reward_ratio}}
+- Calculated Lot: {{risk_summary.lot_size}}
+- Suggested SL: {{risk_summary.suggested_sl}}
+- Suggested TP1: {{risk_summary.suggested_tp1}}
+- SL Distance: {{risk_summary.sl_distance_pips}} pips
+- TP1 Distance: {{risk_summary.tp1_distance_pips}} pips
+- Dollar Risk: ${{risk_summary.dollar_risk}}
+- Dollar Profit TP1: ${{risk_summary.dollar_profit_tp1}}
+- Dollar Profit TP2: ${{risk_summary.dollar_profit_tp2}}
 - ATR Based SL: {{risk.atr_based_sl}}
 - Margin Required: ${{risk.margin_required}}
-- Daily Loss Limit: ${{risk.daily_loss_limit_dollar}}
-- Daily Loss Remaining: ${{risk.daily_loss_remaining}}
+- Daily Loss Limit: ${{account_daily_summary.daily_loss_limit_dollar}}
+- Daily Loss Remaining: ${{account_daily_summary.daily_loss_remaining}}
 
 EFFECTIVE TRADE SETTINGS:
+- Trading Mode: {{effective_trade_settings.trading_mode}}
 - Strategy: {{effective_trade_settings.strategy}}
 - Stop Loss Pips: {{effective_trade_settings.stop_loss_pips}}
 - Take Profit Pips: {{effective_trade_settings.take_profit_pips}}
 - Required Risk Reward Ratio: {{effective_trade_settings.required_risk_reward_ratio}}
 - Actual Risk Reward Ratio: {{effective_trade_settings.actual_risk_reward_ratio}}
-- Max Spread Pips: {{effective_trade_settings.max_spread_pips}}
-- Current Spread Pips: {{effective_trade_settings.current_spread_pips}}
+- Max Trades Today: {{effective_trade_settings.max_trades}}
+- Trades Taken Today: {{effective_trade_settings.trades_taken_today}}
+- Max Spread Pips: {{spread_summary.max_spread_pips}}
+- Current Spread Pips: {{spread_summary.current_spread_pips}}
 
 NEWS:
 - Risk Level: {{news.risk_level}}
@@ -301,7 +316,7 @@ NEWS:
 - Active Blackout Events JSON: {{news.blackout_events}}
 
 PRE-TRADE SAFETY CHECKS:
-- Signal Required Fields Valid: {{execution_barriers.signal_valid}} | {{execution_barriers.signal_valid_detail}}
+- Final Order Fields Valid: {{execution_barriers.signal_valid}} | {{execution_barriers.signal_valid_detail}}
 - Signal Not Expired: {{execution_barriers.signal_fresh}} | {{execution_barriers.signal_fresh_detail}}
 - Pair Allowed: {{execution_barriers.pair_allowed}} | {{execution_barriers.pair_allowed_detail}}
 - Daily Trade Limit OK: {{execution_barriers.daily_limit_ok}} | {{execution_barriers.daily_limit_detail}}

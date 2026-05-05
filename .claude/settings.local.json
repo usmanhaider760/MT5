@@ -14,7 +14,8 @@
       "Bash(dotnet clean *)",
       "Bash(powershell -Command \"Select-String -Path 'Data\\\\Config\\\\settings.json' -Pattern '^\\\\s+\\\\]' | Select-Object -First 3\")",
       "Bash(powershell -Command ' *)",
-      "Bash(n '\\\\`\"USD\\\\`\",`n' '\\\\`\"GBP\\\\`\",`n' '\\\\`\"EUR\\\\`\",`n' '\\\\`\"JPY\\\\`\",`n' '\\\\`\"CHF\\\\`\"`n' '] *)"
+      "Bash(n '\\\\`\"USD\\\\`\",`n' '\\\\`\"GBP\\\\`\",`n' '\\\\`\"EUR\\\\`\",`n' '\\\\`\"JPY\\\\`\",`n' '\\\\`\"CHF\\\\`\"`n' '] *)",
+      "Bash(powershell -Command \"\\(Get-Content 'Tests\\\\ForexBot.Tests\\\\Program.cs'\\) -replace 'config\\\\.PaperTrading = true;', 'config.CommonTrading.TradingMode = TradingControlMode.PaperTrading;' | Set-Content 'Tests\\\\ForexBot.Tests\\\\Program.cs' -Encoding utf8\")"
     ]
   }
 }

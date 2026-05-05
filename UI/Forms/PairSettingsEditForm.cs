@@ -69,13 +69,6 @@ namespace MT5TradingBot.UI
                 "For XAUUSD, leave enough room for TP before the next obvious barrier.",
                 "If this is too small, trades may hit a wall quickly and reverse."),
 
-            ["break_even_after_profit_pips"] = new(
-                "Profit distance after which the bot may move stop loss to entry price.",
-                "Reduces risk after the trade moves in your favor.",
-                "Comes from pair settings and is used by trade management logic when enabled.",
-                "Set it far enough that normal pullback does not close the trade too early.",
-                "Too early can turn good trades into zero-profit exits. Too late leaves risk open longer."),
-
             ["trailing_start_pips"] = new(
                 "Profit distance where trailing stop can begin.",
                 "Locks in profit while allowing the trade to continue.",
@@ -160,7 +153,6 @@ namespace MT5TradingBot.UI
             AddNumberRow(content, row++, "Minimum M15 ATR (pips)", "min_atr_pips_m15", 0M, 10000M, 2);
             AddNumberRow(content, row++, "Maximum M15 ATR (pips)", "max_atr_pips_m15", 0M, 10000M, 2);
             AddNumberRow(content, row++, "Minimum distance from key level (pips)", "minimum_distance_from_key_level_pips", 0M, 10000M, 2);
-            AddNumberRow(content, row++, "Move SL to break-even after profit (pips)", "break_even_after_profit_pips", 0M, 10000M, 2);
             AddNumberRow(content, row++, "Start trailing after profit (pips)", "trailing_start_pips", 0M, 10000M, 2);
             AddNumberRow(content, row++, "Trailing step (pips)", "trailing_step_pips", 0M, 10000M, 2);
             AddNumberRow(content, row++, "Maximum slippage (pips)", "max_slippage_pips", 0M, 10000M, 2);
@@ -322,7 +314,6 @@ namespace MT5TradingBot.UI
             Set("min_atr_pips_m15", settings.MinAtrPipsM15);
             Set("max_atr_pips_m15", settings.MaxAtrPipsM15);
             Set("minimum_distance_from_key_level_pips", settings.MinimumDistanceFromKeyLevelPips);
-            Set("break_even_after_profit_pips", settings.BreakEvenAfterProfitPips);
             Set("trailing_start_pips", settings.TrailingStartPips);
             Set("trailing_step_pips", settings.TrailingStepPips);
             Set("max_slippage_pips", settings.MaxSlippagePips);
@@ -367,7 +358,6 @@ namespace MT5TradingBot.UI
             MinAtrPipsM15 = Get("min_atr_pips_m15"),
             MaxAtrPipsM15 = Get("max_atr_pips_m15"),
             MinimumDistanceFromKeyLevelPips = Get("minimum_distance_from_key_level_pips"),
-            BreakEvenAfterProfitPips = Get("break_even_after_profit_pips"),
             TrailingStartPips = Get("trailing_start_pips"),
             TrailingStepPips = Get("trailing_step_pips"),
             MaxSlippagePips = Get("max_slippage_pips"),
@@ -461,7 +451,6 @@ namespace MT5TradingBot.UI
             MinAtrPipsM15 = settings.MinAtrPipsM15,
             MaxAtrPipsM15 = settings.MaxAtrPipsM15,
             MinimumDistanceFromKeyLevelPips = settings.MinimumDistanceFromKeyLevelPips,
-            BreakEvenAfterProfitPips = settings.BreakEvenAfterProfitPips,
             TrailingStartPips = settings.TrailingStartPips,
             TrailingStepPips = settings.TrailingStepPips,
             MaxSlippagePips = settings.MaxSlippagePips,

@@ -8,6 +8,7 @@ namespace MT5TradingBot.Data
         public DateTime CreatedAt      { get; init; }
         public DateTime ExecutedAt     { get; init; }
         public string   Pair           { get; init; } = "";
+        public string   Strategy       { get; init; } = "";
         public string   Direction      { get; init; } = "";   // "BUY" / "SELL"
         public string   OrderType      { get; init; } = "";
         public double   LotSize        { get; init; }

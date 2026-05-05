@@ -11,6 +11,5 @@
   "comment": "AutoBot_GBP",
   "magic_number": 999001,
   "expiry_minutes": 60,
-  "move_sl_to_be_after_tp1": true,
-  "sl_to_be_trigger_pct": 0.6
+  "move_sl_to_be_after_tp1": true
 }

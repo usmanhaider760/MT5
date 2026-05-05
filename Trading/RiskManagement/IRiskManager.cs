@@ -10,6 +10,7 @@ namespace MT5TradingBot.Modules.RiskManagement
             SymbolInfo? symbolInfo,
             IReadOnlyList<LivePosition> openPositions,
             BotConfig config,
+            EffectiveTradeSettings effective,
             CancellationToken cancellationToken = default);
     }
 }

@@ -348,7 +348,6 @@ namespace MT5TradingBot.UI
             _btnOpenFolder.Size = new Size(118, 30);
             _btnOpenFolder.Text = "Select Folder";
             PlaceField(_lblRiskLabel, _nudRisk, 134, 110, 176);
-            PlaceField(_lblMaxTradesLabel, _nudMaxTrades, 172, 110, 176);
             PlaceField(_lblPollMsLabel, _nudPollMs, 210, 130, 176);
             PlaceField(_lblRetryLabel, _nudRetry, 248, 110, 176);
 

@@ -20,6 +20,7 @@ namespace MT5TradingBot.Modules.RiskManagement
             SymbolInfo? symbolInfo,
             IReadOnlyList<LivePosition> openPositions,
             BotConfig config,
+            EffectiveTradeSettings effective,
             CancellationToken cancellationToken = default)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -100,17 +101,11 @@ namespace MT5TradingBot.Modules.RiskManagement
                 request.StopLoss,
                 request.TakeProfit);
             var pairRules = _pairSettings?.GetForPair(request.Pair);
-            bool scalpingStrategy = string.Equals(request.Strategy, "Scalping", StringComparison.OrdinalIgnoreCase)
-                || (!string.Equals(request.Strategy, "Normal", StringComparison.OrdinalIgnoreCase) && config.Scalping.Enabled);
-            double requiredRr = Math.Max(
-                0.1,
-                scalpingStrategy
-                    ? config.Scalping.RiskRewardRatio
-                    : config.NormalTrading.RiskRewardRatio);
+            double requiredRr = effective.RiskRewardRatio;
 
             if (riskReward < requiredRr)
                 return Task.FromResult(Blocked(
-                    $"R:R {riskReward:F2} is below {requiredRr:F2} required by {(scalpingStrategy ? "Scalping" : "Normal")} trade page settings.",
+                    $"R:R {riskReward:F2} is below {requiredRr:F2} required by {effective.Strategy} trade page settings.",
                     warnings,
                     referenceEntry,
                     lotSize,
@@ -153,11 +148,7 @@ namespace MT5TradingBot.Modules.RiskManagement
             }
 
             double spreadPips = symbolInfo?.SpreadPips ?? 0;
-            double maxSpreadPips = request.MaxSpreadPips > 0
-                ? request.MaxSpreadPips
-                : scalpingStrategy
-                    ? config.Scalping.MaxSpreadPips
-                    : config.NormalTrading.MaxSpreadPips;
+            double maxSpreadPips = effective.MaxSpreadPips;
             if (maxSpreadPips > 0)
             {
                 if (symbolInfo == null)

@@ -50,6 +50,7 @@ namespace MT5TradingBot.UI
         private readonly Button _btnStopScalping = new();
         private const int MaxScreenLogLines = 500;
         private const int MaxScreenLogChars = 180;
+        private const double ScalpingMaxSpreadPercentOfTp = 20.0;
         private readonly List<string> _screenLogFullMessages = [];
 
         // -- Pair analysis feed ------------------------------------
@@ -187,7 +188,6 @@ namespace MT5TradingBot.UI
                 _ = RefreshBotTradeStatusAsync(r);
             };
             bot.OnBotStatusChanged += on => UpdateBotBadge(on);
-            bot.OnModeChanged += mode => UIThread(() => UpdateModeLabel(mode));
             bot.OnEdgeStatusChanged += status => UIThread(() =>
             {
                 if (_bot?.IsRunning != true) return;
@@ -556,7 +556,7 @@ namespace MT5TradingBot.UI
                     Log($"[BOT] [OK] {pendingFiles.Length} pending signal file(s) in folder.", C_ACCENT);
 
                 // â"€â"€ 6. Config summary â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
-                Log($"[BOT] Settings -> Risk: {_cfg.Bot.MaxRiskPercent:F1}% | Max trades/day: {_cfg.Bot.MaxTradesPerDay}", C_ACCENT);
+                Log($"[BOT] Settings -> Risk: {_cfg.Bot.MaxRiskPercent:F1}% | Scalping max trades: {_cfg.Bot.Scalping.MaxTrades} | Normal max trades: {_cfg.Bot.NormalTrading.MaxTrades}", C_ACCENT);
                 int pairCount = _cfg.Bot.AllowedPairs.Count;
                 string pairSummary = pairCount == 0 ? "All pairs"
                     : pairCount <= 5 ? string.Join(", ", _cfg.Bot.AllowedPairs)
@@ -611,6 +611,7 @@ namespace MT5TradingBot.UI
             {
                 await _scalping.StopAsync();
                 _scalping = null;
+                _scalpingTradeManager.Stop();
                 UIThread(() => _btnStopScalping.Enabled = false);
             }
             if (_bot == null) return;
@@ -624,6 +625,8 @@ namespace MT5TradingBot.UI
         {
             if (_scalping?.IsRunning != true)
             {
+                _scalping = null;
+                _scalpingTradeManager.Stop();
                 Log("[SCALP] No scalping session is running.", C_YELLOW);
                 UIThread(() => _btnStopScalping.Enabled = false);
                 return;
@@ -631,6 +634,7 @@ namespace MT5TradingBot.UI
 
             await _scalping.StopAsync().ConfigureAwait(false);
             _scalping = null;
+            _scalpingTradeManager.Stop();
             UIThread(() =>
             {
                 _btnStopScalping.Enabled = false;
@@ -1683,32 +1687,24 @@ SAFETY RULES:
         {
             UIThread(() =>
             {
-                string paper = running && _bot?.IsPaperTrading == true ? " [PAPER]" : "";
+                string modeSuffix = running ? _bot?.TradingMode switch
+                {
+                    TradingControlMode.Auto          => " [AUTO]",
+                    TradingControlMode.ManualApproval => " [MANUAL]",
+                    TradingControlMode.PaperTrading  => " [PAPER]",
+                    _                                => ""
+                } ?? "" : "";
                 _lblBotBadge.Text =
-                    running && _bot?.IsEdgePaused == true ? "BOT PAUSED (EDGE)" + paper :
-                    running                               ? "BOT MONITORING" + paper     :
+                    running && _bot?.IsEdgePaused == true ? "BOT PAUSED (EDGE)" + modeSuffix :
+                    running                               ? "BOT MONITORING" + modeSuffix     :
                                                             "BOT STOPPED";
                 _lblBotBadge.ForeColor =
-                    running && _bot?.IsEdgePaused == true ? Color.Orange :
-                    running && _bot?.IsPaperTrading == true ? Color.Gold  :
-                    running                               ? C_ACCENT      :
-                                                            C_RED;
-                _btnStopBot.Enabled    = running;
+                    running && _bot?.IsEdgePaused == true       ? Color.Orange :
+                    running && _bot?.IsPaperTrading == true      ? Color.Gold   :
+                    running                                      ? C_ACCENT     :
+                                                                   C_RED;
+                _btnStopBot.Enabled = running;
             });
-        }
-
-        private void UpdateModeLabel(BotMode mode)
-        {
-            if (_bot?.IsRunning != true) return;
-            string suffix = mode switch
-            {
-                BotMode.Monitor        => " [MONITOR]",
-                BotMode.ManualApproval => " [MANUAL]",
-                BotMode.FullAuto       => " [AUTO]",
-                _                      => ""
-            };
-            string baseText = _lblBotBadge.Text.Split('[')[0].TrimEnd();
-            _lblBotBadge.Text = baseText + suffix;
         }
 
         private void SetBotBadge(string text, Color color)
@@ -1834,13 +1830,22 @@ SAFETY RULES:
 
             string currentBot = _cmbAllowedPair.SelectedItem?.ToString() ?? _cfg.Bot.AllowedPairs.FirstOrDefault() ?? "";
 
-            _cmbAllowedPair.Items.Clear();
-            foreach (string pair in pairs)
+            bool previousSuppressPairSelectionEvent = _suppressPairSelectionEvent;
+            _suppressPairSelectionEvent = true;
+            try
             {
-                _cmbAllowedPair.Items.Add(pair);
-            }
+                _cmbAllowedPair.Items.Clear();
+                foreach (string pair in pairs)
+                {
+                    _cmbAllowedPair.Items.Add(pair);
+                }
 
-            SelectComboPair(_cmbAllowedPair, currentBot);
+                SelectComboPair(_cmbAllowedPair, currentBot);
+            }
+            finally
+            {
+                _suppressPairSelectionEvent = previousSuppressPairSelectionEvent;
+            }
 
             _cfg.Bot.AllowedPairs = SelectedAllowedPairList();
             _cfg.Claude.WatchSymbols = pairs;
@@ -1882,7 +1887,6 @@ SAFETY RULES:
             _gridPairSettings.Columns.Add("AtrM5", "ATR M5");
             _gridPairSettings.Columns.Add("AtrM15", "ATR M15");
             _gridPairSettings.Columns.Add("KeyLevelDistance", "Key level dist");
-            _gridPairSettings.Columns.Add("BreakEven", "BE pips");
             _gridPairSettings.Columns.Add("Trailing", "Trailing");
             _gridPairSettings.Columns.Add("MaxSlippage", "Slippage");
             _gridPairSettings.Columns.Add("RecommendedSessions", "Recommended sessions");
@@ -1951,7 +1955,6 @@ SAFETY RULES:
                     $"{settings.MinAtrPipsM5:0.##}-{settings.MaxAtrPipsM5:0.##}",
                     $"{settings.MinAtrPipsM15:0.##}-{settings.MaxAtrPipsM15:0.##}",
                     settings.MinimumDistanceFromKeyLevelPips.ToString("0.##", CultureInfo.InvariantCulture),
-                    settings.BreakEvenAfterProfitPips.ToString("0.##", CultureInfo.InvariantCulture),
                     $"{settings.TrailingStartPips:0.##}/{settings.TrailingStepPips:0.##}",
                     settings.MaxSlippagePips.ToString("0.##", CultureInfo.InvariantCulture),
                     string.Join(",", settings.RecommendedSessions),
@@ -1963,6 +1966,12 @@ SAFETY RULES:
         private PairTradingSettings? SelectedPairSettings() =>
             _gridPairSettings.CurrentRow?.Tag as PairTradingSettings;
 
+        private void RebindPairSettingsAfterSave()
+        {
+            _cfg = _settings.Current;
+            _pairSettings = new PairSettingsService(_settings, _cfg);
+        }
+
         private void BtnPairAdd_Click(object? sender, EventArgs e)
         {
             using var form = new PairSettingsEditForm();
@@ -1972,7 +1981,9 @@ SAFETY RULES:
             try
             {
                 _pairSettings.Upsert(form.Settings);
+                RebindPairSettingsAfterSave();
                 SyncPairDropdownsFromPairSettings();
+                _settings.SaveAsync(_cfg).GetAwaiter().GetResult();
                 RefreshPairSettingsGrid();
                 Log($"[PAIR] Saved settings for {form.Settings.Pair}.", C_GREEN);
             }
@@ -2005,7 +2016,9 @@ SAFETY RULES:
                 if (!string.Equals(selected.Pair, form.Settings.Pair, StringComparison.OrdinalIgnoreCase))
                     _pairSettings.Delete(selected.Pair);
                 _pairSettings.Upsert(form.Settings);
+                RebindPairSettingsAfterSave();
                 SyncPairDropdownsFromPairSettings();
+                _settings.SaveAsync(_cfg).GetAwaiter().GetResult();
                 RefreshPairSettingsGrid();
                 Log($"[PAIR] Updated settings for {form.Settings.Pair}.", C_GREEN);
             }
@@ -2032,8 +2045,10 @@ SAFETY RULES:
 
             if (_pairSettings.Delete(selected.Pair))
             {
+                RebindPairSettingsAfterSave();
                 RefreshPairSettingsGrid();
                 SyncPairDropdownsFromPairSettings();
+                _settings.SaveAsync(_cfg).GetAwaiter().GetResult();
                 Log($"[PAIR] Deleted settings for {selected.Pair}.", C_YELLOW);
             }
         }
@@ -2050,7 +2065,9 @@ SAFETY RULES:
             try
             {
                 int count = _pairSettings.ImportJson(form.JsonText);
+                RebindPairSettingsAfterSave();
                 SyncPairDropdownsFromPairSettings();
+                _settings.SaveAsync(_cfg).GetAwaiter().GetResult();
                 RefreshPairSettingsGrid();
                 Log($"[PAIR] Imported {count} pair setting(s) from JSON.", C_GREEN);
             }
@@ -2070,7 +2087,6 @@ SAFETY RULES:
               "min_atr_pips_m15": 6,
               "max_atr_pips_m15": 60,
               "minimum_distance_from_key_level_pips": 5,
-              "break_even_after_profit_pips": 10,
               "trailing_start_pips": 15,
               "trailing_step_pips": 5,
               "max_slippage_pips": 3,
@@ -2158,7 +2174,6 @@ SAFETY RULES:
             AllowedPairs = SelectedAllowedPairList(),
             // Settings managed by ReviewTradeForm (persisted in _cfg.Bot)
             MaxRiskPercent            = _cfg.Bot.MaxRiskPercent,
-            MaxTradesPerDay           = _cfg.Bot.MaxTradesPerDay,
             PollIntervalMs            = _cfg.Bot.PollIntervalMs,
             DrawdownProtectionEnabled = _cfg.Bot.DrawdownProtectionEnabled,
             EmergencyCloseDrawdownPct = _cfg.Bot.EmergencyCloseDrawdownPct,
@@ -2458,7 +2473,11 @@ SAFETY RULES:
                 await _marketDataSync.DisposeAsync();
             _settings.StopWatching();
             if (_scalping != null)
+            {
                 await _scalping.StopAsync();
+                _scalping = null;
+                _scalpingTradeManager.Stop();
+            }
             await StopClaudeAsync();
             await StopBotAsync();
             await _settings.SaveAsync(_cfg);
@@ -2470,11 +2489,16 @@ SAFETY RULES:
         private void OnSettingsHotReloaded(AppSettings s)
         {
             _cfg = s;
+            _pairSettings = new PairSettingsService(_settings, _cfg);
             _bot?.UpdateConfig(s.Bot);
-            _bot?.SetMode(s.Bot.OperatingMode);
             _claude?.UpdateConfig(s.Claude);
             _ = RestartMarketDataAutoSyncAsync();
-            UIThread(() => Log("[CFG] Settings hot-reloaded from disk."));
+            UIThread(() =>
+            {
+                SyncPairDropdownsFromPairSettings();
+                RefreshPairSettingsGrid();
+                Log("[CFG] Settings hot-reloaded from disk.");
+            });
         }
 
         [System.Runtime.InteropServices.DllImport("Gdi32.dll")]
@@ -2519,7 +2543,7 @@ SAFETY RULES:
               - Logs to trade_history.csv
 
             Every 2 seconds the bot also:
-              - Checks SL -> breakeven (at 60% TP)
+              - Checks SL -> breakeven (Trade Page BE trigger)
               - Monitors drawdown -> emergency close
               - Polls folder (watcher backup)
 
@@ -2615,8 +2639,6 @@ SAFETY RULES:
             {
                 _ = _settings.SaveAsync(_cfg);
                 Log("[BOT] Trade settings saved.", C_ACCENT);
-                if (_bot?.IsRunning == true)
-                    _bot.SetMode(_cfg.Bot.OperatingMode);
             }
         }
 
@@ -3986,7 +4008,7 @@ SAFETY RULES:
             var cmbTradingMode = new ComboBox
             {
                 DropDownStyle = ComboBoxStyle.DropDownList,
-                Width = 92,
+                Width = 130,
                 Height = 28,
                 BackColor = Color.FromArgb(18, 20, 32),
                 ForeColor = Color.FromArgb(218, 218, 230),
@@ -3994,8 +4016,14 @@ SAFETY RULES:
                 Font = new Font("Segoe UI", 8.5F),
                 Margin = new Padding(6, 4, 0, 0)
             };
-            cmbTradingMode.Items.AddRange(new object[] { "Auto", "Manual" });
-            cmbTradingMode.SelectedIndex = _cfg.Bot.CommonTrading.TradingMode == TradingControlMode.Auto ? 0 : 1;
+            cmbTradingMode.Items.AddRange(new object[] { "Auto", "Manual Approval", "Paper Trading" });
+            cmbTradingMode.SelectedIndex = _cfg.Bot.CommonTrading.TradingMode switch
+            {
+                TradingControlMode.Auto          => 0,
+                TradingControlMode.ManualApproval => 1,
+                TradingControlMode.PaperTrading  => 2,
+                _                                => 1
+            };
             var chkCommonAi = new CheckBox
             {
                 Text = "AI confirm",
@@ -4020,8 +4048,10 @@ SAFETY RULES:
             chkAutoClose.Checked = _cfg.Bot.CommonTrading.AutoCloseAfterOpen;
             var nudPips = MakeReviewNumber(0, 10000, 0.5M, 1, 82);
             var nudMoney = MakeReviewNumber(0, 100000, 0.10M, 2, 92);
+            var nudBeTrigger = MakeReviewNumber(0.10M, 1.00M, 0.05M, 2, 64);
             nudPips.Value = Math.Min(nudPips.Maximum, Math.Max(nudPips.Minimum, (decimal)_cfg.Bot.CommonTrading.ProfitTargetPips));
             nudMoney.Value = Math.Min(nudMoney.Maximum, Math.Max(nudMoney.Minimum, (decimal)_cfg.Bot.CommonTrading.ProfitTargetUsd));
+            nudBeTrigger.Value = Math.Min(nudBeTrigger.Maximum, Math.Max(nudBeTrigger.Minimum, (decimal)_cfg.Bot.CommonTrading.BeTriggerPercentOfTp));
             var btnCommonReset = new Button
             {
                 Text = "Reset",
@@ -4037,6 +4067,7 @@ SAFETY RULES:
             btnCommonReset.FlatAppearance.BorderSize = 0;
             _cardTooltip.SetToolTip(nudPips, "Global profit target in pips.");
             _cardTooltip.SetToolTip(nudMoney, "0 = disabled. If auto-close is enabled and both targets are 0, close on any profit.");
+            _cardTooltip.SetToolTip(nudBeTrigger, "Move SL to break-even after this fraction of the selected Trade Page TP pips.");
             _cardTooltip.SetToolTip(btnCommonReset, "Reset shared trade controls and refresh strategy defaults.");
             autoPanel.Controls.Add(MakeInlineLabel("Trading Mode"));
             autoPanel.Controls.Add(cmbTradingMode);
@@ -4046,6 +4077,8 @@ SAFETY RULES:
             autoPanel.Controls.Add(nudPips);
             autoPanel.Controls.Add(MakeInlineLabel("Money target"));
             autoPanel.Controls.Add(nudMoney);
+            autoPanel.Controls.Add(MakeInlineLabel("BE Trigger % of TP"));
+            autoPanel.Controls.Add(nudBeTrigger);
             autoPanel.Controls.Add(MakeInlineLabel("0 = disabled"));
             autoPanel.Controls.Add(btnCommonReset);
 
@@ -4122,6 +4155,19 @@ SAFETY RULES:
                 TextAlign = ContentAlignment.MiddleLeft,
                 Margin = new Padding(6, 4, 0, 0)
             };
+
+            void RefreshScalpingReviewRunState()
+            {
+                bool running = _scalping?.IsRunning == true;
+                btnStartScalping.Text = running ? "Stop Scalping" : "Start Scalping";
+                lblScalpingStatus.Text = $"Scalping Status: {(running ? "Running" : "Stopped")}";
+                lblScalpingStatus.ForeColor = running ? Color.Gold : Color.FromArgb(145, 150, 165);
+                _btnStopScalping.Enabled = running;
+                if (running)
+                    chkAutoScalp.Checked = true;
+            }
+
+            RefreshScalpingReviewRunState();
             decimal Clamp(NumericUpDown nud, decimal value) =>
                 Math.Min(nud.Maximum, Math.Max(nud.Minimum, value));
 
@@ -4468,7 +4514,22 @@ SAFETY RULES:
             }
 
             string BuildCurrentAiInputPrompt() =>
-                BuildFilledAiInputPrompt(latestSnapshotJson, GetSelectedReviewLotSize(), GetSelectedReviewLeverage());
+                BuildFilledAiInputPrompt(BuildCurrentValuesJson());
+
+            string BuildCurrentValuesJson()
+            {
+                UpdateReviewExecutionBarrierSnapshot(
+                    currentSnapshot,
+                    activeRequest,
+                    GetSelectedReviewLotSize(),
+                    latestPositions,
+                    chkAutoScalp.Checked);
+                if (currentSnapshot["account"] is JObject accountJson)
+                    accountJson["leverage"] = GetSelectedReviewLeverage();
+                latestSnapshotJson = currentSnapshot.ToString(Formatting.Indented);
+                form.Tag = latestSnapshotJson;
+                return latestSnapshotJson;
+            }
 
             UpdateReviewExecutionBarrierSnapshot(currentSnapshot, request, GetSelectedReviewLotSize(), latestPositions, chkAutoScalp.Checked);
             latestSnapshotJson = currentSnapshot.ToString(Formatting.Indented);
@@ -4718,7 +4779,7 @@ SAFETY RULES:
 
             // -- Button: View JSON (live snapshot)
             btnViewJson.Click += (_, _) =>
-                OpenJsonViewer("Market Snapshot JSON", () => latestSnapshotJson, liveRefresh: true);
+                OpenJsonViewer("Market Snapshot JSON", BuildCurrentValuesJson, liveRefresh: true);
 
             // -- Button: Input Prompt (what is sent to AI)
             btnFilledValues.Click += (_, _) =>
@@ -4737,19 +4798,19 @@ SAFETY RULES:
             }
 
             // â"€â"€ Button: Play / Start Trade â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
-            btnStartScalping.Click += (_, _) =>
+            btnStartScalping.Click += async (_, _) =>
             {
                 if (_scalping?.IsRunning == true)
                 {
-                    _ = Task.Run(async () =>
-                    {
-                        await _scalping.StopAsync().ConfigureAwait(false);
-                        _scalpingTradeManager.Stop();
-                    });
+                    btnStartScalping.Enabled = false;
                     lblScalpingStatus.Text = "Scalping Status: Stopping";
+                    await StopScalpingAsync().ConfigureAwait(true);
+                    RefreshScalpingReviewRunState();
+                    btnStartScalping.Enabled = true;
                     return;
                 }
 
+                RefreshScalpingReviewRunState();
                 chkAutoScalp.Checked = true;
                 btnPlay.PerformClick();
             };
@@ -4805,7 +4866,8 @@ SAFETY RULES:
                     chkCommonAi,
                     chkAutoClose,
                     nudPips,
-                    nudMoney);
+                    nudMoney,
+                    nudBeTrigger);
 
                 _cfg.Bot.CommonTrading = commonTradingSettings;
                 await SaveScalpingConfigForPairAsync(activeRequest.Pair, scalpingConfig);
@@ -4893,7 +4955,6 @@ SAFETY RULES:
                 {
                     Log("[SCALP] Auto scalping selected - skipping one-shot signal AI/SL/TP validation.", C_ACCENT);
                     SetPlayStatus("Starting auto scalping session...", Color.Gold);
-                    _scalpingTradeManager.Start(scalpingConfig);
                 }
                 else if (aiEnabled)
                 {
@@ -5012,6 +5073,8 @@ SAFETY RULES:
             };
 
             // ── Watch the signal file itself for on-disk edits
+            form.Activated += (_, _) => RefreshScalpingReviewRunState();
+
             FileSystemWatcher? sigFileWatcher = null;
             string sigFilePath = ResolveSignalFilePath(info) ?? "";
             if (!string.IsNullOrWhiteSpace(sigFilePath) && File.Exists(sigFilePath))
@@ -5117,7 +5180,7 @@ SAFETY RULES:
             reviewTips.SetToolTip(liveStatus, "Shows when the Review Trade data last refreshed from MT5 and when the next refresh will run.");
 
             AddReviewGroup(flow, bindings, reviewTips, "Pre-Trade Safety Checks", [
-                ("Signal has required fields", "execution_barriers.signal_valid_detail", "barrier:execution_barriers.signal_valid"),
+                ("Final order fields valid", "execution_barriers.signal_valid_detail", "barrier:execution_barriers.signal_valid"),
                 ("Signal is not expired", "execution_barriers.signal_fresh_detail", "barrier:execution_barriers.signal_fresh"),
                 ("Pair is allowed", "execution_barriers.pair_allowed_detail", "barrier:execution_barriers.pair_allowed"),
                 ("Daily trade limit", "execution_barriers.daily_limit_detail", "barrier:execution_barriers.daily_limit_ok"),
@@ -5152,11 +5215,14 @@ SAFETY RULES:
             ]);
 
             AddReviewGroup(flow, bindings, reviewTips, "Trade Risk Preview", [
+                ("Trading Mode", "effective_trade_settings.trading_mode", "plain"),
                 ("Money at risk", "risk.dollar_risk", "money"),
                 ("Profit at TP1", "risk.dollar_profit_tp1", "money"),
                 ("Profit at TP2", "risk.dollar_profit_tp2", "money"),
                 ("Trade Page SL", "effective_trade_settings.stop_loss_pips", "pips"),
                 ("Trade Page TP", "effective_trade_settings.take_profit_pips", "pips"),
+                ("Trade Page BE trigger", "effective_trade_settings.be_trigger_pips", "pips"),
+                ("Trade Page max trades", "effective_trade_settings.max_trades", "plain"),
                 ("Risk/reward ratio", "risk.rr_ratio", "ratio"),
                 ("Max risk per trade", "risk.max_risk_pct", "pct"),
                 ("Daily loss room left", "risk.daily_loss_remaining", "money")
@@ -5265,7 +5331,6 @@ SAFETY RULES:
             var reviewRequest = CloneReviewRequest(request);
             reviewRequest.LotSize = Math.Max(0.01, selectedLotSize);
 
-            var (signalValid, signalError) = reviewRequest.Validate();
             bool signalFresh = true;
             string freshnessDetail = $"Current: no expiry | Base: expiry > 0 enables age check";
             if (reviewRequest.ExpiryMinutes > 0)
@@ -5277,16 +5342,34 @@ SAFETY RULES:
 
             string pair = reviewRequest.Pair.ToUpperInvariant();
             var pairRules = _pairSettings?.GetForPair(pair);
-            double requiredRr = GetRequiredReviewRiskReward(scalpingStrategy);
-            double requiredSlPips = GetRequiredReviewStopLossPips(scalpingStrategy);
-            double requiredTpPips = GetRequiredReviewTakeProfitPips(scalpingStrategy);
-            string strategyName = GetReviewStrategyName(scalpingStrategy);
-            double maxSpreadPips = GetRequiredReviewMaxSpread(scalpingStrategy);
+            var effective = EffectiveTradeSettings.Resolve(
+                _cfg.Bot, scalpingStrategy ? "Scalping" : "Normal", reviewRequest.LotSize);
+            var metrics = BuildReviewRiskMetrics(snapshot, reviewRequest, effective, reviewRequest.LotSize);
+            if (metrics.Entry > 0)
+                reviewRequest.EntryPrice = metrics.Entry;
+            reviewRequest.StopLoss = metrics.SuggestedSl;
+            reviewRequest.TakeProfit = metrics.SuggestedTp1;
+            reviewRequest.TakeProfit2 = metrics.SuggestedTp2;
+            reviewRequest.Strategy = effective.Strategy;
+
+            var (signalValid, signalError) = reviewRequest.Validate();
+            double requiredRr = effective.RiskRewardRatio;
+            double requiredSlPips = effective.SlPips;
+            double requiredTpPips = effective.TpPips;
+            double beTriggerPips = requiredTpPips * effective.BeTriggerPercentOfTp;
+            string strategyName = effective.Strategy;
+            double maxSpreadPips = effective.MaxSpreadPips;
             bool pairAllowed = _cfg.Bot.AllowedPairs.Count == 0 || _cfg.Bot.AllowedPairs.Contains(pair);
 
-            double tradesToday = ReadReviewNumber(snapshot, "account.daily_trades_taken");
+            var dailyStats = GetTodayReviewStats(pair, strategyName, ReadReviewNumber(snapshot, "account.floating_pnl"));
+            ApplyReviewDailySummary(snapshot, dailyStats, pair, strategyName);
+
+            double tradesToday = dailyStats.Known
+                ? dailyStats.TradesToday
+                : ReadReviewNumber(snapshot, "account.daily_trades_taken");
+            int maxTrades = effective.MaxTrades;
             bool dailyLimitKnown = !double.IsNaN(tradesToday);
-            bool dailyLimitOk = !dailyLimitKnown || tradesToday < _cfg.Bot.MaxTradesPerDay;
+            bool dailyLimitOk = !dailyLimitKnown || tradesToday < maxTrades;
 
             double balance = ReadReviewNumber(snapshot, "account.balance");
             double equity = ReadReviewNumber(snapshot, "account.equity");
@@ -5294,16 +5377,11 @@ SAFETY RULES:
             bool accountOk = !double.IsNaN(equity) && equity > 0 && !double.IsNaN(freeMargin);
             bool freeMarginOk = accountOk && (double.IsNaN(balance) || balance <= 0 || freeMargin >= balance * 0.05);
 
-            double rr = CalculateReviewRiskReward(snapshot, reviewRequest);
+            double rr = metrics.ActualRiskRewardRatio;
             bool rrOk = rr >= requiredRr;
 
-            double entry = GetReviewReferenceEntry(snapshot, reviewRequest);
-            bool stopLossValid = IsReviewStopLossValid(reviewRequest.TradeType, entry, reviewRequest.StopLoss);
-            bool takeProfitValid = IsReviewTakeProfitValid(reviewRequest.TradeType, entry, reviewRequest.TakeProfit);
-            bool takeProfit2Valid = IsReviewTakeProfitValid(reviewRequest.TradeType, entry, reviewRequest.TakeProfit2);
-            double newTradeRisk = stopLossValid
-                ? LotCalculator.DollarRisk(reviewRequest.LotSize, entry, reviewRequest.StopLoss, reviewRequest.Pair)
-                : 0;
+            double entry = metrics.Entry;
+            double newTradeRisk = metrics.DollarRisk;
 
             double openRisk = positions
                 .Where(p => p.StopLoss > 0)
@@ -5315,6 +5393,7 @@ SAFETY RULES:
             double spread = ReadReviewNumber(snapshot, "price.spread_pips");
             bool spreadOk = maxSpreadPips <= 0
                 || (!double.IsNaN(spread) && spread <= maxSpreadPips);
+            ApplyReviewSpreadSummary(snapshot, spread, maxSpreadPips, spreadOk);
 
             string newsRisk = snapshot.SelectToken("news.news_risk_level")?.ToString() ?? "UNAVAILABLE";
             bool newsConfigured = snapshot.SelectToken("news.configured")?.Value<bool?>() == true;
@@ -5330,8 +5409,8 @@ SAFETY RULES:
             {
                 ["signal_valid"] = signalValid,
                 ["signal_valid_detail"] = signalValid
-                    ? "Current: required fields valid | Base: pair, SL, TP, lot, direction"
-                    : $"Current: {signalError} | Base: pair, SL, TP, lot, direction",
+                    ? "Current: final order fields valid | Base: pair, SL, TP, lot, direction after Trade Page SL/TP generation"
+                    : $"Current: {signalError} | Base: final order must have pair, SL, TP, lot, direction after Trade Page SL/TP generation",
                 ["signal_fresh"] = signalFresh,
                 ["signal_fresh_detail"] = freshnessDetail,
                 ["pair_allowed"] = pairAllowed,
@@ -5340,8 +5419,8 @@ SAFETY RULES:
                     : $"Current: {pair} | Base: [{string.Join(", ", _cfg.Bot.AllowedPairs)}]",
                 ["daily_limit_ok"] = dailyLimitOk,
                 ["daily_limit_detail"] = dailyLimitKnown
-                    ? $"Current: {tradesToday:0} trades today | Base: < {_cfg.Bot.MaxTradesPerDay}"
-                    : $"Current: unknown until runtime | Base: < {_cfg.Bot.MaxTradesPerDay}",
+                    ? $"Current: {tradesToday:0} {strategyName} trades today for {pair} | Base: < {maxTrades} ({strategyName} trade page)"
+                    : $"Current: unknown until runtime | Base: < {maxTrades} ({strategyName} trade page)",
                 ["account_ok"] = accountOk,
                 ["account_detail"] = accountOk
                     ? $"Current: equity {equity:0.00}, free {freeMargin:0.00} | Base: equity > 0 and margin known"
@@ -5377,28 +5456,302 @@ SAFETY RULES:
             UpsertReviewNumber(snapshot, "risk.calculated_lot", reviewRequest.LotSize);
             snapshot["effective_trade_settings"] = new JObject
             {
+                ["trading_mode"] = _cfg.Bot.CommonTrading.TradingMode.ToString(),
                 ["strategy"] = strategyName,
                 ["stop_loss_pips"] = requiredSlPips,
                 ["take_profit_pips"] = requiredTpPips,
+                ["be_trigger_percent_of_tp"] = effective.BeTriggerPercentOfTp,
+                ["be_trigger_pips"] = Math.Round(beTriggerPips, 1),
                 ["required_risk_reward_ratio"] = requiredRr,
                 ["actual_risk_reward_ratio"] = Math.Round(rr, 2),
+                ["max_trades"] = maxTrades,
+                ["trades_taken_today"] = dailyLimitKnown ? tradesToday : null,
                 ["max_spread_pips"] = maxSpreadPips,
                 ["current_spread_pips"] = double.IsNaN(spread) ? null : Math.Round(spread, 1)
             };
             UpsertReviewNumber(snapshot, "risk.required_rr_ratio", requiredRr);
-            if (entry > 0)
+            PatchReviewRiskSnapshot(snapshot, reviewRequest, effective, metrics);
+
+            double dailyLossLimit = ReadReviewNumber(snapshot, "risk.daily_loss_limit_dollar");
+            if (double.IsNaN(dailyLossLimit) || dailyLossLimit < 0)
+                dailyLossLimit = equity > 0 ? Math.Round(equity * _cfg.Bot.EmergencyCloseDrawdownPct / 100.0, 2) : 0;
+            ApplyReviewDailyLossRemaining(snapshot, dailyLossLimit, dailyStats);
+            ApplyReviewDataSourceSummary(snapshot);
+        }
+
+        private readonly record struct ReviewRiskMetrics(
+            double Entry,
+            double SuggestedSl,
+            double SuggestedTp1,
+            double SuggestedTp2,
+            double SlDistancePips,
+            double Tp1DistancePips,
+            double Tp2DistancePips,
+            double ActualRiskRewardRatio,
+            double DollarRisk,
+            double DollarProfitTp1,
+            double DollarProfitTp2);
+
+        private ReviewRiskMetrics BuildReviewRiskMetrics(
+            JObject snapshot,
+            TradeRequest request,
+            EffectiveTradeSettings effective,
+            double selectedLotSize)
+        {
+            string pair = request.Pair.ToUpperInvariant();
+            var pairRules = _pairSettings?.GetForPair(pair);
+            double pipSize = pairRules?.PipSize > 0
+                ? pairRules.PipSize
+                : LotCalculator.GetPipSize(pair);
+
+            double ask = snapshot["price"]?["ask"]?.Value<double>() ?? 0;
+            double bid = snapshot["price"]?["bid"]?.Value<double>() ?? 0;
+            double entry = request.TradeType == TradeType.BUY ? ask : bid;
+            if (entry <= 0)
+                entry = request.EntryPrice > 0 ? request.EntryPrice : GetReviewReferenceEntry(snapshot, request);
+
+            double sl = 0;
+            double tp1 = 0;
+            if (entry > 0 && pipSize > 0)
             {
-                UpsertReviewNumber(snapshot, "risk.rr_ratio", rr);
-                UpsertReviewNumber(snapshot, "risk.dollar_risk", newTradeRisk);
-                UpsertReviewNumber(snapshot, "risk.dollar_profit_tp1",
-                    takeProfitValid
-                        ? LotCalculator.DollarProfit(reviewRequest.LotSize, entry, reviewRequest.TakeProfit, reviewRequest.Pair)
-                        : 0);
-                UpsertReviewNumber(snapshot, "risk.dollar_profit_tp2",
-                    takeProfit2Valid
-                        ? LotCalculator.DollarProfit(reviewRequest.LotSize, entry, reviewRequest.TakeProfit2, reviewRequest.Pair)
-                        : 0);
+                if (request.TradeType == TradeType.BUY)
+                {
+                    sl = entry - effective.SlPips * pipSize;
+                    tp1 = entry + effective.TpPips * pipSize;
+                }
+                else
+                {
+                    sl = entry + effective.SlPips * pipSize;
+                    tp1 = entry - effective.TpPips * pipSize;
+                }
             }
+
+            double tp2 = request.TakeProfit2;
+            bool tp2Valid = IsReviewTakeProfitValid(request.TradeType, entry, tp2);
+            double tp2Pips = tp2Valid && pipSize > 0 ? Math.Abs(tp2 - entry) / pipSize : 0;
+            double actualRr = effective.SlPips > 0 ? effective.TpPips / effective.SlPips : 0;
+            double lots = Math.Max(0.01, selectedLotSize);
+            double pipValuePerLot = LotCalculator.GetPipValuePerLot(pair, entry > 0 ? entry : 1.0);
+            double dollarRisk = Math.Round(lots * effective.SlPips * pipValuePerLot, 2);
+            double dollarProfit = Math.Round(lots * effective.TpPips * pipValuePerLot, 2);
+            double dollarProfit2 = Math.Round(lots * tp2Pips * pipValuePerLot, 2);
+
+            return new ReviewRiskMetrics(
+                entry,
+                sl,
+                tp1,
+                tp2Valid ? tp2 : 0,
+                effective.SlPips,
+                effective.TpPips,
+                tp2Pips,
+                actualRr,
+                dollarRisk,
+                dollarProfit,
+                dollarProfit2);
+        }
+
+        private static void PatchReviewRiskSnapshot(
+            JObject snapshot,
+            TradeRequest request,
+            EffectiveTradeSettings effective,
+            ReviewRiskMetrics metrics)
+        {
+            if (snapshot["risk"] is not JObject risk)
+                return;
+
+            risk["required_rr_ratio"] = effective.RiskRewardRatio;
+            risk["suggested_sl"] = metrics.SuggestedSl;
+            risk["suggested_tp1"] = metrics.SuggestedTp1;
+            risk["suggested_tp2"] = metrics.SuggestedTp2;
+            risk["sl_distance_pips"] = Math.Round(metrics.SlDistancePips, 1);
+            risk["tp1_distance_pips"] = Math.Round(metrics.Tp1DistancePips, 1);
+            risk["tp2_distance_pips"] = Math.Round(metrics.Tp2DistancePips, 1);
+            risk["rr_ratio"] = Math.Round(metrics.ActualRiskRewardRatio, 2);
+            risk["calculated_lot"] = request.LotSize;
+            risk["dollar_risk"] = metrics.DollarRisk;
+            risk["dollar_profit_tp1"] = metrics.DollarProfitTp1;
+            risk["dollar_profit_tp2"] = metrics.DollarProfitTp2;
+
+            if (snapshot["effective_trade_settings"] is JObject effectiveJson)
+                effectiveJson["actual_risk_reward_ratio"] = Math.Round(metrics.ActualRiskRewardRatio, 2);
+
+            snapshot["risk_summary"] = new JObject
+            {
+                ["source"] = "EffectiveTradeSettings",
+                ["strategy"] = effective.Strategy,
+                ["lot_size"] = request.LotSize,
+                ["entry_price"] = metrics.Entry,
+                ["suggested_sl"] = metrics.SuggestedSl,
+                ["suggested_tp1"] = metrics.SuggestedTp1,
+                ["suggested_tp2"] = metrics.SuggestedTp2,
+                ["sl_distance_pips"] = Math.Round(metrics.SlDistancePips, 1),
+                ["tp1_distance_pips"] = Math.Round(metrics.Tp1DistancePips, 1),
+                ["tp2_distance_pips"] = Math.Round(metrics.Tp2DistancePips, 1),
+                ["actual_risk_reward_ratio"] = Math.Round(metrics.ActualRiskRewardRatio, 2),
+                ["required_risk_reward_ratio"] = effective.RiskRewardRatio,
+                ["dollar_risk"] = metrics.DollarRisk,
+                ["dollar_profit_tp1"] = metrics.DollarProfitTp1,
+                ["dollar_profit_tp2"] = metrics.DollarProfitTp2
+            };
+        }
+
+        private static void ApplyReviewDailySummary(
+            JObject snapshot,
+            ReviewDailyStats stats,
+            string pair,
+            string strategy)
+        {
+            JArray lastTrades = BuildReviewLastTradesJson(stats);
+
+            snapshot["account_daily_summary"] = new JObject
+            {
+                ["source"] = "TradeHistoryByPairStrategyDate",
+                ["pair"] = pair,
+                ["strategy"] = strategy,
+                ["date_utc"] = DateTime.UtcNow.Date.ToString("yyyy-MM-dd"),
+                ["known"] = stats.Known,
+                ["daily_pnl"] = stats.Known ? Math.Round(stats.TodayPnl, 2) : JValue.CreateNull(),
+                ["daily_trades_taken"] = stats.Known ? stats.TradesToday : JValue.CreateNull(),
+                ["total_pnl_today"] = stats.Known ? Math.Round(stats.TodayPnl, 2) : JValue.CreateNull(),
+                ["total_trades_today"] = stats.Known ? stats.TradesToday : JValue.CreateNull(),
+                ["last_5_trades"] = stats.Known ? lastTrades : JValue.CreateNull()
+            };
+
+            if (snapshot["account"] is JObject account)
+            {
+                account["daily_pnl"] = stats.Known ? Math.Round(stats.TodayPnl, 2) : JValue.CreateNull();
+                account["daily_trades_taken"] = stats.Known ? stats.TradesToday : JValue.CreateNull();
+            }
+
+            var history = snapshot["history"] as JObject ?? new JObject();
+            history["available"] = stats.Known;
+            history["source"] = "TradeHistoryByPairStrategyDate";
+            history["pair"] = pair;
+            history["strategy"] = strategy;
+            history["total_trades_today"] = stats.Known ? stats.TradesToday : JValue.CreateNull();
+            history["total_pnl_today"] = stats.Known ? Math.Round(stats.TodayPnl, 2) : JValue.CreateNull();
+            history["last_5_trades"] = stats.Known ? lastTrades.DeepClone() : JValue.CreateNull();
+            snapshot["history"] = history;
+        }
+
+        private static JArray BuildReviewLastTradesJson(ReviewDailyStats stats)
+        {
+            var trades = new JArray();
+            foreach (var trade in stats.LastTrades)
+            {
+                trades.Add(new JObject
+                {
+                    ["pair"] = trade.Pair,
+                    ["strategy"] = trade.Strategy,
+                    ["direction"] = trade.Direction,
+                    ["result"] = trade.Result,
+                    ["pips"] = trade.Pips.HasValue ? Math.Round(trade.Pips.Value, 1) : JValue.CreateNull(),
+                    ["pnl"] = Math.Round(trade.Pnl, 2)
+                });
+            }
+
+            return trades;
+        }
+
+        private static void ApplyReviewDailyLossRemaining(
+            JObject snapshot,
+            double dailyLossLimit,
+            ReviewDailyStats stats)
+        {
+            double todayLossOnly = stats.Known ? Math.Max(0, -stats.TodayPnl) : 0;
+            double remaining = Math.Round(Math.Max(0, dailyLossLimit - todayLossOnly), 2);
+
+            if (snapshot["risk"] is JObject risk)
+            {
+                risk["daily_loss_limit_dollar"] = dailyLossLimit;
+                risk["today_loss_only"] = Math.Round(todayLossOnly, 2);
+                risk["daily_loss_remaining"] = remaining;
+            }
+
+            if (snapshot["account_daily_summary"] is JObject daily)
+            {
+                daily["daily_loss_limit_dollar"] = dailyLossLimit;
+                daily["today_loss_only"] = Math.Round(todayLossOnly, 2);
+                daily["daily_loss_remaining"] = remaining;
+            }
+        }
+
+        private static void ApplyReviewSpreadSummary(
+            JObject snapshot,
+            double currentSpreadPips,
+            double maxSpreadPips,
+            bool spreadOk)
+        {
+            snapshot["spread_summary"] = new JObject
+            {
+                ["source"] = "EffectiveTradeSettings",
+                ["current_spread_pips"] = double.IsNaN(currentSpreadPips) ? JValue.CreateNull() : Math.Round(currentSpreadPips, 1),
+                ["max_spread_pips"] = maxSpreadPips,
+                ["spread_ok"] = spreadOk,
+                ["formula"] = "currentSpreadPips <= maxSpreadPips"
+            };
+
+            if (snapshot["price"] is JObject price)
+                price["spread_normal"] = spreadOk;
+
+            if (snapshot["effective_trade_settings"] is JObject effectiveJson)
+            {
+                effectiveJson["max_spread_pips"] = maxSpreadPips;
+                effectiveJson["current_spread_pips"] = double.IsNaN(currentSpreadPips) ? JValue.CreateNull() : Math.Round(currentSpreadPips, 1);
+            }
+        }
+
+        private static void ApplyReviewDataSourceSummary(JObject snapshot)
+        {
+            snapshot["data_sources"] = new JObject
+            {
+                ["mt5_direct"] = new JArray
+                {
+                    "account.balance",
+                    "account.equity",
+                    "account.free_margin",
+                    "account.margin_used",
+                    "account.margin_level",
+                    "account.leverage",
+                    "account.floating_pnl",
+                    "symbol",
+                    "price",
+                    "candles",
+                    "indicators",
+                    "structure",
+                    "levels",
+                    "positions"
+                },
+                ["external_services"] = new JArray
+                {
+                    "news"
+                },
+                ["sqlite_trade_history"] = new JArray
+                {
+                    "account_daily_summary.daily_pnl",
+                    "account_daily_summary.daily_trades_taken",
+                    "account_daily_summary.total_pnl_today",
+                    "account_daily_summary.total_trades_today",
+                    "history.last_5_trades"
+                },
+                ["trade_page_effective_settings"] = new JArray
+                {
+                    "effective_trade_settings.stop_loss_pips",
+                    "effective_trade_settings.take_profit_pips",
+                    "effective_trade_settings.required_risk_reward_ratio",
+                    "effective_trade_settings.max_trades",
+                    "effective_trade_settings.max_spread_pips",
+                    "effective_trade_settings.be_trigger_percent_of_tp"
+                },
+                ["app_computed"] = new JArray
+                {
+                    "risk_summary",
+                    "spread_summary",
+                    "execution_barriers",
+                    "account_daily_summary.daily_loss_remaining",
+                    "effective_trade_settings.actual_risk_reward_ratio"
+                }
+            };
         }
 
         private static TradeRequest CloneReviewRequest(TradeRequest request) => new()
@@ -5418,14 +5771,13 @@ SAFETY RULES:
             MagicNumber = request.MagicNumber,
             ExpiryMinutes = request.ExpiryMinutes,
             MoveSLToBreakevenAfterTP1 = request.MoveSLToBreakevenAfterTP1,
-            SlToBeTrigerPct = request.SlToBeTrigerPct,
             CreatedAt = request.CreatedAt
         };
 
         private BotConfig BuildReviewSnapshotBotConfig(TradeRequest request)
         {
-            bool scalpingStrategy = string.Equals(request.Strategy, "Scalping", StringComparison.OrdinalIgnoreCase);
-            double maxSpreadPips = GetRequiredReviewMaxSpread(scalpingStrategy);
+            double maxSpreadPips = EffectiveTradeSettings.Resolve(
+                _cfg.Bot, request.Strategy, request.LotSize).MaxSpreadPips;
 
             return new BotConfig
             {
@@ -5433,6 +5785,7 @@ SAFETY RULES:
                 EmergencyCloseDrawdownPct = _cfg.Bot.EmergencyCloseDrawdownPct,
                 MaxSpreadPips = maxSpreadPips,
                 Scalping = CloneScalpingSettings(_cfg.Bot.Scalping),
+                CommonTrading = CloneCommonTradingSettings(_cfg.Bot.CommonTrading),
                 NormalTrading = CloneNormalTradingSettings(_cfg.Bot.NormalTrading)
             };
         }
@@ -5472,37 +5825,6 @@ SAFETY RULES:
                 ? LotCalculator.RiskRewardRatio(entry, request.StopLoss, request.TakeProfit)
                 : 0;
         }
-
-        private double GetRequiredReviewRiskReward(bool scalpingStrategy) =>
-            Math.Max(
-                0.1,
-                scalpingStrategy
-                    ? _cfg.Bot.Scalping.RiskRewardRatio
-                    : _cfg.Bot.NormalTrading.RiskRewardRatio);
-
-        private double GetRequiredReviewStopLossPips(bool scalpingStrategy) =>
-            Math.Max(
-                0.1,
-                scalpingStrategy
-                    ? _cfg.Bot.Scalping.StopLossPips
-                    : _cfg.Bot.NormalTrading.StopLossPips);
-
-        private double GetRequiredReviewTakeProfitPips(bool scalpingStrategy) =>
-            Math.Max(
-                0.1,
-                scalpingStrategy
-                    ? _cfg.Bot.Scalping.TakeProfitPips
-                    : _cfg.Bot.NormalTrading.TakeProfitPips);
-
-        private double GetRequiredReviewMaxSpread(bool scalpingStrategy) =>
-            Math.Max(
-                0,
-                scalpingStrategy
-                    ? _cfg.Bot.Scalping.MaxSpreadPips
-                    : _cfg.Bot.NormalTrading.MaxSpreadPips);
-
-        private static string GetReviewStrategyName(bool scalpingStrategy) =>
-            scalpingStrategy ? "Scalping" : "Normal";
 
         private static bool IsReviewStopLossValid(TradeType type, double entry, double stopLoss) =>
             entry > 0 && stopLoss > 0 && (type == TradeType.BUY ? stopLoss < entry : stopLoss > entry);
@@ -5771,7 +6093,7 @@ SAFETY RULES:
 
             string meaning = path switch
             {
-                "execution_barriers.signal_valid_detail" => "Checks that the signal has a pair, direction, lot size, stop loss, and take profit.",
+                "execution_barriers.signal_valid_detail" => "Checks that the final generated order has a pair, direction, lot size, stop loss, and take profit.",
                 "execution_barriers.signal_fresh_detail" => "Checks whether the signal is still inside its expiry window.",
                 "execution_barriers.pair_allowed_detail" => "Checks whether this pair is allowed by the bot configuration.",
                 "execution_barriers.daily_limit_detail" => "Checks whether today's trade count is still below the configured maximum.",
@@ -5800,8 +6122,10 @@ SAFETY RULES:
                 "risk.dollar_risk" => "Estimated loss if stop loss is hit with the selected lot size.",
                 "risk.dollar_profit_tp1" => "Estimated profit if the first take-profit target is hit.",
                 "risk.dollar_profit_tp2" => "Estimated profit if the second take-profit target is hit.",
+                "effective_trade_settings.trading_mode" => "Execution mode from the Trade Page: Auto executes after validation, Manual Approval shows a dialog, Paper Trading simulates without sending to MT5.",
                 "effective_trade_settings.stop_loss_pips" => "Stop-loss pips from the selected Trade Page strategy.",
                 "effective_trade_settings.take_profit_pips" => "Take-profit pips from the selected Trade Page strategy.",
+                "effective_trade_settings.be_trigger_pips" => "Break-even trigger from Trade Page TP pips multiplied by the Common Trade Settings BE Trigger % of TP.",
                 "risk.rr_ratio" => "Reward compared with risk. 1.5 means target profit is 1.5 times the stop-loss risk.",
                 "risk.max_risk_pct" => "Maximum account percentage allowed for one trade by configuration.",
                 "risk.daily_loss_remaining" => "Estimated loss room left before the daily loss protection limit is reached.",
@@ -5883,10 +6207,10 @@ SAFETY RULES:
             {
                 return path switch
                 {
-                    "execution_barriers.signal_valid_detail" => "Calculated inside the Review Trade window from the signal JSON fields: pair, direction, lot size, stop loss, and take profit.",
+                    "execution_barriers.signal_valid_detail" => "Calculated inside the Review Trade window after applying Trade Page SL/TP pips to the current Bid/Ask.",
                     "execution_barriers.signal_fresh_detail" => "Calculated inside the Review Trade window from signal created_at and expiry_minutes.",
                     "execution_barriers.pair_allowed_detail" => "Calculated from the signal pair and the Bot Configuration allowed-pair list, which is synced from Pair Settings.",
-                    "execution_barriers.daily_limit_detail" => "Uses today's trade count from the MT5/review snapshot and compares it with Bot Configuration max trades per day.",
+                    "execution_barriers.daily_limit_detail" => "Uses today's strategy-specific trade count from the review snapshot and compares it with the selected Trade Page max trades setting.",
                     "execution_barriers.account_detail" => "Uses live account equity and free margin returned by MT5 through the EA/bridge snapshot.",
                     "execution_barriers.rr_detail" => "Calculated from entry, stop loss, take profit, and the Trade Page R:R setting.",
                     "execution_barriers.free_margin_detail" => "Uses live MT5 free margin and balance from the account snapshot.",
@@ -6088,7 +6412,7 @@ SAFETY RULES:
         {
             var barriers = new (string Label, string FlagPath, string DetailPath)[]
             {
-                ("Signal has required fields", "execution_barriers.signal_valid", "execution_barriers.signal_valid_detail"),
+                ("Final order fields valid", "execution_barriers.signal_valid", "execution_barriers.signal_valid_detail"),
                 ("Signal is not expired", "execution_barriers.signal_fresh", "execution_barriers.signal_fresh_detail"),
                 ("Pair is allowed", "execution_barriers.pair_allowed", "execution_barriers.pair_allowed_detail"),
                 ("Daily trade limit", "execution_barriers.daily_limit_ok", "execution_barriers.daily_limit_detail"),
@@ -6130,9 +6454,11 @@ SAFETY RULES:
             var warnings = new List<TradeWarningItem>();
             string pair = request.Pair.ToUpperInvariant();
             var pairRules = _pairSettings?.GetForPair(pair);
-            double requiredRr = GetRequiredReviewRiskReward(autoScalpingRequested);
-            string strategyName = GetReviewStrategyName(autoScalpingRequested);
-            double maxSpread = GetRequiredReviewMaxSpread(autoScalpingRequested);
+            var effective = EffectiveTradeSettings.Resolve(
+                _cfg.Bot, autoScalpingRequested ? "Scalping" : "Normal", selectedLotSize);
+            double requiredRr = effective.RiskRewardRatio;
+            string strategyName = effective.Strategy;
+            double maxSpread = effective.MaxSpreadPips;
 
             if (!autoScalpingRequested && !aiEnabled)
             {
@@ -6146,7 +6472,11 @@ SAFETY RULES:
                     "Manual/direct execution can continue only after you confirm this warning."));
             }
 
-            double rr = CalculateReviewRiskReward(snapshot, request);
+            double rr = ReadReviewNumber(snapshot, "effective_trade_settings.actual_risk_reward_ratio");
+            if (double.IsNaN(rr))
+                rr = ReadReviewNumber(snapshot, "risk.rr_ratio");
+            if (double.IsNaN(rr))
+                rr = CalculateReviewRiskReward(snapshot, request);
             if (!double.IsNaN(rr) && requiredRr > 0)
             {
                 bool rrWarn = rr >= requiredRr && rr < requiredRr * 1.15;
@@ -6156,14 +6486,34 @@ SAFETY RULES:
                         "Risk/reward is close to the required ratio",
                         "The reward compared with stop-loss risk is weak for this pair. A small spread or entry movement can reduce the effective R:R further.",
                         $"{rr:0.00} R:R",
-                        "Review snapshot: entry, stop loss, take profit, selected lot size",
+                        "Review Trade current TP pips / SL pips after applying visible inputs",
                         $"{requiredRr:0.00} required R:R",
                         $"{strategyName} trade page Risk Reward Ratio",
-                        "Current value passes, but is less than 15% above the required value."));
+                        Math.Abs(rr - requiredRr) < 0.005
+                            ? "Current value exactly equals the required value, so there is no buffer for spread, slippage, or entry movement."
+                            : "Current value passes, but is less than 15% above the required value."));
                 }
             }
 
             double spread = ReadReviewNumber(snapshot, "price.spread_pips");
+            if (autoScalpingRequested && !double.IsNaN(spread) && spread > 0)
+            {
+                double requiredTpFromLiveRules = Math.Max(
+                    effective.SlPips * requiredRr,
+                    spread * (100.0 / ScalpingMaxSpreadPercentOfTp));
+                if (requiredTpFromLiveRules > effective.TpPips + 1e-9)
+                {
+                    warnings.Add(new TradeWarningItem(
+                        "Scalping TP is below live spread/R:R requirement",
+                        "The scalping session can start, but it will wait until live conditions improve or the Trade Page TP is large enough for the current spread and R:R guardrails.",
+                        $"{effective.TpPips:0.0} TP pips",
+                        "Scalping trade page TP pips after applying visible inputs",
+                        $">= {requiredTpFromLiveRules:0.0} TP pips",
+                        $"Live rule: max(SL {effective.SlPips:0.0} x R:R {requiredRr:0.00}, spread {spread:0.0} / {ScalpingMaxSpreadPercentOfTp:0.#}%)",
+                        $"Current TP is short by {(requiredTpFromLiveRules - effective.TpPips):0.0} pips for the current live spread/R:R rule."));
+                }
+            }
+
             if (maxSpread > 0 && !double.IsNaN(spread) && spread <= maxSpread && spread >= maxSpread * 0.75)
             {
                 warnings.Add(new TradeWarningItem(
@@ -6224,17 +6574,18 @@ SAFETY RULES:
             }
 
             double tradesToday = ReadReviewNumber(snapshot, "account.daily_trades_taken");
-            if (!double.IsNaN(tradesToday) && _cfg.Bot.MaxTradesPerDay > 1
-                && tradesToday < _cfg.Bot.MaxTradesPerDay
-                && tradesToday >= _cfg.Bot.MaxTradesPerDay - 1)
+            int maxTrades = effective.MaxTrades;
+            if (!double.IsNaN(tradesToday) && maxTrades > 1
+                && tradesToday < maxTrades
+                && tradesToday >= maxTrades - 1)
             {
                 warnings.Add(new TradeWarningItem(
-                    "Daily trade limit is almost reached",
+                    $"{strategyName} trade limit is almost reached",
                     "Starting this trade may leave little or no room for another approved trade today.",
-                    $"{tradesToday:0} trades today",
+                    $"{tradesToday:0} {strategyName} trades today",
                     "Review Trade account snapshot: account.daily_trades_taken",
-                    $"< {_cfg.Bot.MaxTradesPerDay} trades per day",
-                    "Bot Configuration: Max Trades / Day",
+                    $"< {maxTrades} trades per day",
+                    $"{strategyName} Trade Page: Max Trades",
                     "Current value is within one trade of the daily limit."));
             }
 
@@ -6895,6 +7246,113 @@ SAFETY RULES:
             return trueRange > 0 ? Math.Min(60, directionalMove / trueRange * 35.0) : 0;
         }
 
+        private sealed record ReviewHistoryItem(
+            string Pair,
+            string Strategy,
+            string Direction,
+            string Result,
+            double? Pips,
+            double Pnl);
+
+        private readonly record struct ReviewDailyStats(
+            bool Known,
+            double TodayPnl,
+            int TradesToday,
+            IReadOnlyList<ReviewHistoryItem> LastTrades);
+
+        private ReviewDailyStats GetTodayReviewStats(string pair, string strategy, double fallbackFloatingPnl)
+        {
+            DateTime dayStartUtc = DateTime.UtcNow.Date;
+            DateTime dayEndUtc = dayStartUtc.AddDays(1);
+
+            try
+            {
+                if (_tradeDb == null)
+                    return double.IsNaN(fallbackFloatingPnl)
+                        ? UnknownReviewDailyStats()
+                        : new ReviewDailyStats(true, fallbackFloatingPnl, 0, []);
+
+                var openedToday = _tradeDb.GetByDateRangeAsync(dayStartUtc, dayEndUtc)
+                    .ConfigureAwait(false)
+                    .GetAwaiter()
+                    .GetResult();
+                var closedToday = _tradeDb.GetClosedByCloseDateRangeAsync(dayStartUtc, dayEndUtc)
+                    .ConfigureAwait(false)
+                    .GetAwaiter()
+                    .GetResult();
+
+                var openedForScope = openedToday
+                    .Where(t =>
+                        IsSameReviewPair(t.Pair, pair) &&
+                        string.Equals(ResolveTradeRecordStrategy(t), strategy, StringComparison.OrdinalIgnoreCase))
+                    .ToList();
+                var closedForScope = closedToday
+                    .Where(t =>
+                        IsSameReviewPair(t.Pair, pair) &&
+                        string.Equals(ResolveTradeRecordStrategy(t), strategy, StringComparison.OrdinalIgnoreCase))
+                    .ToList();
+
+                int tradesToday = openedForScope.Count;
+                double todayPnl = closedForScope.Sum(t => t.ProfitUsd);
+                var lastTrades = closedForScope
+                    .OrderByDescending(t => t.ClosedAt ?? t.ExecutedAt)
+                    .Take(5)
+                    .Select(BuildReviewHistoryItem)
+                    .ToList();
+
+                return new ReviewDailyStats(true, todayPnl, tradesToday, lastTrades);
+            }
+            catch
+            {
+                return double.IsNaN(fallbackFloatingPnl)
+                    ? UnknownReviewDailyStats()
+                    : new ReviewDailyStats(true, fallbackFloatingPnl, 0, []);
+            }
+        }
+
+        private static ReviewDailyStats UnknownReviewDailyStats() => new(false, 0, 0, []);
+
+        private static ReviewHistoryItem BuildReviewHistoryItem(TradeRecord record)
+        {
+            string strategy = ResolveTradeRecordStrategy(record);
+            return new ReviewHistoryItem(
+                record.Pair,
+                strategy,
+                record.Direction,
+                record.ProfitUsd >= 0 ? "WIN" : "LOSS",
+                EstimateReviewTradePips(record),
+                record.ProfitUsd);
+        }
+
+        private static double? EstimateReviewTradePips(TradeRecord record)
+        {
+            double lots = record.ExecutedLots > 0 ? record.ExecutedLots : record.LotSize;
+            double entry = record.ExecutedPrice > 0 ? record.ExecutedPrice : record.EntryPrice;
+            if (lots <= 0 || entry <= 0 || string.IsNullOrWhiteSpace(record.Pair))
+                return null;
+
+            double pipValuePerLot = LotCalculator.GetPipValuePerLot(record.Pair, entry);
+            if (pipValuePerLot <= 0 || double.IsNaN(pipValuePerLot) || double.IsInfinity(pipValuePerLot))
+                return null;
+
+            return record.ProfitUsd / (pipValuePerLot * lots);
+        }
+
+        private static bool IsSameReviewPair(string storedPair, string pair) =>
+            storedPair.StartsWith(pair, StringComparison.OrdinalIgnoreCase) ||
+            pair.StartsWith(storedPair, StringComparison.OrdinalIgnoreCase);
+
+        private static string ResolveTradeRecordStrategy(TradeRecord record)
+        {
+            if (!string.IsNullOrWhiteSpace(record.Strategy))
+                return record.Strategy;
+
+            return record.Comment.Contains("Scalp", StringComparison.OrdinalIgnoreCase)
+                || record.Comment.Contains("Scalping", StringComparison.OrdinalIgnoreCase)
+                    ? "Scalping"
+                    : "Normal";
+        }
+
         private string BuildTradeReviewSnapshotJson(
             TradeRequest request,
             AccountInfo? account,
@@ -6912,27 +7370,16 @@ SAFETY RULES:
             double pipSize = pairRules?.PipSize > 0
                 ? pairRules.PipSize
                 : LotCalculator.GetPipSize((symbol?.Symbol ?? request.Pair).ToUpperInvariant());
-            bool scalpingStrategy = string.Equals(request.Strategy, "Scalping", StringComparison.OrdinalIgnoreCase);
-            double maxSpreadPips = GetRequiredReviewMaxSpread(scalpingStrategy);
-            bool slValid = IsReviewStopLossValid(request.TradeType, entry, request.StopLoss);
-            bool tpValid = IsReviewTakeProfitValid(request.TradeType, entry, request.TakeProfit);
-            bool tp2Valid = IsReviewTakeProfitValid(request.TradeType, entry, request.TakeProfit2);
-            double slPips = slValid ? Math.Abs(entry - request.StopLoss) / pipSize : 0;
-            double tpPips = tpValid ? Math.Abs(request.TakeProfit - entry) / pipSize : 0;
-            double rr = slPips > 0 ? tpPips / slPips : 0;
-            double dollarRisk    = slValid ? LotCalculator.DollarRisk(request.LotSize, entry, request.StopLoss, request.Pair) : 0;
-            double dollarProfit  = tpValid ? LotCalculator.DollarProfit(request.LotSize, entry, request.TakeProfit, request.Pair) : 0;
-            double dollarProfit2 = tp2Valid
-                ? LotCalculator.DollarProfit(request.LotSize, entry, request.TakeProfit2, request.Pair) : 0;
-            double tp2Pips       = tp2Valid
-                ? Math.Abs(request.TakeProfit2 - entry) / pipSize : 0;
+            var effective = EffectiveTradeSettings.Resolve(_cfg.Bot, request.Strategy, request.LotSize);
+            double maxSpreadPips = effective.MaxSpreadPips;
             double marginRequired = account?.Leverage > 0 && symbol?.ContractSize > 0 && request.LotSize > 0 && entry > 0
                 ? Math.Round(symbol.ContractSize.Value * request.LotSize * entry / account.Leverage, 2)
                 : 0;
             double maxLossDollar = account != null
                 ? Math.Round(account.Equity * _cfg.Bot.EmergencyCloseDrawdownPct / 100.0, 2) : 0;
-            double dailyLossRemaining = account != null
-                ? Math.Round(maxLossDollar + Math.Min(0, account.Profit), 2) : 0;
+            var dailyStats = GetTodayReviewStats(request.Pair, effective.Strategy, account?.Profit ?? double.NaN);
+            double todayLossOnly = Math.Max(0, -dailyStats.TodayPnl);
+            double dailyLossRemaining = Math.Round(Math.Max(0, maxLossDollar - todayLossOnly), 2);
             var samePair = positions
                 .Where(p => p.Symbol.StartsWith(request.Pair, StringComparison.OrdinalIgnoreCase))
                 .ToList();
@@ -6951,8 +7398,8 @@ SAFETY RULES:
                     ["currency"] = account.Currency,
                     ["leverage"] = account.Leverage,
                     ["floating_pnl"] = account.Profit,
-                    ["daily_pnl"] = null,
-                    ["daily_trades_taken"] = null,
+                    ["daily_pnl"] = dailyStats.Known ? Math.Round(dailyStats.TodayPnl, 2) : (double?)null,
+                    ["daily_trades_taken"] = dailyStats.Known ? dailyStats.TradesToday : (int?)null,
                     ["consecutive_losses"] = null,
                     ["win_rate_today_pct"] = null,
                     ["daily_loss_limit_reached"] = false
@@ -7030,18 +7477,18 @@ SAFETY RULES:
                 {
                     ["max_risk_pct"]          = _cfg.Bot.MaxRiskPercent,
                     ["max_risk_dollar"]       = account == null ? 0 : Math.Round(account.Equity * _cfg.Bot.MaxRiskPercent / 100.0, 2),
-                    ["required_rr_ratio"]     = _cfg.Bot.NormalTrading.RiskRewardRatio,
-                    ["suggested_sl"]          = request.StopLoss,
-                    ["suggested_tp1"]         = request.TakeProfit,
-                    ["suggested_tp2"]         = request.TakeProfit2,
-                    ["sl_distance_pips"]      = Math.Round(slPips, 1),
-                    ["tp1_distance_pips"]     = Math.Round(tpPips, 1),
-                    ["tp2_distance_pips"]     = Math.Round(tp2Pips, 1),
-                    ["rr_ratio"]              = Math.Round(rr, 2),
+                    ["required_rr_ratio"]     = effective.RiskRewardRatio,
+                    ["suggested_sl"]          = 0,
+                    ["suggested_tp1"]         = 0,
+                    ["suggested_tp2"]         = 0,
+                    ["sl_distance_pips"]      = Math.Round(effective.SlPips, 1),
+                    ["tp1_distance_pips"]     = Math.Round(effective.TpPips, 1),
+                    ["tp2_distance_pips"]     = 0,
+                    ["rr_ratio"]              = Math.Round(effective.SlPips > 0 ? effective.TpPips / effective.SlPips : 0, 2),
                     ["calculated_lot"]        = request.LotSize,
-                    ["dollar_risk"]           = Math.Round(dollarRisk, 2),
-                    ["dollar_profit_tp1"]     = Math.Round(dollarProfit, 2),
-                    ["dollar_profit_tp2"]     = Math.Round(dollarProfit2, 2),
+                    ["dollar_risk"]           = 0,
+                    ["dollar_profit_tp1"]     = 0,
+                    ["dollar_profit_tp2"]     = 0,
                     ["margin_required"]       = marginRequired,
                     ["daily_loss_remaining"]  = dailyLossRemaining,
                     ["daily_loss_limit_dollar"] = maxLossDollar
@@ -7060,7 +7507,6 @@ SAFETY RULES:
                     min_atr_pips_m15 = pairRules.MinAtrPipsM15,
                     max_atr_pips_m15 = pairRules.MaxAtrPipsM15,
                     minimum_distance_from_key_level_pips = pairRules.MinimumDistanceFromKeyLevelPips,
-                    break_even_after_profit_pips = pairRules.BreakEvenAfterProfitPips,
                     trailing_start_pips = pairRules.TrailingStartPips,
                     trailing_step_pips = pairRules.TrailingStepPips,
                     max_slippage_pips = pairRules.MaxSlippagePips,
@@ -7069,45 +7515,22 @@ SAFETY RULES:
                 });
             }
 
+            ApplyReviewDailySummary(snapshot, dailyStats, request.Pair.ToUpperInvariant(), effective.Strategy);
+            ApplyReviewDailyLossRemaining(snapshot, maxLossDollar, dailyStats);
+            ApplyReviewSpreadSummary(snapshot, symbol?.SpreadPips ?? double.NaN, maxSpreadPips,
+                maxSpreadPips <= 0 || (symbol != null && symbol.SpreadPips <= maxSpreadPips));
+            var metrics = BuildReviewRiskMetrics(snapshot, request, effective, request.LotSize);
+            PatchReviewRiskSnapshot(snapshot, request, effective, metrics);
+            ApplyReviewDataSourceSummary(snapshot);
+
             return snapshot.ToString(Formatting.Indented);
         }
 
         private void PatchSnapshotSignalFields(JObject snapshot, TradeRequest req)
         {
-            var pairRules = _pairSettings?.GetForPair(req.Pair);
-            double pipSize = pairRules?.PipSize > 0
-                ? pairRules.PipSize
-                : LotCalculator.GetPipSize(req.Pair.ToUpperInvariant());
-
-            double ask   = snapshot["price"]?["ask"]?.Value<double>() ?? 0;
-            double bid   = snapshot["price"]?["bid"]?.Value<double>() ?? 0;
-            double entry = req.EntryPrice > 0 ? req.EntryPrice
-                : (req.TradeType == TradeType.BUY ? ask : bid);
-
-            bool slValid = IsReviewStopLossValid(req.TradeType, entry, req.StopLoss);
-            bool tpValid = IsReviewTakeProfitValid(req.TradeType, entry, req.TakeProfit);
-            bool tp2Valid = IsReviewTakeProfitValid(req.TradeType, entry, req.TakeProfit2);
-            double slPips  = slValid ? Math.Abs(entry - req.StopLoss) / pipSize : 0;
-            double tpPips  = tpValid ? Math.Abs(req.TakeProfit - entry) / pipSize : 0;
-            double tp2Pips = tp2Valid ? Math.Abs(req.TakeProfit2 - entry) / pipSize : 0;
-            double rr      = slPips > 0 ? Math.Round(tpPips / slPips, 2) : 0;
-
-            double dollarRisk    = slValid ? LotCalculator.DollarRisk(req.LotSize, entry, req.StopLoss, req.Pair) : 0;
-            double dollarProfit  = tpValid ? LotCalculator.DollarProfit(req.LotSize, entry, req.TakeProfit, req.Pair) : 0;
-            double dollarProfit2 = tp2Valid ? LotCalculator.DollarProfit(req.LotSize, entry, req.TakeProfit2, req.Pair) : 0;
-
-            if (snapshot["risk"] is not JObject risk) return;
-            risk["suggested_sl"]      = req.StopLoss;
-            risk["suggested_tp1"]     = req.TakeProfit;
-            risk["suggested_tp2"]     = req.TakeProfit2;
-            risk["sl_distance_pips"]  = Math.Round(slPips,  1);
-            risk["tp1_distance_pips"] = Math.Round(tpPips,  1);
-            risk["tp2_distance_pips"] = Math.Round(tp2Pips, 1);
-            risk["rr_ratio"]          = rr;
-            risk["calculated_lot"]    = req.LotSize;
-            risk["dollar_risk"]       = Math.Round(dollarRisk,    2);
-            risk["dollar_profit_tp1"] = Math.Round(dollarProfit,  2);
-            risk["dollar_profit_tp2"] = Math.Round(dollarProfit2, 2);
+            var effective = EffectiveTradeSettings.Resolve(_cfg.Bot, req.Strategy, req.LotSize, req.MaxSpreadPips);
+            var metrics = BuildReviewRiskMetrics(snapshot, req, effective, req.LotSize);
+            PatchReviewRiskSnapshot(snapshot, req, effective, metrics);
         }
 
         private static JObject Unavailable(string reason) => new()
@@ -7176,6 +7599,7 @@ SAFETY RULES:
                 : Confirm("Start LIVE auto scalping for this pair?\n\nThe bot will place multiple trades inside the configured session limits and existing risk controls."));
             if (!approved)
             {
+                _scalpingTradeManager.Stop();
                 Log("[SCALP] User cancelled auto scalping start.", C_YELLOW);
                 return true;
             }
@@ -7187,7 +7611,10 @@ SAFETY RULES:
             _bot.UpdateApiConfig(_cfg.ApiIntegrations);
 
             if (_scalping?.IsRunning == true)
+            {
                 await _scalping.StopAsync().ConfigureAwait(false);
+                _scalpingTradeManager.Stop();
+            }
 
             _scalping = new ScalpingSessionService(_bridge, _newsCalendar, _cfg.ApiIntegrations);
             _scalping.OnLog += msg => Log(msg, msg.Contains("Blocked", StringComparison.OrdinalIgnoreCase) ? C_YELLOW : C_ACCENT);
@@ -7195,6 +7622,8 @@ SAFETY RULES:
             {
                 bool running = string.Equals(status, "Running", StringComparison.OrdinalIgnoreCase);
                 _btnStopScalping.Enabled = running;
+                if (!running)
+                    _scalpingTradeManager.Stop();
                 SetBotBadge($"SCALPING {status.ToUpperInvariant()}", running ? Color.Gold : C_ACCENT);
             });
 
@@ -7233,6 +7662,7 @@ SAFETY RULES:
                     : null);
 
             await _scalping.StartAsync(startReq).ConfigureAwait(false);
+            _scalpingTradeManager.Start(_cfg.Bot.Scalping);
             await _settings.SaveAsync(_cfg).ConfigureAwait(false);
             Log($"[SCALP] Auto scalping session armed for {req.Pair}.", C_GREEN);
             return true;
@@ -8498,8 +8928,6 @@ SAFETY RULES:
             cfg.RiskRewardRatio = Math.Max(0.1, (double)rr.Value);
             cfg.MaxSpreadPips = (double)spread.Value;
             cfg.DynamicValuesEnabled = true;
-            var pairRules = _pairSettings?.GetForPair(pair);
-            cfg.MaxSpreadPips = RoundHalfPip(Math.Min(cfg.MaxSpreadPips, cfg.TakeProfitPips * 0.20));
             cfg.RequireSnapshotConfirmation = true;
             cfg.AllowPyramiding = false;
             cfg.MinDecisionScore = Math.Max(6, cfg.MinDecisionScore);
@@ -8519,13 +8947,20 @@ SAFETY RULES:
             CheckBox aiConfirm,
             CheckBox autoClose,
             NumericUpDown pipsTarget,
-            NumericUpDown moneyTarget) => new()
+            NumericUpDown moneyTarget,
+            NumericUpDown beTrigger) => new()
             {
-                TradingMode = mode.SelectedIndex == 0 ? TradingControlMode.Auto : TradingControlMode.Manual,
+                TradingMode = mode.SelectedIndex switch
+                {
+                    0 => TradingControlMode.Auto,
+                    2 => TradingControlMode.PaperTrading,
+                    _ => TradingControlMode.ManualApproval
+                },
                 UseAiConfirmation = aiConfirm.Checked,
                 AutoCloseAfterOpen = autoClose.Checked,
                 ProfitTargetPips = (double)pipsTarget.Value,
-                ProfitTargetUsd = (double)moneyTarget.Value
+                ProfitTargetUsd = (double)moneyTarget.Value,
+                BeTriggerPercentOfTp = (double)beTrigger.Value
             };
 
         private static NormalTradingSettings BuildNormalTradingSettingsFromReview(
@@ -8682,7 +9117,8 @@ SAFETY RULES:
             UseAiConfirmation = settings.UseAiConfirmation,
             AutoCloseAfterOpen = settings.AutoCloseAfterOpen,
             ProfitTargetPips = settings.ProfitTargetPips,
-            ProfitTargetUsd = settings.ProfitTargetUsd
+            ProfitTargetUsd = settings.ProfitTargetUsd,
+            BeTriggerPercentOfTp = settings.BeTriggerPercentOfTp
         };
 
         private static NormalTradingSettings CloneNormalTradingSettings(NormalTradingSettings settings) => new()
