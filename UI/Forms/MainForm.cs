@@ -17,6 +17,7 @@ using Serilog;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Globalization;
+using System.Security.Cryptography;
 
 namespace MT5TradingBot.UI
 {
@@ -34,6 +35,7 @@ namespace MT5TradingBot.UI
         private AppSettings _cfg = new();
         private bool _warnedZeroAccountValues;
         private bool _shownEaDeployNotice;
+        private DateTime _lastEaStatusBadgeRefreshUtc = DateTime.MinValue;
         private readonly ToolTip _cardTooltip = new() { InitialDelay = 400, ShowAlways = true };
         private readonly object _signalExecutionLock = new();
         private readonly HashSet<string> _executingSignalIds = [];
@@ -151,6 +153,7 @@ namespace MT5TradingBot.UI
             Log(_bridge?.IsConnected == true
                 ? "MT5 Trading Bot ready. MT5 is connected."
                 : "MT5 Trading Bot ready. Connect to MT5 to begin.", C_ACCENT);
+            UpdateEaDeploymentStatusBadge();
             ShowEaDeployNoticeIfNeeded();
             StartMarketDataAutoSyncIfEnabled();
             await RefreshSignalFeedAsync();
@@ -299,6 +302,7 @@ namespace MT5TradingBot.UI
                 _refreshTimer.Start();
                 Log("[OK] Connected to MT5 EA", C_GREEN);
                 await RefreshAsync();
+                UpdateEaDeploymentStatusBadge(force: true);
                 ShowEaDeployNoticeIfNeeded();
                 await EnsureAutoWatcherAsync("MT5 connected");
             }
@@ -1425,7 +1429,111 @@ SAFETY RULES:
                 _lblConnStatus.ForeColor = connected ? C_GREEN : C_RED;
                 _btnDisconnect.Enabled   = connected;
                 if (!connected) _refreshTimer.Stop();
+                UpdateEaDeploymentStatusBadge(force: true);
             });
+        }
+
+        private void UpdateEaDeploymentStatusBadge(bool force = false)
+        {
+            if (!force && DateTime.UtcNow - _lastEaStatusBadgeRefreshUtc < TimeSpan.FromSeconds(15))
+                return;
+
+            _lastEaStatusBadgeRefreshUtc = DateTime.UtcNow;
+
+            try
+            {
+                var status = ReadEaDeploymentBadgeStatus();
+                UIThread(() =>
+                {
+                    _lblEaStatus.Text = status.Text;
+                    _lblEaStatus.ForeColor = status.ForeColor;
+                    _lblEaStatus.BackColor = status.BackColor;
+                    _lblEaStatus.BorderStyle = BorderStyle.FixedSingle;
+                    _cardTooltip.SetToolTip(_lblEaStatus, status.Tooltip);
+                });
+            }
+            catch (Exception ex)
+            {
+                UIThread(() =>
+                {
+                    _lblEaStatus.Text = "[?] EA Unknown";
+                    _lblEaStatus.ForeColor = C_YELLOW;
+                    _lblEaStatus.BackColor = Color.FromArgb(40, 32, 18);
+                    _cardTooltip.SetToolTip(_lblEaStatus, $"Could not read EA deployment status: {ex.Message}");
+                });
+            }
+        }
+
+        private (string Text, Color ForeColor, Color BackColor, string Tooltip) ReadEaDeploymentBadgeStatus()
+        {
+            string statusPath = AppPaths.PrepareEaDeployStatusFile();
+            if (!File.Exists(statusPath))
+            {
+                return (
+                    "[?] EA Unknown",
+                    C_YELLOW,
+                    Color.FromArgb(40, 32, 18),
+                    "EA deployment status file was not found yet. Restart the bot to run the startup EA copy check.");
+            }
+
+            var status = JObject.Parse(File.ReadAllText(statusPath));
+            string mq5Path = status.Value<string>("mq5_path") ?? "";
+            string ex5Path = status.Value<string>("ex5_path") ?? "";
+            string sourceMq5 = status.Value<string>("source") ?? "";
+            string sourceEx5 = status.Value<string>("source_ex5") ?? "";
+            bool needsReload = status.Value<bool?>("needs_mt5_reload") == true;
+            string message = status.Value<string>("message") ?? "";
+
+            if (!File.Exists(mq5Path) || !File.Exists(ex5Path))
+            {
+                return (
+                    "[X] EA Missing",
+                    C_RED,
+                    Color.FromArgb(45, 18, 24),
+                    $"TradingBotEA is not present in the configured MT5 Experts folder.\nMQ5: {mq5Path}\nEX5: {ex5Path}");
+            }
+
+            bool sourceAvailable = File.Exists(sourceMq5) && File.Exists(sourceEx5);
+            bool filesMatch = sourceAvailable &&
+                FilesMatch(sourceMq5, mq5Path) &&
+                FilesMatch(sourceEx5, ex5Path);
+
+            if (!filesMatch)
+            {
+                return (
+                    "[X] EA Outdated",
+                    C_RED,
+                    Color.FromArgb(45, 18, 24),
+                    $"MT5 Experts folder does not match the repository EA files. Restart the bot to copy the latest EA.\nMQ5: {mq5Path}\nEX5: {ex5Path}");
+            }
+
+            if (needsReload)
+            {
+                return (
+                    "[!] EA Reload",
+                    C_YELLOW,
+                    Color.FromArgb(42, 33, 16),
+                    $"EA files were copied successfully, but MT5 must reload them. Remove and re-attach TradingBotEA on the chart, or restart MT5.\n{message}\nEX5: {ex5Path}");
+            }
+
+            return (
+                "[OK] EA File",
+                C_GREEN,
+                Color.FromArgb(16, 42, 28),
+                $"TradingBotEA files match the bot repository and are present in the MT5 Experts folder.\nEX5: {ex5Path}");
+        }
+
+        private static bool FilesMatch(string leftPath, string rightPath)
+        {
+            var left = new FileInfo(leftPath);
+            var right = new FileInfo(rightPath);
+            if (left.Length != right.Length) return false;
+
+            using var leftStream = File.OpenRead(leftPath);
+            using var rightStream = File.OpenRead(rightPath);
+            byte[] leftHash = SHA256.HashData(leftStream);
+            byte[] rightHash = SHA256.HashData(rightStream);
+            return leftHash.SequenceEqual(rightHash);
         }
 
         private void UpdateBotBadge(bool running)
@@ -2332,7 +2440,10 @@ SAFETY RULES:
         //  NAMED EVENT HANDLERS
         // ==========================================================
         private void ClockTimer_Tick(object? sender, EventArgs e)
-            => _lblTime.Text = $"UTC {DateTime.UtcNow:HH:mm:ss}  |  Local {DateTime.Now:HH:mm:ss}";
+        {
+            _lblTime.Text = $"UTC {DateTime.UtcNow:HH:mm:ss}  |  Local {DateTime.Now:HH:mm:ss}";
+            UpdateEaDeploymentStatusBadge();
+        }
 
         private async void RefreshTimer_Tick(object? sender, EventArgs e)  => await OnRefreshTickAsync();
         private async void BtnConnect_Click(object? sender, EventArgs e)    => await ConnectAsync();

@@ -71,6 +71,8 @@ namespace MT5TradingBot.UI
             _pnlDot.Location = new Point(230, 21);
             _pnlDot.Size = new Size(10, 10);
             _lblConnStatus.Location = new Point(246, 18);
+            _lblEaStatus.Location = new Point(355, 15);
+            _lblEaStatus.Size = new Size(185, 24);
             _lblTime.Anchor = AnchorStyles.Top | AnchorStyles.Right;
             _lblTime.Location = new Point(Math.Max(760, ClientSize.Width - 360), 18);
 
@@ -744,6 +746,11 @@ namespace MT5TradingBot.UI
             _lblTitle.Font = new Font("Segoe UI Semibold", 15F, FontStyle.Bold);
             _lblTitle.ForeColor = C_TEXT;
             _lblConnStatus.ForeColor = C_MUTED;
+            _lblEaStatus.AutoSize = false;
+            _lblEaStatus.TextAlign = ContentAlignment.MiddleCenter;
+            _lblEaStatus.BorderStyle = BorderStyle.FixedSingle;
+            _lblEaStatus.ForeColor = C_MUTED;
+            _lblEaStatus.BackColor = Color.FromArgb(18, 18, 28);
             _lblTime.ForeColor = C_MUTED;
             _lblBotBadge.ForeColor = C_RED;
             _lblClaudeBadge.ForeColor = C_RED;

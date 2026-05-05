@@ -27,6 +27,13 @@ int  g_pipe      = INVALID_HANDLE;
 bool g_connected = false;
 int  g_totalServed = 0;
 
+double g_AsianHigh = 0;
+double g_AsianLow  = 0;
+
+double g_VwapNumerator   = 0;
+double g_VwapDenominator = 0;
+double g_Vwap            = 0;
+
 //+------------------------------------------------------------------+
 int OnInit()
 {
@@ -55,7 +62,40 @@ void OnTimer()
 }
 
 // Expose hook on tick too for lower latency
-void OnTick() { ServeOnePipeRequest(); }
+void OnTick()
+{
+   MqlDateTime dt;
+   TimeToStruct(TimeGMT(), dt);
+   int hour   = dt.hour;
+   int minute = dt.min;
+   double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+
+   if (hour == 0 && minute == 0)
+   {
+      g_AsianHigh      = 0;
+      g_AsianLow       = 0;
+      g_VwapNumerator  = 0;
+      g_VwapDenominator = 0;
+      g_Vwap           = 0;
+   }
+   if (hour >= 0 && hour < 7)
+   {
+      if (g_AsianHigh == 0 || bid > g_AsianHigh) g_AsianHigh = bid;
+      if (g_AsianLow  == 0 || bid < g_AsianLow)  g_AsianLow  = bid;
+   }
+
+   double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+   double typicalPrice = (bid + ask + iClose(_Symbol, PERIOD_M1, 0)) / 3.0;
+   double tickVol = (double)iVolume(_Symbol, PERIOD_M1, 0);
+   if (tickVol > 0)
+   {
+      g_VwapNumerator   += typicalPrice * tickVol;
+      g_VwapDenominator += tickVol;
+      g_Vwap = g_VwapDenominator > 0 ? g_VwapNumerator / g_VwapDenominator : typicalPrice;
+   }
+
+   ServeOnePipeRequest();
+}
 
 //+------------------------------------------------------------------+
 //| One iteration: accept → read → process → respond → close        |
@@ -153,6 +193,7 @@ string ProcessRequest(string json)
    if(cmd == "GET_ACCOUNT")    return CmdGetAccount(reqId);
    if(cmd == "GET_POSITIONS")  return CmdGetPositions(reqId);
    if(cmd == "OPEN_TRADE")     return CmdOpenTrade(reqId, json);
+   if(cmd == "CHECK_ORDER")    return CmdCheckOrder(reqId, json);
    if(cmd == "CLOSE_TRADE")    return CmdCloseTrade(reqId, json);
    if(cmd == "MODIFY_POSITION")return CmdModifyPosition(reqId, json);
    if(cmd == "GET_SYMBOL_INFO")return CmdGetSymbolInfo(reqId, json);
@@ -537,6 +578,105 @@ string CmdOpenTrade(string reqId, string json)
 }
 
 //+------------------------------------------------------------------+
+//| CHECK_ORDER                                                       |
+//+------------------------------------------------------------------+
+string CmdCheckOrder(string reqId, string json)
+{
+   string data = JsonStr(json, "data");
+   if(StringLen(data) == 0) data = json;
+
+   string symbol   = JsonStr(data, "symbol");
+   if(StringLen(symbol) == 0) symbol = JsonStr(data, "Pair");
+   string typeStr  = JsonStr(data, "trade_type");
+   if(StringLen(typeStr) == 0) typeStr = JsonStr(data, "TradeType");
+   string orderStr = JsonStr(data, "order_type");
+   if(StringLen(orderStr) == 0) orderStr = JsonStr(data, "OrderType");
+   double lots     = JsonDbl(data, "lots");
+   if(lots <= 0) lots = JsonDbl(data, "LotSize");
+   double price    = JsonDbl(data, "price");
+   if(price <= 0) price = JsonDbl(data, "EntryPrice");
+   double sl       = JsonDbl(data, "stop_loss");
+   if(sl <= 0) sl = JsonDbl(data, "StopLoss");
+   double tp       = JsonDbl(data, "take_profit");
+   if(tp <= 0) tp = JsonDbl(data, "TakeProfit");
+   int magic       = (int)JsonDbl(data, "magic_number");
+   if(magic <= 0) magic = (int)JsonDbl(data, "MagicNumber");
+   if(magic <= 0) magic = InpMagic;
+
+   StringReplace(symbol, "/", "");
+   if(StringLen(symbol) == 0)
+      return Err(reqId, "INVALID_PAIR", "Pair is empty");
+
+   string brokerSymbol = "";
+   if(!ResolveBrokerSymbol(symbol, brokerSymbol))
+      return Err(reqId, "INVALID_PAIR", "Symbol not found: " + symbol + ". Check broker suffix in MT5 Market Watch.");
+   symbol = brokerSymbol;
+
+   if(lots <= 0) lots = SymbolInfoDouble(symbol, SYMBOL_VOLUME_MIN);
+   bool isBuy = (typeStr == "BUY");
+   bool isMarket = (orderStr == "MARKET" || StringLen(orderStr) == 0);
+   if(price <= 0)
+      price = isBuy ? SymbolInfoDouble(symbol, SYMBOL_ASK) : SymbolInfoDouble(symbol, SYMBOL_BID);
+
+   MqlTradeRequest request;
+   MqlTradeCheckResult check;
+   ZeroMemory(request);
+   ZeroMemory(check);
+
+   request.symbol = symbol;
+   request.volume = lots;
+   request.price = price;
+   request.sl = sl;
+   request.tp = tp;
+   request.magic = magic;
+   request.deviation = InpSlippage;
+   request.type_time = ORDER_TIME_GTC;
+   request.type_filling = InpFillIOC ? ORDER_FILLING_IOC : ORDER_FILLING_FOK;
+
+   if(isMarket)
+   {
+      request.action = TRADE_ACTION_DEAL;
+      request.type = isBuy ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
+   }
+   else if(orderStr == "LIMIT")
+   {
+      request.action = TRADE_ACTION_PENDING;
+      request.type = isBuy ? ORDER_TYPE_BUY_LIMIT : ORDER_TYPE_SELL_LIMIT;
+   }
+   else if(orderStr == "STOP")
+   {
+      request.action = TRADE_ACTION_PENDING;
+      request.type = isBuy ? ORDER_TYPE_BUY_STOP : ORDER_TYPE_SELL_STOP;
+   }
+   else
+   {
+      return Err(reqId, "INVALID_ORDER_TYPE", "Unsupported order type for OrderCheck: " + orderStr);
+   }
+
+   bool ok = OrderCheck(request, check);
+   string comment = check.comment;
+   if(StringLen(comment) == 0)
+      comment = ok ? "OrderCheck accepted" : "OrderCheck rejected";
+
+   string d = "{";
+   d += "\"IsAccepted\":" + BoolJson(ok && (check.retcode == TRADE_RETCODE_DONE || check.retcode == TRADE_RETCODE_PLACED)) + ",";
+   d += "\"Retcode\":" + IntegerToString((int)check.retcode) + ",";
+   d += "\"Comment\":\"" + Esc(comment) + "\",";
+   d += "\"Margin\":" + DoubleToString(check.margin, 2) + ",";
+   d += "\"MarginFree\":" + DoubleToString(check.margin_free, 2) + ",";
+   d += "\"MarginLevel\":" + DoubleToString(check.margin_level, 2) + ",";
+   d += "\"Volume\":" + DoubleToString(lots, 2) + ",";
+   d += "\"Price\":" + DoubleToString(price, (int)SymbolInfoInteger(symbol, SYMBOL_DIGITS)) + ",";
+   d += "\"StopLoss\":" + DoubleToString(sl, (int)SymbolInfoInteger(symbol, SYMBOL_DIGITS)) + ",";
+   d += "\"TakeProfit\":" + DoubleToString(tp, (int)SymbolInfoInteger(symbol, SYMBOL_DIGITS)) + ",";
+   d += "\"Symbol\":\"" + Esc(symbol) + "\",";
+   d += "\"TradeType\":\"" + (isBuy ? "BUY" : "SELL") + "\"";
+   d += "}";
+
+   return Ok(reqId, d);
+}
+
+//+------------------------------------------------------------------+
 //| CLOSE_TRADE                                                       |
 //+------------------------------------------------------------------+
 string CmdCloseTrade(string reqId, string json)
@@ -710,7 +850,8 @@ string CmdGetMarketSnapshot(string reqId, string json)
    d += "\"newyork_open\":" + BoolJson(newYorkOpen) + ",";
    d += "\"overlap_active\":" + BoolJson(overlap) + ",";
    d += "\"session_name\":\"" + (overlap ? "London+NY Overlap" : (londonOpen ? "London" : (newYorkOpen ? "New York" : "Off Session"))) + "\",";
-   d += "\"is_weekend\":" + BoolJson(isWeekend);
+   d += "\"is_weekend\":" + BoolJson(isWeekend) + ",";
+   d += "\"vwap\":" + DoubleToString(g_Vwap, (int)SymbolInfoInteger(sym, SYMBOL_DIGITS));
    d += "},";
    d += "\"symbol\":" + SnapshotSymbolJson(sym) + ",";
    d += "\"price\":" + SnapshotPriceJson(sym, maxSpreadPips) + ",";
@@ -1150,7 +1291,7 @@ string SnapshotLevelsJson(string sym)
    d += "\"key_level_type\":\"" + (MathAbs(bid - support) <= MathAbs(resistance - bid) ? "SUPPORT" : "RESISTANCE") + "\",";
    d += "\"prev_day_high\":" + DoubleToString(prevHigh, digits) + ",";
    d += "\"prev_day_low\":" + DoubleToString(prevLow, digits) + ",";
-   d += "\"asian_high\":0.00000,\"asian_low\":0.00000,";
+   d += "\"asian_high\":" + DoubleToString(g_AsianHigh, digits) + ",\"asian_low\":" + DoubleToString(g_AsianLow, digits) + ",";
    d += "\"daily_pivot\":" + DoubleToString(pivot, digits) + ",";
    d += "\"daily_s1\":" + DoubleToString(s1, digits) + ",";
    d += "\"daily_s2\":" + DoubleToString(s2, digits) + ",";

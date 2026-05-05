@@ -13,11 +13,13 @@ namespace MT5TradingBot.Modules.Scalping
         private const int ProfessionalMinDecisionScore = 6;
         private const double ProfessionalMinRiskReward = 1.5;
         private const double ProfessionalMaxSpreadPercentOfTp = 20.0;
+        private const double ScalpSignalExpiryMinutes = 0.17;
 
         private readonly MT5Bridge _bridge;
         private readonly INewsCalendarService? _newsCalendar;
         private readonly ApiIntegrationConfig _apiConfig;
         private readonly object _gate = new();
+        private readonly Queue<double> _atrHistory = new();
         private CancellationTokenSource? _sessionCts;
         private Task? _sessionTask;
 
@@ -225,6 +227,30 @@ namespace MT5TradingBot.Modules.Scalping
                             $"SL {cfg.StopLossPips:F1}->{effectiveCfg.StopLossPips:F1} pips, " +
                             $"TP {cfg.TakeProfitPips:F1}->{effectiveCfg.TakeProfitPips:F1} pips, " +
                             $"max spread {cfg.MaxSpreadPips:F1}->{effectiveCfg.MaxSpreadPips:F1} pips.");
+                    }
+
+                    // ── ATR spike filter ──────────────────────────────────────
+                    if (snapshot != null)
+                    {
+                        double currentAtr = ReadAtrPips(snapshot, symbol);
+                        if (!double.IsNaN(currentAtr) && currentAtr > 0)
+                        {
+                            _atrHistory.Enqueue(currentAtr);
+                            if (_atrHistory.Count > 20)
+                                _atrHistory.Dequeue();
+
+                            if (_atrHistory.Count >= 5)
+                            {
+                                double atrAvg = _atrHistory.Average();
+                                if (currentAtr > atrAvg * 2.5)
+                                {
+                                    LogScalpSeparator();
+                                    Log($"[SCALP] ATR spike: {currentAtr:F1} pips > 2.5× avg {atrAvg:F1} pips — waiting.");
+                                    await Delay(cfg, ct).ConfigureAwait(false);
+                                    continue;
+                                }
+                            }
+                        }
                     }
 
                     var decision = snapshot != null
@@ -534,14 +560,14 @@ namespace MT5TradingBot.Modules.Scalping
                 Pair = request.Pair,
                 TradeType = direction,
                 OrderType = OrderType.MARKET,
-                EntryPrice = 0,
+                EntryPrice = Math.Round(entry, 5),
                 StopLoss = Math.Round(sl, 5),
                 TakeProfit = Math.Round(tp, 5),
                 LotSize = Math.Max(0.01, request.LotSize),
                 MaxSpreadPips = cfg.MaxSpreadPips,
                 Comment = decision == null ? "AutoScalp" : $"AutoScalp S{decision.Score}",
                 MagicNumber = request.MagicNumber,
-                ExpiryMinutes = 1,
+                ExpiryMinutes = ScalpSignalExpiryMinutes,
                 MoveSLToBreakevenAfterTP1 = true,
                 CreatedAt = DateTime.UtcNow
             };
@@ -674,9 +700,26 @@ namespace MT5TradingBot.Modules.Scalping
                     "the market is closed or trading is disabled",
                     $"Market open: {YesNo(marketOpen)}; trading allowed: {YesNo(tradeAllowed)}");
 
+            double adx = ReadNumber(snapshot, "indicators.m5.adx");
+            if (!double.IsNaN(adx) && adx < 20)
+                return new ScalpingDecision(
+                    false,
+                    0,
+                    direction,
+                    $"ADX {adx:F1} below 20 — market is ranging, no scalp",
+                    BuildSnapshotTrace(snapshot, cfg, direction, 0, []));
+
+            string h1Trend = ReadText(snapshot, "structure.trend_h1");
+            if (!string.IsNullOrWhiteSpace(h1Trend) && !h1Trend.Contains(want, StringComparison.OrdinalIgnoreCase))
+                return new ScalpingDecision(
+                    false,
+                    0,
+                    direction,
+                    $"H1 trend is {h1Trend} — against required {want} direction",
+                    BuildSnapshotTrace(snapshot, cfg, direction, 0, []));
+
             ScoreText(snapshot, "structure.trend_m5", want, ref score, reasons, "M5 trend");
             ScoreText(snapshot, "structure.trend_m15", want, ref score, reasons, "M15 trend");
-            ScoreText(snapshot, "structure.trend_h1", want, ref score, reasons, "H1 trend");
             ScoreText(snapshot, "candles.m5_last.direction", buy ? "BULLISH" : "BEARISH", ref score, reasons, "M5 candle");
             ScoreText(snapshot, "indicators.m5.macd_bias", want, ref score, reasons, "M5 MACD");
             ScoreText(snapshot, "indicators.m15.macd_bias", want, ref score, reasons, "M15 MACD");
@@ -689,12 +732,18 @@ namespace MT5TradingBot.Modules.Scalping
             double rsi = ReadNumber(snapshot, "indicators.m5.rsi");
             if (!double.IsNaN(rsi))
             {
-                if (buy && rsi is >= 45 and <= 72) { score++; reasons.Add("M5 RSI buy zone"); }
-                if (!buy && rsi is >= 28 and <= 55) { score++; reasons.Add("M5 RSI sell zone"); }
-                if (buy && rsi > 78)
-                    return new ScalpingDecision(false, score, direction, "M5 RSI is too high for a buy scalp", BuildSnapshotTrace(snapshot, cfg, direction, score, reasons));
-                if (!buy && rsi < 22)
-                    return new ScalpingDecision(false, score, direction, "M5 RSI is too low for a sell scalp", BuildSnapshotTrace(snapshot, cfg, direction, score, reasons));
+                if (buy && rsi > 70)
+                    return new ScalpingDecision(false, score, direction,
+                        $"M5 RSI {rsi:F1} overbought — above 70, no buy scalp",
+                        BuildSnapshotTrace(snapshot, cfg, direction, score, reasons));
+                if (!buy && rsi < 30)
+                    return new ScalpingDecision(false, score, direction,
+                        $"M5 RSI {rsi:F1} oversold — below 30, no sell scalp",
+                        BuildSnapshotTrace(snapshot, cfg, direction, score, reasons));
+                if (buy && rsi is >= 45 and <= 70) { score++; reasons.Add("M5 RSI buy zone"); }
+                if (!buy && rsi is >= 30 and <= 55) { score++; reasons.Add("M5 RSI sell zone"); }
+                if (buy && rsi is >= 52 and <= 65) { score++; reasons.Add("M5 RSI buy momentum"); }
+                if (!buy && rsi is >= 35 and <= 48) { score++; reasons.Add("M5 RSI sell momentum"); }
             }
 
             double stoch = ReadNumber(snapshot, "indicators.m5.stoch_k");
@@ -708,6 +757,12 @@ namespace MT5TradingBot.Modules.Scalping
             bool inside = ReadBool(snapshot, "candles.m5_last.is_inside_bar", false);
             if (doji || inside)
                 return new ScalpingDecision(false, score, direction, "the latest M5 candle is not clear enough", BuildSnapshotTrace(snapshot, cfg, direction, score, reasons));
+
+            bool engulfing = ReadBool(snapshot, "candles.m5_last.is_engulfing", false);
+            if (engulfing) { score++; reasons.Add("M5 engulfing candle"); }
+
+            bool bosDetected = ReadBool(snapshot, "structure.bos_detected", false);
+            if (bosDetected) { score++; reasons.Add("BOS detected"); }
 
             double supportDist = ReadNumber(snapshot, "levels.distance_to_support_pips");
             double resistanceDist = ReadNumber(snapshot, "levels.distance_to_resistance_pips");
@@ -726,6 +781,26 @@ namespace MT5TradingBot.Modules.Scalping
             {
                 score++;
                 reasons.Add("room to support");
+            }
+
+            double bid = ReadNumber(snapshot, "price.bid");
+            double vwap = ReadNumber(snapshot, "session.vwap");
+            if (!double.IsNaN(vwap) && vwap > 0 && !double.IsNaN(bid) && bid > 0)
+            {
+                bool aboveVwap = bid > vwap;
+                bool vwapAligned = (buy && aboveVwap) || (!buy && !aboveVwap);
+                if (vwapAligned) { score++; reasons.Add($"price {(aboveVwap ? "above" : "below")} VWAP — institutional bias aligned"); }
+            }
+
+            double asianHigh = ReadNumber(snapshot, "levels.asian_high");
+            double asianLow  = ReadNumber(snapshot, "levels.asian_low");
+            double currentBid = ReadNumber(snapshot, "price.bid");
+            if (!double.IsNaN(asianHigh) && asianHigh > 0 &&
+                !double.IsNaN(asianLow) && asianLow > 0 &&
+                !double.IsNaN(currentBid))
+            {
+                if (buy && currentBid > asianHigh) { score++; reasons.Add("price above Asian high — London breakout"); }
+                if (!buy && currentBid < asianLow)  { score++; reasons.Add("price below Asian low — London breakout"); }
             }
 
             bool approved = score >= cfg.MinDecisionScore;

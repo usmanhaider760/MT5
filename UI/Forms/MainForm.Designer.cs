@@ -21,6 +21,7 @@ namespace MT5TradingBot.UI
         private Label _lblTitle;
         private Panel _pnlDot;
         private Label _lblConnStatus;
+        private Label _lblEaStatus;
         private Label _lblTime;
 
         // ── Connection bar ────────────────────────────────────────
@@ -212,6 +213,7 @@ namespace MT5TradingBot.UI
             _lblTitle = new Label();
             _pnlDot = new Panel();
             _lblConnStatus = new Label();
+            _lblEaStatus = new Label();
             _lblTime = new Label();
             _pnlConnBar = new Panel();
             _cmbMode = new ComboBox();
@@ -445,6 +447,7 @@ namespace MT5TradingBot.UI
             _pnlHeader.Controls.Add(_lblTitle);
             _pnlHeader.Controls.Add(_pnlDot);
             _pnlHeader.Controls.Add(_lblConnStatus);
+            _pnlHeader.Controls.Add(_lblEaStatus);
             _pnlHeader.Controls.Add(_lblTime);
             _pnlHeader.Location = new Point(3, 3);
             _pnlHeader.Name = "_pnlHeader";
@@ -472,12 +475,19 @@ namespace MT5TradingBot.UI
             _lblConnStatus.Size = new Size(100, 23);
             _lblConnStatus.TabIndex = 2;
             // 
+            // _lblEaStatus
+            // 
+            _lblEaStatus.Location = new Point(0, 0);
+            _lblEaStatus.Name = "_lblEaStatus";
+            _lblEaStatus.Size = new Size(120, 23);
+            _lblEaStatus.TabIndex = 3;
+            // 
             // _lblTime
             // 
             _lblTime.Location = new Point(0, 0);
             _lblTime.Name = "_lblTime";
             _lblTime.Size = new Size(100, 23);
-            _lblTime.TabIndex = 3;
+            _lblTime.TabIndex = 4;
             // 
             // _pnlConnBar
             // 

@@ -36,7 +36,8 @@ namespace MT5TradingBot.Modules.StrategyEngine
 
                 double mid = (info.Ask + info.Bid) / 2.0;
                 double pipSize = GetPipSize(candidate.Pair);
-                double stopDistance = Math.Max(15 * pipSize, info.SpreadPips * 3 * pipSize);
+                double minSlPips = GetMinStopPips(candidate.Pair);
+                double stopDistance = Math.Max(minSlPips * pipSize, info.SpreadPips * 3 * pipSize);
                 double takeProfitDistance = stopDistance * Math.Max(config.MinRRRatio, 1.5);
 
                 return new MarketSignal
@@ -74,6 +75,16 @@ namespace MT5TradingBot.Modules.StrategyEngine
             if (s.Contains("XAG")) return 0.01;
             if (s.Contains("BTC") || s.Contains("ETH")) return 1.0;
             return 0.0001;
+        }
+
+        private static double GetMinStopPips(string symbol)
+        {
+            string s = symbol.ToUpperInvariant();
+            if (s.Contains("XAU") || s.Contains("GOLD")) return 80;
+            if (s.Contains("XAG")) return 30;
+            if (s.Contains("BTC")) return 500;
+            if (s.Contains("JPY")) return 20;
+            return 15;
         }
     }
 }

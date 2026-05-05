@@ -18,10 +18,10 @@ namespace MT5TradingBot.Modules.NewsFilter
             if (string.IsNullOrWhiteSpace(provider))
                 return new ModuleStatus(false, "News provider is not selected.");
 
-            if (!IsFmpProvider(provider))
-                return new ModuleStatus(false, $"News provider '{provider}' is not wired yet. Select Financial Modeling Prep or None.");
+            if (!IsSupportedProvider(provider))
+                return new ModuleStatus(false, $"News provider '{provider}' is not wired yet. Select Financial Modeling Prep, Trading Economics, or None.");
 
-            if (string.IsNullOrWhiteSpace(config.NewsApiKey))
+            if (IsFmpProvider(provider) && string.IsNullOrWhiteSpace(config.NewsApiKey))
                 return new ModuleStatus(false, "Financial Modeling Prep API key is missing. News blackout checks will be unavailable.");
 
             if (config.NewsCurrencies.Count == 0)
@@ -40,7 +40,7 @@ namespace MT5TradingBot.Modules.NewsFilter
                     return new ModuleStatus(false, snapshot.Reason);
 
                 return new ModuleStatus(true,
-                    $"FMP news API reachable. Risk {snapshot.RiskLevel}; relevant events: {snapshot.RelevantEvents.Count}; blackout: {(snapshot.IsBlackoutActive ? "yes" : "no")}.");
+                    $"{snapshot.Source} news API reachable. Risk {snapshot.RiskLevel}; relevant events: {snapshot.RelevantEvents.Count}; blackout: {(snapshot.IsBlackoutActive ? "yes" : "no")}.");
             }
             catch (OperationCanceledException)
             {
@@ -55,5 +55,12 @@ namespace MT5TradingBot.Modules.NewsFilter
         private static bool IsFmpProvider(string provider) =>
             provider.Contains("Financial Modeling Prep", StringComparison.OrdinalIgnoreCase) ||
             string.Equals(provider, "FMP", StringComparison.OrdinalIgnoreCase);
+
+        private static bool IsTradingEconomicsProvider(string provider) =>
+            provider.Contains("Trading Economics", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(provider, "TE", StringComparison.OrdinalIgnoreCase);
+
+        private static bool IsSupportedProvider(string provider) =>
+            IsFmpProvider(provider) || IsTradingEconomicsProvider(provider);
     }
 }

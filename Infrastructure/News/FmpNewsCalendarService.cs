@@ -29,10 +29,12 @@ namespace MT5TradingBot.Modules.NewsFilter
             if (string.Equals(provider, "None", StringComparison.OrdinalIgnoreCase))
                 return Unavailable("News filtering is disabled in AI API Config.", "None", configured: true);
 
-            if (!IsFmpProvider(provider))
-                return Unavailable($"News provider '{provider}' is not wired yet. Select Financial Modeling Prep.", provider, configured: false);
+            bool isFmp = IsFmpProvider(provider);
+            bool isTradingEconomics = IsTradingEconomicsProvider(provider);
+            if (!isFmp && !isTradingEconomics)
+                return Unavailable($"News provider '{provider}' is not wired yet. Select Financial Modeling Prep or Trading Economics.", provider, configured: false);
 
-            if (string.IsNullOrWhiteSpace(config.NewsApiKey))
+            if (isFmp && string.IsNullOrWhiteSpace(config.NewsApiKey))
                 return Unavailable("Financial Modeling Prep API key is missing.", "Financial Modeling Prep", configured: false);
 
             var currencies = ExtractCurrencies(pair);
@@ -82,7 +84,7 @@ namespace MT5TradingBot.Modules.NewsFilter
                     HighImpactNext60Minutes = highNext60,
                     IsBlackoutActive = blocking.Count > 0,
                     IsConfigured = true,
-                    Source = "Financial Modeling Prep",
+                    Source = ProviderDisplayName(provider),
                     Reason = reason,
                     CheckedAtUtc = now,
                     CacheUpdatedAtUtc = _cacheUpdatedAtUtc,
@@ -92,8 +94,8 @@ namespace MT5TradingBot.Modules.NewsFilter
             }
             catch (Exception ex)
             {
-                Log.Warning(ex, "FMP news calendar check failed for {Pair}", pair);
-                return Unavailable($"News API call failed: {ex.Message}", "Financial Modeling Prep", configured: true);
+                Log.Warning(ex, "News calendar check failed for {Pair} using {Provider}", pair, ProviderDisplayName(provider));
+                return Unavailable($"News API call failed: {ex.Message}", ProviderDisplayName(provider), configured: true);
             }
         }
 
@@ -119,15 +121,15 @@ namespace MT5TradingBot.Modules.NewsFilter
                 if (isFresh)
                     return _cachedEvents;
 
-                var from = DateTime.UtcNow.Date.AddDays(-1);
-                var to = DateTime.UtcNow.Date.AddDays(2);
-                string url =
-                    "https://financialmodelingprep.com/stable/economic-calendar" +
-                    $"?from={from:yyyy-MM-dd}&to={to:yyyy-MM-dd}&apikey={Uri.EscapeDataString(config.NewsApiKey)}";
+                string url = BuildCalendarUrl(config);
 
                 string json = await Http.GetStringAsync(url, cancellationToken).ConfigureAwait(false);
                 var array = JArray.Parse(json);
-                _cachedEvents = [.. array.Select(ParseFmpEvent).Where(e => e != null).Cast<NewsEvent>()];
+                bool isTradingEconomics = IsTradingEconomicsProvider(config.NewsProvider);
+                _cachedEvents = [.. array
+                    .Select(token => isTradingEconomics ? ParseTradingEconomicsEvent(token) : ParseFmpEvent(token))
+                    .Where(e => e != null)
+                    .Cast<NewsEvent>()];
                 _cacheUpdatedAtUtc = DateTime.UtcNow;
                 _cacheKey = key;
                 return _cachedEvents;
@@ -166,6 +168,34 @@ namespace MT5TradingBot.Modules.NewsFilter
             };
         }
 
+        private static NewsEvent? ParseTradingEconomicsEvent(JToken token)
+        {
+            string title = ReadString(token, "Event", "event", "Category", "category");
+            string dateText = ReadString(token, "Date", "date");
+            if (string.IsNullOrWhiteSpace(title) || string.IsNullOrWhiteSpace(dateText))
+                return null;
+
+            if (!DateTime.TryParse(dateText, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal, out var eventTime))
+                return null;
+
+            string country = ReadString(token, "Country", "country");
+            string currency = NormalizeCurrency(ReadString(token, "Currency", "currency", "Symbol", "symbol"), country);
+            string impact = NormalizeImpact(ReadString(token, "Importance", "importance", "Impact", "impact"));
+
+            return new NewsEvent
+            {
+                Currency = currency,
+                Country = country,
+                Title = title,
+                Impact = impact,
+                EventTimeUtc = eventTime,
+                Source = "Trading Economics",
+                Previous = ReadString(token, "Previous", "previous"),
+                Forecast = ReadString(token, "Forecast", "forecast", "TEForecast", "teForecast"),
+                Actual = ReadString(token, "Actual", "actual")
+            };
+        }
+
         private static string ReadString(JToken token, params string[] names)
         {
             foreach (string name in names)
@@ -181,6 +211,86 @@ namespace MT5TradingBot.Modules.NewsFilter
         private static bool IsFmpProvider(string provider) =>
             provider.Contains("Financial Modeling Prep", StringComparison.OrdinalIgnoreCase) ||
             string.Equals(provider, "FMP", StringComparison.OrdinalIgnoreCase);
+
+        private static bool IsTradingEconomicsProvider(string provider) =>
+            provider.Contains("Trading Economics", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(provider, "TE", StringComparison.OrdinalIgnoreCase);
+
+        private static string ProviderDisplayName(string provider) =>
+            IsTradingEconomicsProvider(provider) ? "Trading Economics" : "Financial Modeling Prep";
+
+        private static string BuildCalendarUrl(ApiIntegrationConfig config)
+        {
+            if (IsTradingEconomicsProvider(config.NewsProvider))
+            {
+                string credentials = string.IsNullOrWhiteSpace(config.NewsApiKey)
+                    ? "guest:guest"
+                    : config.NewsApiKey.Trim();
+                string countries = BuildTradingEconomicsCountryPath(config.NewsCurrencies);
+                string importance = TradingEconomicsImportanceQuery(config.NewsImpactFilter);
+                return $"https://api.tradingeconomics.com/calendar/country/{countries}" +
+                    $"?c={Uri.EscapeDataString(credentials)}{importance}";
+            }
+
+            var from = DateTime.UtcNow.Date.AddDays(-1);
+            var to = DateTime.UtcNow.Date.AddDays(2);
+            return "https://financialmodelingprep.com/stable/economic-calendar" +
+                $"?from={from:yyyy-MM-dd}&to={to:yyyy-MM-dd}&apikey={Uri.EscapeDataString(config.NewsApiKey)}";
+        }
+
+        private static string BuildTradingEconomicsCountryPath(IReadOnlyCollection<string> currencies)
+        {
+            var countries = currencies
+                .SelectMany(CurrencyToTradingEconomicsCountries)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .DefaultIfEmpty("united states");
+
+            return string.Join(",", countries.Select(Uri.EscapeDataString));
+        }
+
+        private static IEnumerable<string> CurrencyToTradingEconomicsCountries(string currency)
+        {
+            switch (currency.Trim().ToUpperInvariant())
+            {
+                case "USD":
+                case "XAU":
+                    yield return "united states";
+                    break;
+                case "GBP":
+                    yield return "united kingdom";
+                    break;
+                case "EUR":
+                    yield return "euro area";
+                    break;
+                case "JPY":
+                    yield return "japan";
+                    break;
+                case "CAD":
+                    yield return "canada";
+                    break;
+                case "AUD":
+                    yield return "australia";
+                    break;
+                case "CHF":
+                    yield return "switzerland";
+                    break;
+                case "NZD":
+                    yield return "new zealand";
+                    break;
+                case "CNY":
+                    yield return "china";
+                    break;
+            }
+        }
+
+        private static string TradingEconomicsImportanceQuery(string impactFilter)
+        {
+            if (string.Equals(impactFilter, "High only", StringComparison.OrdinalIgnoreCase))
+                return "&importance=3";
+            if (string.Equals(impactFilter, "Medium + High", StringComparison.OrdinalIgnoreCase))
+                return "&importance=2,3";
+            return "";
+        }
 
         private static string NormalizeImpact(string value)
         {

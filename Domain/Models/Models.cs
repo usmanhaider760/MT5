@@ -96,7 +96,7 @@ namespace MT5TradingBot.Models
         public int MagicNumber { get; set; } = 999001;
 
         [JsonProperty("expiry_minutes")]
-        public int ExpiryMinutes { get; set; } = 60;
+        public double ExpiryMinutes { get; set; } = 60;
 
         [JsonProperty("move_sl_to_be_after_tp1")]
         public bool MoveSLToBreakevenAfterTP1 { get; set; } = true;
@@ -200,6 +200,7 @@ namespace MT5TradingBot.Models
         public string Comment { get; set; } = "";
         public DateTime OpenTime { get; set; }
         public bool SlMovedToBreakeven { get; set; }   // tracked by us
+        public string? EntryH1Trend { get; set; }       // tracked by us
 
         // Computed
         public double ProfitPips =>

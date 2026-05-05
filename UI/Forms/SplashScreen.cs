@@ -114,8 +114,9 @@ namespace MT5TradingBot.UI
 
             var row = new CheckRowControl(icon, name, description)
             {
-                Width  = _pnlCheckArea.ClientSize.Width - 2,
-                Top    = _rows.Count * CheckRowControl.RowHeight,
+                Left   = 24,
+                Width  = Math.Max(420, _pnlCheckArea.ClientSize.Width - 64),
+                Top    = 12 + _rows.Count * (CheckRowControl.RowHeight + 8),
                 Anchor = AnchorStyles.Left | AnchorStyles.Right | AnchorStyles.Top
             };
             _rows.Add(row);
@@ -208,30 +209,34 @@ namespace MT5TradingBot.UI
 
         private sealed class CheckRowControl : Panel
         {
-            public const int RowHeight = 54;
+            public const int RowHeight = 66;
 
             private readonly Label _lblIcon;
             private readonly Label _lblMsg;
+            private readonly Label _lblName;
 
             public CheckRowControl(string icon, string name, string description)
             {
                 Height    = RowHeight;
-                BackColor = Color.Transparent;
+                BackColor = Color.FromArgb(17, 18, 27);
+                Padding = new Padding(0, 0, 0, 6);
 
                 _lblIcon = new Label
                 {
                     Text      = "⏳",
-                    Location  = new Point(0, 13),
+                    Location  = new Point(12, 18),
                     AutoSize  = true,
                     Font      = new Font("Segoe UI", 14f),
                     ForeColor = Color.FromArgb(110, 110, 130)
                 };
 
-                var lblName = new Label
+                _lblName = new Label
                 {
                     Text      = $"{icon}  {name}",
-                    Location  = new Point(34, 7),
-                    AutoSize  = true,
+                    Location  = new Point(48, 9),
+                    AutoSize  = false,
+                    Size      = new Size(520, 20),
+                    AutoEllipsis = true,
                     Font      = new Font("Segoe UI Semibold", 10f, FontStyle.Bold),
                     ForeColor = Color.FromArgb(218, 218, 230)
                 };
@@ -239,13 +244,16 @@ namespace MT5TradingBot.UI
                 _lblMsg = new Label
                 {
                     Text      = description,
-                    Location  = new Point(36, 29),
-                    AutoSize  = true,
+                    Location  = new Point(50, 31),
+                    AutoSize  = false,
+                    Size      = new Size(520, 30),
                     Font      = new Font("Segoe UI", 8.5f),
                     ForeColor = Color.FromArgb(110, 110, 130)
                 };
 
-                Controls.AddRange(new Control[] { _lblIcon, lblName, _lblMsg });
+                Controls.AddRange(new Control[] { _lblIcon, _lblName, _lblMsg });
+                Resize += (_, _) => ResizeText();
+                ResizeText();
             }
 
             public void SetResult(bool ok, string message)
@@ -256,6 +264,14 @@ namespace MT5TradingBot.UI
                 _lblIcon.ForeColor = ok ? Color.FromArgb(39, 174, 96) : Color.FromArgb(220, 80, 80);
                 _lblMsg.Text       = message;
                 _lblMsg.ForeColor  = ok ? Color.FromArgb(90, 160, 90) : Color.FromArgb(200, 90, 90);
+                ResizeText();
+            }
+
+            private void ResizeText()
+            {
+                int textWidth = Math.Max(120, Width - 68);
+                _lblName.Width = textWidth;
+                _lblMsg.Width = textWidth;
             }
         }
     }

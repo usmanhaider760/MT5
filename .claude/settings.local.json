@@ -11,7 +11,10 @@
       "Bash(python \"d:/Repo/MT5TradingBotPro/fix_unicode.py\")",
       "Bash(python3 -c ' *)",
       "Bash(python fix_curly2.py)",
-      "Bash(dotnet clean *)"
+      "Bash(dotnet clean *)",
+      "Bash(powershell -Command \"Select-String -Path 'Data\\\\Config\\\\settings.json' -Pattern '^\\\\s+\\\\]' | Select-Object -First 3\")",
+      "Bash(powershell -Command ' *)",
+      "Bash(n '\\\\`\"USD\\\\`\",`n' '\\\\`\"GBP\\\\`\",`n' '\\\\`\"EUR\\\\`\",`n' '\\\\`\"JPY\\\\`\",`n' '\\\\`\"CHF\\\\`\"`n' '] *)"
     ]
   }
 }

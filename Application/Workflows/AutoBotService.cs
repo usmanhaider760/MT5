@@ -8,6 +8,7 @@ using MT5TradingBot.Modules.PairSettings;
 using MT5TradingBot.Modules.RiskManagement;
 using MT5TradingBot.Modules.TradeExecution;
 using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
 using Serilog;
 using Core = MT5TradingBot.Core;
 
@@ -60,6 +61,7 @@ namespace MT5TradingBot.Services
         private readonly HashSet<long> _slMovedTickets = []; // tickets where SL was already moved to BE
         private readonly HashSet<long> _trailingActiveTickets = [];
         private readonly Dictionary<long, LivePosition> _knownPositions = []; // for close detection
+        private readonly Dictionary<long, string> _entryH1Trends = []; // H1 trend at entry per ticket
         private volatile bool _running;
         private int _tradesToday;
         private DateTime _dayReset = DateTime.Today;
@@ -476,6 +478,9 @@ namespace MT5TradingBot.Services
                     // SL → Breakeven
                     await CheckSLToBreakevenAsync().ConfigureAwait(false);
 
+                    // H1 trend reversal management
+                    await CheckH1TrendReversalAsync().ConfigureAwait(false);
+
                     // Trailing stop
                     await CheckTrailingStopAsync().ConfigureAwait(false);
 
@@ -782,6 +787,11 @@ namespace MT5TradingBot.Services
             try
             {
                 bool liveMode = !_cfg.PaperTrading;
+                var layerLog = new List<LayerResult>();
+                bool tradeExecuted = false;
+                try
+                {
+
                 var rolloutBlock = CheckRolloutStage(request.Id, liveMode);
                 if (rolloutBlock != null)
                     return rolloutBlock;
@@ -789,6 +799,17 @@ namespace MT5TradingBot.Services
                 var noTradeWindowBlock = CheckNoTradeWindow(request.Id, liveMode);
                 if (noTradeWindowBlock != null)
                     return noTradeWindowBlock;
+
+                // ── Session time gate (London + NY: 07:00–16:00 UTC) ───────
+                {
+                    int utcHour = DateTime.UtcNow.Hour;
+                    bool sessionOk = utcHour >= 7 && utcHour < 16;
+                    layerLog.Add(new LayerResult("SESSION_GATE", sessionOk, $"UTC={DateTime.UtcNow:HH:mm}"));
+                    if (!sessionOk)
+                        return Fail(request.Id, "SESSION_CLOSED",
+                            $"UTC {DateTime.UtcNow:HH:mm} is outside the London/NY session window " +
+                            $"(07:00–16:00 UTC). No trade.");
+                }
 
                 // ── 1b. Signal age check ───────────────────────────
                 if (request.ExpiryMinutes > 0)
@@ -1002,6 +1023,8 @@ namespace MT5TradingBot.Services
                     return Fail(request.Id, "RISK_DATA_UNAVAILABLE",
                         "Risk validation returned incomplete safety data");
 
+                layerLog.Add(new LayerResult("RISK", riskResult.IsApproved,
+                    $"RR={riskResult.RiskRewardRatio:F2} risk={riskResult.RiskPercent:F1}%"));
                 if (!riskResult.IsApproved)
                 {
                     Log($"[RISK BLOCKED] {riskResult.Reason}");
@@ -1073,6 +1096,16 @@ namespace MT5TradingBot.Services
                 foreach (var warning in riskResult.Warnings)
                     Log($"[WARN] {warning}");
 
+                // ── Round number awareness (XAUUSD) ───────────────────────
+                if (request.Pair.Contains("XAU", StringComparison.OrdinalIgnoreCase))
+                {
+                    const double xauPipSize = 0.1;
+                    if (IsNearRoundNumber(request.TakeProfit, xauPipSize))
+                        Log($"[WARN] ROUND_NUMBER_WARNING | TP {request.TakeProfit:F2} is within 20 pips of a round level | {request.Pair}");
+                    if (IsNearRoundNumber(request.StopLoss, xauPipSize))
+                        Log($"[WARN] ROUND_NUMBER_WARNING | SL {request.StopLoss:F2} is within 20 pips of a round level | {request.Pair}");
+                }
+
                 // ── 9b. Correlation check ──────────────────────────────
                 if (_cfg.CorrelationCheckEnabled)
                 {
@@ -1134,12 +1167,53 @@ namespace MT5TradingBot.Services
                     else
                     {
                         Log($"[BOT] News risk: {news.RiskLevel} - {news.Reason}");
-                        if (_apiConfig.BlockTradesOnHighImpactNews &&
-                            (news.IsBlackoutActive || news.HighImpactNext60Minutes))
+                        bool newsBlocked = _apiConfig.BlockTradesOnHighImpactNews &&
+                            (news.IsBlackoutActive || news.HighImpactNext60Minutes);
+                        layerLog.Add(new LayerResult("NEWS", !newsBlocked, news.Reason));
+                        if (newsBlocked)
                         {
                             return Fail(request.Id, "NEWS_BLACKOUT", news.Reason);
                         }
                     }
+                }
+
+                // ── ADX ranging block + AI SL vs swing validation ─────────
+                string capturedH1Trend = "";
+                try
+                {
+                    JObject? adxSnapshot = await _bridge.GetMarketSnapshotAsync(request, _cfg).ConfigureAwait(false);
+                    if (adxSnapshot != null)
+                    {
+                        double snapshotAdx = adxSnapshot["indicators"]?["m5"]?["adx"]?.Value<double>() ?? 0;
+                        bool adxOk = !(snapshotAdx > 0 && snapshotAdx < 20);
+                        layerLog.Add(new LayerResult("ADX_RANGING", adxOk, $"ADX={snapshotAdx:F1}"));
+                        if (!adxOk)
+                            return Fail(request.Id, "ADX_RANGING",
+                                $"ADX {snapshotAdx:F1} — market is ranging. No trade.");
+
+                        capturedH1Trend = adxSnapshot["structure"]?["trend_h1"]?.ToString() ?? "";
+
+                        // Warn if AI SL is far from the nearest swing level
+                        double swingLow  = adxSnapshot["structure"]?["swing_low"]?.Value<double>() ?? 0;
+                        double swingHigh = adxSnapshot["structure"]?["swing_high"]?.Value<double>() ?? 0;
+                        double slPipSize = request.Pair.Contains("XAU", StringComparison.OrdinalIgnoreCase) ? 0.1 : 0.0001;
+                        if (request.TradeType == Models.TradeType.BUY && swingLow > 0 && request.StopLoss > 0)
+                        {
+                            double distPips = Math.Abs(request.StopLoss - swingLow) / slPipSize;
+                            if (distPips > 50)
+                                Log($"[WARN] AI_SL_WARNING | SL {request.StopLoss:F5} is {distPips:F0} pips from swing low {swingLow:F5} | {request.Pair}");
+                        }
+                        if (request.TradeType == Models.TradeType.SELL && swingHigh > 0 && request.StopLoss > 0)
+                        {
+                            double distPips = Math.Abs(request.StopLoss - swingHigh) / slPipSize;
+                            if (distPips > 50)
+                                Log($"[WARN] AI_SL_WARNING | SL {request.StopLoss:F5} is {distPips:F0} pips from swing high {swingHigh:F5} | {request.Pair}");
+                        }
+                    }
+                }
+                catch (Exception adxEx)
+                {
+                    Log($"[WARN] ADX/swing snapshot unavailable — gate skipped: {adxEx.Message}");
                 }
 
                 if (request.TakeProfit2 > 0)
@@ -1227,7 +1301,20 @@ namespace MT5TradingBot.Services
                     Log($"[ERROR] MT5 rejected: {result.ErrorMessage}");
                 }
 
+                tradeExecuted = result.IsSuccess;
+                if (result.IsSuccess && result.Ticket > 0 && !string.IsNullOrEmpty(capturedH1Trend))
+                    _entryH1Trends[result.Ticket] = capturedH1Trend;
                 return result;
+
+                } // inner try
+                finally
+                {
+                    int auditPassed = layerLog.Count(l => l.Passed);
+                    string auditFailed = string.Join(", ", layerLog.Where(l => !l.Passed).Select(l => l.Layer));
+                    Log($"TRADE_AUDIT | {request.Pair} {request.TradeType} | " +
+                        $"{auditPassed}/{layerLog.Count} layers passed | " +
+                        $"Failed: [{auditFailed}] | Executed: {tradeExecuted}");
+                }
             }
             finally { _tradeLock.Release(); }
         }
@@ -1285,6 +1372,49 @@ namespace MT5TradingBot.Services
                         _slMovedTickets.Add(pos.Ticket); // persist across heartbeat ticks
                         Log($"✅ SL moved to breakeven for #{pos.Ticket}");
                     }
+                }
+            }
+        }
+
+        // ══════════════════════════════════════════════════════════
+        //  H1 TREND REVERSAL MANAGEMENT
+        // ══════════════════════════════════════════════════════════
+
+        private async Task CheckH1TrendReversalAsync()
+        {
+            if (!_bridge.IsConnected || _entryH1Trends.Count == 0) return;
+            List<LivePosition> positions;
+            try { positions = await _bridge.GetPositionsAsync().ConfigureAwait(false); }
+            catch { return; }
+
+            var openTickets = new HashSet<long>(positions.Select(p => p.Ticket));
+            var staleKeys = _entryH1Trends.Keys.Where(t => !openTickets.Contains(t)).ToList();
+            foreach (var t in staleKeys) _entryH1Trends.Remove(t);
+
+            foreach (var pos in positions)
+            {
+                if (pos.MagicNumber != _cfg.MagicNumber) continue;
+                if (!_entryH1Trends.TryGetValue(pos.Ticket, out string? entryTrend)) continue;
+                if (_slMovedTickets.Contains(pos.Ticket)) continue;
+
+                JObject? snap = null;
+                try
+                {
+                    var probe = new TradeRequest { Pair = pos.Symbol, MagicNumber = pos.MagicNumber };
+                    snap = await _bridge.GetMarketSnapshotAsync(probe, _cfg).ConfigureAwait(false);
+                }
+                catch { continue; }
+
+                string currentH1Trend = snap?["structure"]?["trend_h1"]?.ToString() ?? "UNKNOWN";
+                if (currentH1Trend == "UNKNOWN" || currentH1Trend == entryTrend) continue;
+
+                Log($"[WARN] TREND_REVERSAL | {pos.Symbol} #{pos.Ticket} | Entry: {entryTrend} → Current: {currentH1Trend} — moving SL to breakeven");
+                bool ok = await _bridge.ModifyPositionAsync(pos.Ticket, pos.OpenPrice, pos.TakeProfit).ConfigureAwait(false);
+                if (ok)
+                {
+                    _slMovedTickets.Add(pos.Ticket);
+                    _entryH1Trends.Remove(pos.Ticket);
+                    Log($"[OK] SL moved to breakeven for #{pos.Ticket} on H1 trend reversal");
                 }
             }
         }
@@ -2426,6 +2556,15 @@ namespace MT5TradingBot.Services
                 ErrorCode = code, ErrorMessage = msg };
         }
 
+        private static bool IsNearRoundNumber(double price, double pipSize, int warningPips = 20)
+        {
+            double roundedTo50  = Math.Round(price / 50.0) * 50.0;
+            double roundedTo100 = Math.Round(price / 100.0) * 100.0;
+            double distTo50  = Math.Abs(price - roundedTo50)  / pipSize;
+            double distTo100 = Math.Abs(price - roundedTo100) / pipSize;
+            return distTo50 < warningPips || distTo100 < warningPips;
+        }
+
         private void EnsureFolders()
         {
             Directory.CreateDirectory(_cfg.WatchFolder);
@@ -2498,5 +2637,7 @@ namespace MT5TradingBot.Services
             _tradeLock.Dispose();
             _fileLock.Dispose();
         }
+
+        private record LayerResult(string Layer, bool Passed, string Reason);
     }
 }
