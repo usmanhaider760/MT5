@@ -2,6 +2,7 @@ using Microsoft.Extensions.DependencyInjection;
 using MT5TradingBot.Core;
 using MT5TradingBot.Data;
 using MT5TradingBot.Models;
+using MT5TradingBot.Modules.Backtesting;
 using MT5TradingBot.Modules.BrokerIntegration;
 using MT5TradingBot.Modules.MarketData;
 using MT5TradingBot.Modules.PairScanner;
@@ -255,9 +256,12 @@ namespace MT5TradingBot.UI
             _btnLogDetails.Click += BtnLogDetails_Click;
             _btnSaveLog.Click  += BtnSaveLog_Click;
             _btnOpenLogFile.Click += BtnOpenLogFile_Click;
+            _btnOpenTradeLogFile.Click += BtnOpenTradeLogFile_Click;
             _btnDeleteLogs.Click += BtnDeleteLogs_Click;
             _txtLog.DoubleClick += TxtLog_DoubleClick;
             _cardTooltip.SetToolTip(_btnLogDetails, "Select or double-click a log line to see why the bot traded, waited, or blocked it.");
+            _cardTooltip.SetToolTip(_btnOpenLogFile, "Open the full regular bot diagnostic log for this app session.");
+            _cardTooltip.SetToolTip(_btnOpenTradeLogFile, "Open the focused trade log with placed, rejected, closed, and execution-quality events.");
 
             _btnPairAdd.Click += BtnPairAdd_Click;
             _btnPairEdit.Click += BtnPairEdit_Click;
@@ -1967,6 +1971,7 @@ SAFETY RULES:
             if (InvokeRequired) { Invoke(() => Log(msg, color)); return; }
             Serilog.Log.Information("{msg}", msg);
             string fullMessage = CollapseWhitespace(msg);
+            WriteTradeLogIfNeeded(fullMessage);
             string screenMessage = BuildScreenLogMessage(msg);
             if (screenMessage.Length == 0) return;
 
@@ -1981,6 +1986,55 @@ SAFETY RULES:
             TrimScreenLog();
             _txtLog.ResumeLayout();
             _txtLog.ScrollToCaret();
+        }
+
+        private static void WriteTradeLogIfNeeded(string fullMessage)
+        {
+            if (!IsTradeLifecycleMessage(fullMessage)) return;
+
+            try
+            {
+                AppLogFiles.WriteTrade(fullMessage);
+            }
+            catch (Exception ex)
+            {
+                Serilog.Log.Warning(ex, "Could not write trade lifecycle log");
+            }
+        }
+
+        private static bool IsTradeLifecycleMessage(string text)
+        {
+            if (string.IsNullOrWhiteSpace(text)) return false;
+
+            string[] markers =
+            [
+                "Sending trade to MT5",
+                "Sending signal",
+                "MT5 accepted ticket",
+                "MT5 rejected",
+                "Trade placed",
+                "Trade was not opened",
+                "Execute failed",
+                "Pair row execute failed",
+                "Order attempt",
+                "Final order result",
+                "[PAPER] Simulated",
+                "[PAPER] Estimated commission",
+                "[PAPER] Estimated slippage",
+                "[PAPER] #",
+                "closed at",
+                "Closed #",
+                "Closed:",
+                "Close failed",
+                "Failed to close",
+                "Emergency close",
+                "Position #",
+                "extreme slippage",
+                "HIGH SLIPPAGE",
+                "Slippage:"
+            ];
+
+            return markers.Any(marker => text.Contains(marker, StringComparison.OrdinalIgnoreCase));
         }
 
         private static string BuildScreenLogMessage(string msg)
@@ -3183,7 +3237,10 @@ SAFETY RULES:
             JObject reviewSnapshot = liveSnapshot
                 ?? JObject.Parse(BuildTradeReviewSnapshotJson(request, account, symbol, positions));
             if (liveSnapshot == null)
+            {
                 Log("[BOT] Review market snapshot unavailable; using fallback account/symbol data.", C_YELLOW);
+                await TryEnrichReviewFallbackSnapshotAsync(reviewSnapshot, request, symbol).ConfigureAwait(false);
+            }
 
             try
             {
@@ -3354,6 +3411,12 @@ SAFETY RULES:
                     }
                     else
                     {
+                        await TryEnrichReviewFallbackSnapshotAsync(currentSnapshot, activeRequest, symbol).ConfigureAwait(false);
+                        if (!form.IsDisposed)
+                        {
+                            PatchSnapshotSignalFields(currentSnapshot, activeRequest);
+                            CommitReviewSnapshot("Context");
+                        }
                         lastContextSync = DateTime.Now;
                     }
                 }
@@ -5689,6 +5752,314 @@ SAFETY RULES:
             };
         }
 
+        private async Task TryEnrichReviewFallbackSnapshotAsync(
+            JObject snapshot,
+            TradeRequest request,
+            SymbolInfo? symbol)
+        {
+            if (_bridge == null) return;
+
+            try
+            {
+                DateTime to = DateTime.UtcNow;
+                var m5 = await GetReviewRatesAsync(request.Pair, "M5", to.AddHours(-12), to, 180).ConfigureAwait(false);
+                var m15 = await GetReviewRatesAsync(request.Pair, "M15", to.AddDays(-2), to, 220).ConfigureAwait(false);
+                var h1 = await GetReviewRatesAsync(request.Pair, "H1", to.AddDays(-12), to, 320).ConfigureAwait(false);
+
+                if (m5.Count == 0 && m15.Count == 0 && h1.Count == 0)
+                    return;
+
+                double pipSize = ReviewPipSize(request, symbol);
+                double bid = snapshot["price"]?["bid"]?.Value<double?>()
+                    ?? symbol?.Bid
+                    ?? h1.LastOrDefault()?.Close
+                    ?? m15.LastOrDefault()?.Close
+                    ?? m5.LastOrDefault()?.Close
+                    ?? 0;
+
+                var h4 = AggregateReviewCandles(h1, 4);
+                snapshot["candles"] = new JObject
+                {
+                    ["h4_last"] = BuildReviewCandleJson(h4, h1.Count >= 8 ? AggregateReviewCandles(h1.Take(h1.Count - 4).ToList(), 4) : null, pipSize),
+                    ["h1_last"] = BuildReviewCandleJson(LastOrNull(h1), PreviousOrNull(h1), pipSize),
+                    ["m15_last"] = BuildReviewCandleJson(LastOrNull(m15), PreviousOrNull(m15), pipSize),
+                    ["m5_last"] = BuildReviewCandleJson(LastOrNull(m5), PreviousOrNull(m5), pipSize)
+                };
+
+                var h1Indicators = BuildReviewIndicatorJson(h1, pipSize);
+                snapshot["indicators"] = new JObject
+                {
+                    ["h1"] = h1Indicators,
+                    ["m15"] = BuildReviewIndicatorJson(m15, pipSize),
+                    ["m5"] = BuildReviewIndicatorJson(m5, pipSize)
+                };
+
+                string h4Trend = ReviewTrend(h1.TakeLast(Math.Min(h1.Count, 120)).ToList(), aggregateSize: 4);
+                string h1Trend = ReviewTrend(h1);
+                string m15Trend = ReviewTrend(m15);
+                string m5Trend = ReviewTrend(m5);
+                double swingHigh = h1.Count > 0 ? h1.TakeLast(Math.Min(20, h1.Count)).Max(c => c.High) : 0;
+                double swingLow = h1.Count > 0 ? h1.TakeLast(Math.Min(20, h1.Count)).Min(c => c.Low) : 0;
+                snapshot["structure"] = new JObject
+                {
+                    ["trend_h4"] = h4Trend,
+                    ["trend_h1"] = h1Trend,
+                    ["trend_m15"] = m15Trend,
+                    ["trend_m5"] = m5Trend,
+                    ["all_timeframes_aligned"] = h4Trend == h1Trend && h1Trend == m15Trend && m15Trend == m5Trend,
+                    ["market_regime"] = h1Indicators.Value<double?>("adx") >= 25 ? "TRENDING" : "RANGING",
+                    ["swing_high"] = swingHigh,
+                    ["swing_low"] = swingLow
+                };
+
+                snapshot["levels"] = BuildReviewLevelsJson(h1, bid, pipSize);
+                Log("[BOT] Review fallback enriched from MT5 OHLC rates because GET_MARKET_SNAPSHOT was unavailable.", C_ACCENT);
+            }
+            catch (Exception ex)
+            {
+                Log($"[BOT] Review fallback enrichment failed: {ex.Message}", C_YELLOW);
+            }
+        }
+
+        private async Task<List<BacktestOhlcCandle>> GetReviewRatesAsync(
+            string pair,
+            string timeframe,
+            DateTime fromUtc,
+            DateTime toUtc,
+            int maxRows)
+        {
+            if (_bridge == null) return [];
+
+            var result = await _bridge.TryGetHistoricalRatesAsync(pair, timeframe, fromUtc, toUtc, maxRows).ConfigureAwait(false);
+            return result.Success
+                ? result.Candles.OrderBy(c => c.TimestampUtc).ToList()
+                : [];
+        }
+
+        private double ReviewPipSize(TradeRequest request, SymbolInfo? symbol)
+        {
+            var pairRules = _pairSettings?.GetForPair(request.Pair);
+            if (pairRules?.PipSize > 0) return pairRules.PipSize;
+            return LotCalculator.GetPipSize((symbol?.Symbol ?? request.Pair).ToUpperInvariant());
+        }
+
+        private static BacktestOhlcCandle? LastOrNull(IReadOnlyList<BacktestOhlcCandle> candles) =>
+            candles.Count > 0 ? candles[^1] : null;
+
+        private static BacktestOhlcCandle? PreviousOrNull(IReadOnlyList<BacktestOhlcCandle> candles) =>
+            candles.Count > 1 ? candles[^2] : null;
+
+        private static BacktestOhlcCandle? AggregateReviewCandles(IReadOnlyList<BacktestOhlcCandle> candles, int count)
+        {
+            if (candles.Count < count) return LastOrNull(candles);
+
+            var selected = candles.Skip(candles.Count - count).ToList();
+            return new BacktestOhlcCandle
+            {
+                TimestampUtc = selected[0].TimestampUtc,
+                Symbol = selected[0].Symbol,
+                Timeframe = $"H{count}",
+                Open = selected[0].Open,
+                High = selected.Max(c => c.High),
+                Low = selected.Min(c => c.Low),
+                Close = selected[^1].Close,
+                Volume = selected.Sum(c => c.Volume ?? 0)
+            };
+        }
+
+        private static JObject BuildReviewCandleJson(
+            BacktestOhlcCandle? candle,
+            BacktestOhlcCandle? previous,
+            double pipSize)
+        {
+            if (candle == null) return Unavailable("MT5 OHLC fallback did not return enough candle data.");
+
+            double body = Math.Abs(candle.Close - candle.Open);
+            double upper = candle.High - Math.Max(candle.Open, candle.Close);
+            double lower = Math.Min(candle.Open, candle.Close) - candle.Low;
+            bool inside = previous != null && candle.High < previous.High && candle.Low > previous.Low;
+            bool engulfing = previous != null &&
+                ((candle.Close > candle.Open && previous.Close < previous.Open && candle.Close >= previous.Open && candle.Open <= previous.Close) ||
+                 (candle.Close < candle.Open && previous.Close > previous.Open && candle.Open >= previous.Close && candle.Close <= previous.Open));
+
+            return new JObject
+            {
+                ["time"] = candle.TimestampUtc.ToString("yyyy-MM-dd HH:mm:ss"),
+                ["open"] = candle.Open,
+                ["high"] = candle.High,
+                ["low"] = candle.Low,
+                ["close"] = candle.Close,
+                ["volume"] = candle.Volume ?? 0,
+                ["body_pips"] = pipSize > 0 ? Math.Round(body / pipSize, 1) : 0,
+                ["direction"] = candle.Close > candle.Open ? "BULLISH" : candle.Close < candle.Open ? "BEARISH" : "DOJI",
+                ["is_engulfing"] = engulfing,
+                ["is_pin_bar"] = body > 0 && (upper >= body * 2.0 || lower >= body * 2.0),
+                ["is_inside_bar"] = inside,
+                ["is_doji"] = pipSize > 0 && body / pipSize <= 1.5
+            };
+        }
+
+        private static JObject BuildReviewIndicatorJson(IReadOnlyList<BacktestOhlcCandle> candles, double pipSize)
+        {
+            if (candles.Count == 0) return Unavailable("MT5 OHLC fallback did not return enough indicator data.");
+
+            var closes = candles.Select(c => c.Close).ToList();
+            double close = closes[^1];
+            double ema20 = Ema(closes, 20);
+            double ema50 = Ema(closes, 50);
+            double ema200 = Ema(closes, 200);
+            double rsi = Rsi(closes, 14);
+            double macd = Ema(closes, 12) - Ema(closes, 26);
+            double macdSignal = Ema(MacdSeries(closes), 9);
+            double atr = Atr(candles, 14);
+            double adx = AdxApprox(candles, 14);
+
+            return new JObject
+            {
+                ["rsi"] = Math.Round(rsi, 1),
+                ["rsi_signal"] = rsi >= 70 ? "OVERBOUGHT" : rsi <= 30 ? "OVERSOLD" : "NEUTRAL",
+                ["macd_value"] = macd,
+                ["macd_signal_line"] = macdSignal,
+                ["macd_histogram"] = macd - macdSignal,
+                ["macd_bias"] = macd >= macdSignal ? "BULLISH" : "BEARISH",
+                ["ema20"] = ema20,
+                ["ema50"] = ema50,
+                ["ema200"] = ema200,
+                ["price_vs_ema20"] = close >= ema20 ? "ABOVE" : "BELOW",
+                ["price_vs_ema50"] = close >= ema50 ? "ABOVE" : "BELOW",
+                ["price_vs_ema200"] = close >= ema200 ? "ABOVE" : "BELOW",
+                ["adx"] = Math.Round(adx, 1),
+                ["adx_signal"] = adx >= 25 ? "STRONG_TREND" : adx >= 18 ? "WEAK_TREND" : "NO_TREND",
+                ["atr"] = atr,
+                ["atr_pips"] = pipSize > 0 ? Math.Round(atr / pipSize, 1) : 0
+            };
+        }
+
+        private static JObject BuildReviewLevelsJson(IReadOnlyList<BacktestOhlcCandle> h1, double bid, double pipSize)
+        {
+            if (h1.Count == 0 || bid <= 0) return Unavailable("MT5 OHLC fallback did not return enough support/resistance data.");
+
+            var recent = h1.TakeLast(Math.Min(h1.Count, 96)).ToList();
+            var lows = recent.Select(c => c.Low).OrderBy(x => Math.Abs(bid - x)).ToList();
+            var highs = recent.Select(c => c.High).OrderBy(x => Math.Abs(x - bid)).ToList();
+            double support1 = lows.Where(x => x <= bid).DefaultIfEmpty(recent.Min(c => c.Low)).OrderByDescending(x => x).First();
+            double support2 = lows.Where(x => x < support1).DefaultIfEmpty(support1).OrderByDescending(x => x).First();
+            double resistance1 = highs.Where(x => x >= bid).DefaultIfEmpty(recent.Max(c => c.High)).OrderBy(x => x).First();
+            double resistance2 = highs.Where(x => x > resistance1).DefaultIfEmpty(resistance1).OrderBy(x => x).First();
+            double supportDistance = pipSize > 0 ? Math.Abs(bid - support1) / pipSize : 0;
+            double resistanceDistance = pipSize > 0 ? Math.Abs(resistance1 - bid) / pipSize : 0;
+
+            return new JObject
+            {
+                ["nearest_support_1"] = support1,
+                ["nearest_support_2"] = support2,
+                ["nearest_resistance_1"] = resistance1,
+                ["nearest_resistance_2"] = resistance2,
+                ["distance_to_support_pips"] = Math.Round(supportDistance, 1),
+                ["distance_to_resistance_pips"] = Math.Round(resistanceDistance, 1),
+                ["price_at_key_level"] = Math.Min(supportDistance, resistanceDistance) <= 5.0,
+                ["key_level_type"] = supportDistance <= resistanceDistance ? "SUPPORT" : "RESISTANCE"
+            };
+        }
+
+        private static string ReviewTrend(IReadOnlyList<BacktestOhlcCandle> candles, int aggregateSize = 1)
+        {
+            if (aggregateSize > 1)
+            {
+                var aggregated = new List<BacktestOhlcCandle>();
+                for (int i = 0; i + aggregateSize <= candles.Count; i += aggregateSize)
+                {
+                    var chunk = candles.Skip(i).Take(aggregateSize).ToList();
+                    aggregated.Add(new BacktestOhlcCandle
+                    {
+                        TimestampUtc = chunk[0].TimestampUtc,
+                        Open = chunk[0].Open,
+                        High = chunk.Max(c => c.High),
+                        Low = chunk.Min(c => c.Low),
+                        Close = chunk[^1].Close
+                    });
+                }
+                candles = aggregated;
+            }
+
+            if (candles.Count == 0) return "UNKNOWN";
+
+            var closes = candles.Select(c => c.Close).ToList();
+            double close = closes[^1];
+            double ema20 = Ema(closes, 20);
+            double ema50 = Ema(closes, 50);
+            if (close >= ema20 && ema20 >= ema50) return "BULLISH";
+            if (close <= ema20 && ema20 <= ema50) return "BEARISH";
+            return "RANGING";
+        }
+
+        private static double Ema(IReadOnlyList<double> values, int period)
+        {
+            if (values.Count == 0) return 0;
+            double k = 2.0 / (period + 1);
+            double ema = values[0];
+            foreach (double value in values.Skip(1))
+                ema = value * k + ema * (1 - k);
+            return ema;
+        }
+
+        private static double Rsi(IReadOnlyList<double> closes, int period)
+        {
+            if (closes.Count <= 1) return 50;
+            int start = Math.Max(1, closes.Count - period);
+            double gains = 0;
+            double losses = 0;
+            for (int i = start; i < closes.Count; i++)
+            {
+                double change = closes[i] - closes[i - 1];
+                if (change >= 0) gains += change;
+                else losses -= change;
+            }
+            if (losses <= 0) return 100;
+            double rs = gains / losses;
+            return 100.0 - (100.0 / (1.0 + rs));
+        }
+
+        private static List<double> MacdSeries(IReadOnlyList<double> closes)
+        {
+            var series = new List<double>(closes.Count);
+            for (int i = 1; i <= closes.Count; i++)
+            {
+                var slice = closes.Take(i).ToList();
+                series.Add(Ema(slice, 12) - Ema(slice, 26));
+            }
+            return series;
+        }
+
+        private static double Atr(IReadOnlyList<BacktestOhlcCandle> candles, int period)
+        {
+            if (candles.Count == 0) return 0;
+            int start = Math.Max(0, candles.Count - period);
+            double total = 0;
+            int count = 0;
+            for (int i = start; i < candles.Count; i++)
+            {
+                double prevClose = i > 0 ? candles[i - 1].Close : candles[i].Close;
+                total += Math.Max(candles[i].High - candles[i].Low, Math.Max(Math.Abs(candles[i].High - prevClose), Math.Abs(candles[i].Low - prevClose)));
+                count++;
+            }
+            return count > 0 ? total / count : 0;
+        }
+
+        private static double AdxApprox(IReadOnlyList<BacktestOhlcCandle> candles, int period)
+        {
+            if (candles.Count < 2) return 0;
+            int start = Math.Max(1, candles.Count - period);
+            double directionalMove = 0;
+            double trueRange = 0;
+            for (int i = start; i < candles.Count; i++)
+            {
+                directionalMove += Math.Abs(candles[i].Close - candles[i - 1].Close);
+                trueRange += candles[i].High - candles[i].Low;
+            }
+            return trueRange > 0 ? Math.Min(60, directionalMove / trueRange * 35.0) : 0;
+        }
+
         private string BuildTradeReviewSnapshotJson(
             TradeRequest request,
             AccountInfo? account,
@@ -6399,6 +6770,23 @@ SAFETY RULES:
             catch (Exception ex)
             {
                 Log($"[LOG] Could not open log file: {ex.Message}", C_RED);
+            }
+        }
+
+        private void BtnOpenTradeLogFile_Click(object? sender, EventArgs e)
+        {
+            try
+            {
+                string path = AppLogFiles.CurrentTradeLogFile;
+                if (string.IsNullOrWhiteSpace(path))
+                    throw new InvalidOperationException("Trade log file is not ready yet.");
+
+                AppLogFiles.WriteTrade("Trade log opened by user.");
+                Process.Start(new ProcessStartInfo(path) { UseShellExecute = true });
+            }
+            catch (Exception ex)
+            {
+                Log($"[LOG] Could not open trade log file: {ex.Message}", C_RED);
             }
         }
 

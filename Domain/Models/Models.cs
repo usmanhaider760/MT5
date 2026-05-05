@@ -510,6 +510,9 @@ namespace MT5TradingBot.Models
         [JsonProperty("enable_final_live_readiness_gate")]
         public bool EnableFinalLiveReadinessGate { get; set; } = true;
 
+        [JsonProperty("apply_final_live_readiness_gate_to_paper")]
+        public bool ApplyFinalLiveReadinessGateToPaper { get; set; } = false;
+
         [JsonProperty("require_proven_edge_for_live")]
         public bool RequireProvenEdgeForLive { get; set; } = true;
 
