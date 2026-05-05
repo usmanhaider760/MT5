@@ -195,7 +195,7 @@ H1:
   Price vs EMA20: {{indicators.h1.price_vs_ema20}} | vs EMA50: {{indicators.h1.price_vs_ema50}} | vs EMA200: {{indicators.h1.price_vs_ema200}}
   ADX: {{indicators.h1.adx}} → {{indicators.h1.adx_signal}}
   Bollinger Upper: {{indicators.h1.bollinger_upper}} | Mid: {{indicators.h1.bollinger_mid}} | Lower: {{indicators.h1.bollinger_lower}} | Position: {{indicators.h1.bollinger_position}}
-  ATR: {{indicators.h1.atr}}
+  ATR: {{indicators.h1.atr}} price / {{indicators.h1.atr_pips}} pips
   Stoch K: {{indicators.h1.stoch_k}} | D: {{indicators.h1.stoch_d}} → {{indicators.h1.stoch_signal}}
   Fractal Up: {{indicators.h1.fractal_up}} | Fractal Down: {{indicators.h1.fractal_down}}
 
@@ -205,7 +205,7 @@ M15:
   EMA20: {{indicators.m15.ema20}} | EMA50: {{indicators.m15.ema50}}
   Price vs EMA20: {{indicators.m15.price_vs_ema20}} | vs EMA50: {{indicators.m15.price_vs_ema50}}
   ADX: {{indicators.m15.adx}} → {{indicators.m15.adx_signal}}
-  ATR: {{indicators.m15.atr}}
+  ATR: {{indicators.m15.atr}} price / {{indicators.m15.atr_pips}} pips
   Stoch K: {{indicators.m15.stoch_k}} | D: {{indicators.m15.stoch_d}} → {{indicators.m15.stoch_signal}}
   Fractal Up: {{indicators.m15.fractal_up}} | Fractal Down: {{indicators.m15.fractal_down}}
 
@@ -215,7 +215,7 @@ M5:
   EMA20: {{indicators.m5.ema20}} | EMA50: {{indicators.m5.ema50}}
   Price vs EMA20: {{indicators.m5.price_vs_ema20}} | vs EMA50: {{indicators.m5.price_vs_ema50}}
   ADX: {{indicators.m5.adx}} → {{indicators.m5.adx_signal}}
-  ATR: {{indicators.m5.atr}}
+  ATR: {{indicators.m5.atr}} price / {{indicators.m5.atr_pips}} pips
   Stoch K: {{indicators.m5.stoch_k}} | D: {{indicators.m5.stoch_d}} → {{indicators.m5.stoch_signal}}
   Fractal Up: {{indicators.m5.fractal_up}} | Fractal Down: {{indicators.m5.fractal_down}}
 
@@ -267,12 +267,6 @@ TRADE HISTORY:
 
 RISK PARAMETERS:
 - Max Risk: {{risk.max_risk_pct}}% = ${{risk.max_risk_dollar}}
-- Min R:R Ratio: {{risk.min_rr_ratio}}
-- Suggested SL: {{risk.suggested_sl}}
-- Suggested TP1: {{risk.suggested_tp1}}
-- Suggested TP2: {{risk.suggested_tp2}}
-- SL Distance: {{risk.sl_distance_pips}} pips
-- TP1 Distance: {{risk.tp1_distance_pips}} pips
 - R:R Ratio: {{risk.rr_ratio}}
 - Calculated Lot: {{risk.calculated_lot}}
 - Dollar Risk: ${{risk.dollar_risk}}
@@ -282,6 +276,15 @@ RISK PARAMETERS:
 - Margin Required: ${{risk.margin_required}}
 - Daily Loss Limit: ${{risk.daily_loss_limit_dollar}}
 - Daily Loss Remaining: ${{risk.daily_loss_remaining}}
+
+EFFECTIVE TRADE SETTINGS:
+- Strategy: {{effective_trade_settings.strategy}}
+- Stop Loss Pips: {{effective_trade_settings.stop_loss_pips}}
+- Take Profit Pips: {{effective_trade_settings.take_profit_pips}}
+- Required Risk Reward Ratio: {{effective_trade_settings.required_risk_reward_ratio}}
+- Actual Risk Reward Ratio: {{effective_trade_settings.actual_risk_reward_ratio}}
+- Max Spread Pips: {{effective_trade_settings.max_spread_pips}}
+- Current Spread Pips: {{effective_trade_settings.current_spread_pips}}
 
 NEWS:
 - Risk Level: {{news.risk_level}}
@@ -358,7 +361,7 @@ STEP 4 — ENTRY TIMING:
 - Is there enough room to TP before next major barrier?
 
 STEP 5 — RISK VALIDATION:
-- Is R:R at least {{risk.min_rr_ratio}}:1?
+- Is R:R at least {{effective_trade_settings.required_risk_reward_ratio}}:1?
 - Is SL placed behind a real structure level?
 - Is TP placed before next major resistance or support?
 - Is dollar risk within account limits?
@@ -373,7 +376,7 @@ STEP 6 — FINAL DECISION:
 ═══════════════════════════════════════
 STRICT RULES — NEVER BREAK THESE
 ═══════════════════════════════════════
-- Minimum R:R = {{risk.min_rr_ratio}}:1 — reject if below
+- Required R:R = {{effective_trade_settings.required_risk_reward_ratio}}:1 from the trade page — reject if below
 - SL must be behind real structure — never random
 - TP must have clear space — no major barrier in the way
 - Never trade Asian session (UTC 00:00–07:00) unless overlap
@@ -381,7 +384,7 @@ STRICT RULES — NEVER BREAK THESE
 - Never trade if execution_barriers.news_ok = false
 - Never trade if consecutive_losses >= 3
 - Never trade if same_pair_open = true
-- Never trade if execution_barriers.spread_ok = false. Use the pair-specific spread rule shown in Pre-Trade Safety Checks, not a fixed generic pip limit.
+- Never trade if execution_barriers.spread_ok = false. Use the Trade Page max spread shown in Effective Trade Settings, not pair JSON or a fixed generic pip limit.
 - Never trade if daily_loss_limit_reached = true
 - Lot size must match calculated_lot from risk data
 - SL and TP decimals must match symbol.digits for this broker symbol

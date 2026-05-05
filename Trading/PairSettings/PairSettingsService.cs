@@ -121,17 +121,6 @@ namespace MT5TradingBot.Modules.PairSettings
         private static void Validate(PairTradingSettings settings)
         {
             if (settings.PipSize <= 0) throw new InvalidOperationException("pip_size must be greater than 0.");
-            if (settings.MaxSpreadPips < 0) throw new InvalidOperationException("max_spread_pips cannot be negative.");
-            if (settings.GoodSpreadPips < 0) throw new InvalidOperationException("good_spread_pips cannot be negative.");
-            if (settings.AcceptableSpreadPips < 0) throw new InvalidOperationException("acceptable_spread_pips cannot be negative.");
-            if (settings.MinSlPips < 0) throw new InvalidOperationException("min_sl_pips cannot be negative.");
-            if (settings.MaxSlPips > 0 && settings.MaxSlPips < settings.MinSlPips)
-                throw new InvalidOperationException("max_sl_pips must be greater than or equal to min_sl_pips.");
-            if (settings.MinTpPips < 0) throw new InvalidOperationException("min_tp_pips cannot be negative.");
-            if (settings.ScalpingMinRR < 0) throw new InvalidOperationException("scalping_min_rr cannot be negative.");
-            if (settings.PreferredRR < 0) throw new InvalidOperationException("preferred_rr cannot be negative.");
-            if (settings.AtrMultiplierSl < 0) throw new InvalidOperationException("atr_multiplier_sl cannot be negative.");
-            if (settings.AtrMultiplierTp < 0) throw new InvalidOperationException("atr_multiplier_tp cannot be negative.");
             if (settings.MinAtrPipsM5 < 0) throw new InvalidOperationException("min_atr_pips_m5 cannot be negative.");
             if (settings.MaxAtrPipsM5 < 0) throw new InvalidOperationException("max_atr_pips_m5 cannot be negative.");
             if (settings.MaxAtrPipsM5 > 0 && settings.MaxAtrPipsM5 < settings.MinAtrPipsM5)
@@ -140,8 +129,6 @@ namespace MT5TradingBot.Modules.PairSettings
             if (settings.MaxAtrPipsM15 < 0) throw new InvalidOperationException("max_atr_pips_m15 cannot be negative.");
             if (settings.MaxAtrPipsM15 > 0 && settings.MaxAtrPipsM15 < settings.MinAtrPipsM15)
                 throw new InvalidOperationException("max_atr_pips_m15 must be greater than or equal to min_atr_pips_m15.");
-            if (settings.AvoidTradeIfSpreadAbovePercentOfTp < 0)
-                throw new InvalidOperationException("avoid_trade_if_spread_above_percent_of_tp cannot be negative.");
             if (settings.MinimumDistanceFromKeyLevelPips < 0)
                 throw new InvalidOperationException("minimum_distance_from_key_level_pips cannot be negative.");
             if (settings.BreakEvenAfterProfitPips < 0) throw new InvalidOperationException("break_even_after_profit_pips cannot be negative.");
@@ -163,21 +150,10 @@ namespace MT5TradingBot.Modules.PairSettings
         {
             Pair = settings.Pair,
             PipSize = settings.PipSize,
-            MaxSpreadPips = settings.MaxSpreadPips,
-            GoodSpreadPips = settings.GoodSpreadPips,
-            AcceptableSpreadPips = settings.AcceptableSpreadPips,
-            MinSlPips = settings.MinSlPips,
-            MaxSlPips = settings.MaxSlPips,
-            MinTpPips = settings.MinTpPips,
-            ScalpingMinRR = settings.ScalpingMinRR,
-            PreferredRR = settings.PreferredRR,
-            AtrMultiplierSl = settings.AtrMultiplierSl,
-            AtrMultiplierTp = settings.AtrMultiplierTp,
             MinAtrPipsM5 = settings.MinAtrPipsM5,
             MaxAtrPipsM5 = settings.MaxAtrPipsM5,
             MinAtrPipsM15 = settings.MinAtrPipsM15,
             MaxAtrPipsM15 = settings.MaxAtrPipsM15,
-            AvoidTradeIfSpreadAbovePercentOfTp = settings.AvoidTradeIfSpreadAbovePercentOfTp,
             MinimumDistanceFromKeyLevelPips = settings.MinimumDistanceFromKeyLevelPips,
             BreakEvenAfterProfitPips = settings.BreakEvenAfterProfitPips,
             TrailingStartPips = settings.TrailingStartPips,

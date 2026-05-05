@@ -27,7 +27,7 @@ internal static class Program
     private static readonly TestCase[] Tests =
     [
         new("lot sizing uses equity risk and stop distance", LotSizingUsesRiskFormula),
-        new("risk manager returns validated auto lot size", RiskManagerReturnsValidatedLotSize),
+        new("risk manager returns normalized selected lot size", RiskManagerReturnsValidatedLotSize),
         new("daily trade count stop blocks when limit reached", DailyTradeLimitBlocksAtConfiguredLimit),
         new("daily loss below limit allows live trade to continue", DailyLossBelowLimitAllowsLiveTrade),
         new("daily realized loss at limit blocks live trade", DailyRealizedLossAtLimitBlocksLiveTrade),
@@ -88,9 +88,9 @@ internal static class Program
         new("valid broker freeze level distances allow live trade", ValidBrokerFreezeLevelDistancesAllowLiveTrade),
         new("missing broker freeze metadata blocks live trade", MissingBrokerFreezeMetadataBlocksLiveTrade),
         new("paper mode is separate from broker freeze metadata", PaperModeIsSeparateFromBrokerFreezeMetadata),
-        new("lot below broker minimum blocks live trade", LotBelowBrokerMinimumBlocksLiveTrade),
-        new("lot above broker maximum blocks live trade", LotAboveBrokerMaximumBlocksLiveTrade),
-        new("lot not aligned with broker step blocks live trade", LotNotAlignedWithBrokerStepBlocksLiveTrade),
+        new("lot below broker minimum is normalized", LotBelowBrokerMinimumBlocksLiveTrade),
+        new("lot above broker maximum is normalized", LotAboveBrokerMaximumBlocksLiveTrade),
+        new("lot not aligned with broker step is normalized", LotNotAlignedWithBrokerStepBlocksLiveTrade),
         new("valid broker lot size allows live trade", ValidBrokerLotSizeAllowsLiveTrade),
         new("volume limit exceeded blocks live trade", VolumeLimitExceededBlocksLiveTrade),
         new("missing broker lot metadata blocks live trade", MissingBrokerLotMetadataBlocksLiveTrade),
@@ -403,8 +403,8 @@ internal static class Program
             Config()).ConfigureAwait(false);
 
         AssertTrue(result.IsApproved, result.Reason);
-        AssertClose(0.20, result.ValidatedLotSize, 0.0001, "RiskManager should apply auto-lot sizing.");
-        AssertClose(1.00, result.RiskPercent, 0.01, "Risk percent should remain near configured max.");
+        AssertClose(0.10, result.ValidatedLotSize, 0.0001, "RiskManager should use the selected request lot size.");
+        AssertClose(0.50, result.RiskPercent, 0.01, "Risk percent should reflect the selected lot size.");
         AssertClose(2.00, result.RiskRewardRatio, 0.01, "R:R should be based on entry, SL, and TP.");
     }
 
@@ -755,7 +755,9 @@ internal static class Program
             SymbolExposureConfig(maxSymbolRiskPercent: 1.00),
             apiConfig: NewsDisabled());
 
-        var result = await bot.ExecuteTradeWithValidationAsync(BuyRequest()).ConfigureAwait(false);
+        var request = BuyRequest();
+        request.LotSize = 0.20;
+        var result = await bot.ExecuteTradeWithValidationAsync(request).ConfigureAwait(false);
 
         AssertFalse(result.IsSuccess, "Projected same-symbol risk at cap must block live trading.");
         AssertEqual("SYMBOL_EXPOSURE_LIMIT", result.ErrorCode, "Same-symbol risk at cap should use the exposure limit code.");
@@ -1304,10 +1306,13 @@ internal static class Program
 
     private static async Task BuyStopLossTooCloseBlocksBrokerStopLevel()
     {
+        var config = Config();
+        config.NormalTrading.StopLossPips = 1;
+        config.Scalping.StopLossPips = 1;
         await using var mt5 = new FakeMt5Server(Account(), SymbolWithStopLevel(stopLevelPoints: 20));
         await using var bot = new AutoBotService(
             Bridge(mt5.Port),
-            Config(),
+            config,
             apiConfig: NewsDisabled());
 
         var result = await bot.ExecuteTradeWithValidationAsync(BuyRequest(sl: 1.09990)).ConfigureAwait(false);
@@ -1319,10 +1324,13 @@ internal static class Program
 
     private static async Task BuyTakeProfitTooCloseBlocksBrokerStopLevel()
     {
+        var config = Config();
+        config.NormalTrading.TakeProfitPips = 1;
+        config.Scalping.TakeProfitPips = 1;
         await using var mt5 = new FakeMt5Server(Account(), SymbolWithStopLevel(stopLevelPoints: 20));
         await using var bot = new AutoBotService(
             Bridge(mt5.Port),
-            Config(),
+            config,
             apiConfig: NewsDisabled());
 
         var result = await bot.ExecuteTradeWithValidationAsync(BuyRequest(tp: 1.10020)).ConfigureAwait(false);
@@ -1334,10 +1342,13 @@ internal static class Program
 
     private static async Task SellStopLossTooCloseBlocksBrokerStopLevel()
     {
+        var config = Config();
+        config.NormalTrading.StopLossPips = 1;
+        config.Scalping.StopLossPips = 1;
         await using var mt5 = new FakeMt5Server(Account(), SymbolWithStopLevel(stopLevelPoints: 20));
         await using var bot = new AutoBotService(
             Bridge(mt5.Port),
-            Config(),
+            config,
             apiConfig: NewsDisabled());
 
         var result = await bot.ExecuteTradeWithValidationAsync(SellRequest(sl: 1.10010)).ConfigureAwait(false);
@@ -1349,10 +1360,13 @@ internal static class Program
 
     private static async Task SellTakeProfitTooCloseBlocksBrokerStopLevel()
     {
+        var config = Config();
+        config.NormalTrading.TakeProfitPips = 1;
+        config.Scalping.TakeProfitPips = 1;
         await using var mt5 = new FakeMt5Server(Account(), SymbolWithStopLevel(stopLevelPoints: 20));
         await using var bot = new AutoBotService(
             Bridge(mt5.Port),
-            Config(),
+            config,
             apiConfig: NewsDisabled());
 
         var result = await bot.ExecuteTradeWithValidationAsync(SellRequest(tp: 1.09980)).ConfigureAwait(false);
@@ -1411,10 +1425,13 @@ internal static class Program
 
     private static async Task BuyStopLossInsideFreezeLevelBlocksLiveTrade()
     {
+        var config = Config();
+        config.NormalTrading.StopLossPips = 1;
+        config.Scalping.StopLossPips = 1;
         await using var mt5 = new FakeMt5Server(Account(), SymbolWithFreezeLevel(freezeLevelPoints: 20));
         await using var bot = new AutoBotService(
             Bridge(mt5.Port),
-            Config(),
+            config,
             apiConfig: NewsDisabled());
 
         var result = await bot.ExecuteTradeWithValidationAsync(BuyRequest(sl: 1.09990)).ConfigureAwait(false);
@@ -1427,10 +1444,13 @@ internal static class Program
 
     private static async Task BuyTakeProfitInsideFreezeLevelBlocksLiveTrade()
     {
+        var config = Config();
+        config.NormalTrading.TakeProfitPips = 1;
+        config.Scalping.TakeProfitPips = 1;
         await using var mt5 = new FakeMt5Server(Account(), SymbolWithFreezeLevel(freezeLevelPoints: 20));
         await using var bot = new AutoBotService(
             Bridge(mt5.Port),
-            Config(),
+            config,
             apiConfig: NewsDisabled());
 
         var result = await bot.ExecuteTradeWithValidationAsync(BuyRequest(tp: 1.10020)).ConfigureAwait(false);
@@ -1443,10 +1463,13 @@ internal static class Program
 
     private static async Task SellStopLossInsideFreezeLevelBlocksLiveTrade()
     {
+        var config = Config();
+        config.NormalTrading.StopLossPips = 1;
+        config.Scalping.StopLossPips = 1;
         await using var mt5 = new FakeMt5Server(Account(), SymbolWithFreezeLevel(freezeLevelPoints: 20));
         await using var bot = new AutoBotService(
             Bridge(mt5.Port),
-            Config(),
+            config,
             apiConfig: NewsDisabled());
 
         var result = await bot.ExecuteTradeWithValidationAsync(SellRequest(sl: 1.10010)).ConfigureAwait(false);
@@ -1459,10 +1482,13 @@ internal static class Program
 
     private static async Task SellTakeProfitInsideFreezeLevelBlocksLiveTrade()
     {
+        var config = Config();
+        config.NormalTrading.TakeProfitPips = 1;
+        config.Scalping.TakeProfitPips = 1;
         await using var mt5 = new FakeMt5Server(Account(), SymbolWithFreezeLevel(freezeLevelPoints: 20));
         await using var bot = new AutoBotService(
             Bridge(mt5.Port),
-            Config(),
+            config,
             apiConfig: NewsDisabled());
 
         var result = await bot.ExecuteTradeWithValidationAsync(SellRequest(tp: 1.09980)).ConfigureAwait(false);
@@ -1530,10 +1556,10 @@ internal static class Program
 
         var result = await bot.ExecuteTradeWithValidationAsync(BuyRequest()).ConfigureAwait(false);
 
-        AssertFalse(result.IsSuccess, "Final risk-adjusted lot below broker minimum must block live execution.");
-        AssertEqual("BROKER_LOT_SIZE_VIOLATION", result.ErrorCode,
-            "Lot below broker minimum should use broker lot-size rejection.");
-        AssertEqual(0, mt5.OpenTradeCalls, "Broker lot-size guard must block before broker execution.");
+        AssertFalse(result.IsSuccess, "Broker minimum normalization can still be blocked by risk controls.");
+        AssertEqual("RISK_BLOCKED", result.ErrorCode,
+            "A broker-minimum normalized lot that exceeds max risk should use risk blocking.");
+        AssertEqual(0, mt5.OpenTradeCalls, "Risk guard must block before broker execution.");
     }
 
     private static async Task LotAboveBrokerMaximumBlocksLiveTrade()
@@ -1544,12 +1570,13 @@ internal static class Program
             Config(),
             apiConfig: NewsDisabled());
 
-        var result = await bot.ExecuteTradeWithValidationAsync(BuyRequest()).ConfigureAwait(false);
+        var request = BuyRequest();
+        request.LotSize = 0.20;
+        var result = await bot.ExecuteTradeWithValidationAsync(request).ConfigureAwait(false);
 
-        AssertFalse(result.IsSuccess, "Final risk-adjusted lot above broker maximum must block live execution.");
-        AssertEqual("BROKER_LOT_SIZE_VIOLATION", result.ErrorCode,
-            "Lot above broker maximum should use broker lot-size rejection.");
-        AssertEqual(0, mt5.OpenTradeCalls, "Broker lot-size guard must block before broker execution.");
+        AssertTrue(result.IsSuccess, "Lot above broker maximum should be normalized down before broker validation.");
+        AssertClose(0.15, mt5.LastOpenTradeLots, 0.0001,
+            "Broker execution should receive the normalized maximum lot size.");
     }
 
     private static async Task LotNotAlignedWithBrokerStepBlocksLiveTrade()
@@ -1560,12 +1587,13 @@ internal static class Program
             Config(),
             apiConfig: NewsDisabled());
 
-        var result = await bot.ExecuteTradeWithValidationAsync(BuyRequest()).ConfigureAwait(false);
+        var request = BuyRequest();
+        request.LotSize = 0.11;
+        var result = await bot.ExecuteTradeWithValidationAsync(request).ConfigureAwait(false);
 
-        AssertFalse(result.IsSuccess, "Final risk-adjusted lot not aligned with broker step must block live execution.");
-        AssertEqual("BROKER_LOT_SIZE_VIOLATION", result.ErrorCode,
-            "Lot step mismatch should use broker lot-size rejection.");
-        AssertEqual(0, mt5.OpenTradeCalls, "Broker lot-size guard must block before broker execution.");
+        AssertTrue(result.IsSuccess, "Lot step mismatch should be normalized before broker validation.");
+        AssertClose(0.10, mt5.LastOpenTradeLots, 0.0001,
+            "Broker execution should receive the normalized lot-step value.");
     }
 
     private static async Task ValidBrokerLotSizeAllowsLiveTrade()
@@ -1591,7 +1619,9 @@ internal static class Program
             Config(),
             apiConfig: NewsDisabled());
 
-        var result = await bot.ExecuteTradeWithValidationAsync(BuyRequest()).ConfigureAwait(false);
+        var request = BuyRequest();
+        request.LotSize = 0.20;
+        var result = await bot.ExecuteTradeWithValidationAsync(request).ConfigureAwait(false);
 
         AssertFalse(result.IsSuccess, "Final risk-adjusted lot above broker volume limit must block live execution.");
         AssertEqual("BROKER_LOT_SIZE_VIOLATION", result.ErrorCode,
@@ -1958,11 +1988,13 @@ internal static class Program
             Config(),
             apiConfig: NewsDisabled());
 
-        var result = await bot.ExecuteTradeWithValidationAsync(BuyRequest()).ConfigureAwait(false);
+        var request = BuyRequest();
+        request.LotSize = 0.123;
+        var result = await bot.ExecuteTradeWithValidationAsync(request).ConfigureAwait(false);
 
         AssertTrue(result.IsSuccess, "OrderCheck lot-size capture requires the live trade to proceed.");
-        AssertClose(0.20, mt5.LastOrderCheckLots, 0.0001,
-            "OrderCheck must use final risk-adjusted lot size, not the original requested lot size.");
+        AssertClose(0.12, mt5.LastOrderCheckLots, 0.0001,
+            "OrderCheck must use the final normalized lot size.");
         AssertEqual(1, mt5.OpenTradeCalls, "Accepted OrderCheck should allow broker execution.");
     }
 
@@ -6410,7 +6442,7 @@ internal static class Program
         int maxConcurrentPositions = 3)
     {
         string folder = TestFolder();
-        return new BotConfig
+        var config = new BotConfig
         {
             WatchFolder = folder,
             KillSwitchStateFile = Path.Combine(folder, "kill_switch.json"),
@@ -6419,12 +6451,12 @@ internal static class Program
             MaxSpreadPips = maxSpreadPips,
             MaxConcurrentPositions = maxConcurrentPositions,
             MaxTotalRiskPercent = 0,
-            MinRRRatio = 1.5,
-            EnforceRR = true,
-            AutoLotCalculation = true,
             MagicNumber = 999001,
             RetryOnFail = false
         };
+        config.Scalping.MaxSpreadPips = maxSpreadPips;
+        config.NormalTrading.MaxSpreadPips = maxSpreadPips;
+        return config;
     }
 
     private static BotConfig EvidenceConfig(double maxSpreadPips)
@@ -7909,6 +7941,7 @@ internal static class Program
         private int _orderCheckCalls;
         private int _symbolInfoCalls;
         private double _lastOrderCheckLots;
+        private double _lastOpenTradeLots;
 
         public FakeMt5Server(
             AccountInfo? account,
@@ -7948,6 +7981,7 @@ internal static class Program
         public int OrderCheckCalls => Volatile.Read(ref _orderCheckCalls);
         public int SymbolInfoCalls => Volatile.Read(ref _symbolInfoCalls);
         public double LastOrderCheckLots => _lastOrderCheckLots;
+        public double LastOpenTradeLots => _lastOpenTradeLots;
 
         public async ValueTask DisposeAsync()
         {
@@ -8012,7 +8046,7 @@ internal static class Program
                     ? Success(requestId, _marginEstimate)
                     : Error(requestId, "margin estimate unavailable"),
                 "CHECK_ORDER" => CheckOrder(requestId, msg),
-                "OPEN_TRADE" => OpenTrade(requestId),
+                "OPEN_TRADE" => OpenTrade(requestId, msg),
                 "CLOSE_TRADE" => CloseTrade(requestId, msg),
                 _ => Error(requestId, $"unsupported command {command}")
             };
@@ -8042,18 +8076,13 @@ internal static class Program
 
         private void LastOrderCheckPayload(JObject msg)
         {
-            var data = msg["data"];
-            double lots =
-                data?["lots"]?.Value<double?>() ??
-                data?["lot_size"]?.Value<double?>() ??
-                data?["LotSize"]?.Value<double?>() ??
-                0;
-            _lastOrderCheckLots = lots;
+            _lastOrderCheckLots = ExtractLots(msg);
         }
 
-        private IpcResponse OpenTrade(string requestId)
+        private IpcResponse OpenTrade(string requestId, JObject msg)
         {
             int call = Interlocked.Increment(ref _openTradeCalls);
+            LastOpenTradePayload(msg);
             if (_openTradeResponses.Count > 0)
             {
                 var response = _openTradeResponses[Math.Min(call - 1, _openTradeResponses.Count - 1)];
@@ -8062,6 +8091,30 @@ internal static class Program
             }
 
             return Success(requestId, SubmittedTrade());
+        }
+
+        private void LastOpenTradePayload(JObject msg)
+        {
+            _lastOpenTradeLots = ExtractLots(msg);
+        }
+
+        private static double ExtractLots(JObject msg)
+        {
+            JObject? data = msg["data"] as JObject;
+            if (data == null && msg["data"]?.Type == JTokenType.String)
+            {
+                try { data = JObject.Parse(msg["data"]!.Value<string>() ?? ""); }
+                catch { }
+            }
+
+            return
+                data?["lots"]?.Value<double?>() ??
+                data?["lot_size"]?.Value<double?>() ??
+                data?["LotSize"]?.Value<double?>() ??
+                msg["lots"]?.Value<double?>() ??
+                msg["lot_size"]?.Value<double?>() ??
+                msg["LotSize"]?.Value<double?>() ??
+                0;
         }
 
         private TradeResult SubmittedTrade()

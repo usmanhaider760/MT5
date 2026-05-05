@@ -11,7 +11,6 @@ namespace MT5TradingBot.Modules.Scalping
     {
         private const int ProfessionalMaxScalpsPerSession = 6;
         private const int ProfessionalMinDecisionScore = 6;
-        private const double ProfessionalMinRiskReward = 1.5;
         private const double ProfessionalMaxSpreadPercentOfTp = 20.0;
         private const double ScalpSignalExpiryMinutes = 0.17;
 
@@ -329,10 +328,6 @@ namespace MT5TradingBot.Modules.Scalping
             TakeProfitPips = Math.Max(1, cfg.TakeProfitPips),
             MaxSpreadPips = Math.Max(0.1, cfg.MaxSpreadPips),
             DynamicValuesEnabled = cfg.DynamicValuesEnabled,
-            MinStopLossPips = Math.Max(0, cfg.MinStopLossPips),
-            MaxStopLossPips = Math.Max(0, cfg.MaxStopLossPips),
-            MinTakeProfitPips = Math.Max(0, cfg.MinTakeProfitPips),
-            MaxTakeProfitPips = Math.Max(0, cfg.MaxTakeProfitPips),
             PollIntervalMs = Math.Clamp(cfg.PollIntervalMs, 500, 10000),
             CooldownSeconds = Math.Clamp(cfg.CooldownSeconds, 1, 600),
             DirectionMode = cfg.DirectionMode,
@@ -369,54 +364,32 @@ namespace MT5TradingBot.Modules.Scalping
                     "broker stop/freeze-level data is unavailable from symbol info and market snapshot.");
             }
 
-            double minSl = cfg.MinStopLossPips > 0
-                ? cfg.MinStopLossPips
-                : Math.Max(1, Math.Min(cfg.StopLossPips, Math.Max(1, spread * 2.0)));
-            double maxSl = cfg.MaxStopLossPips >= minSl
-                ? cfg.MaxStopLossPips
-                : Math.Max(minSl, cfg.StopLossPips);
-            double minTp = cfg.MinTakeProfitPips > 0
-                ? cfg.MinTakeProfitPips
-                : Math.Max(1, Math.Min(cfg.TakeProfitPips, minSl));
-            double maxTp = cfg.MaxTakeProfitPips >= minTp
-                ? cfg.MaxTakeProfitPips
-                : Math.Max(minTp, Math.Max(cfg.TakeProfitPips, cfg.MaxStopLossPips > 0 ? cfg.MaxStopLossPips : cfg.TakeProfitPips));
+            double slPips = Math.Max(1, cfg.StopLossPips);
+            double tpPips = Math.Max(1, cfg.TakeProfitPips);
 
             double brokerMinimum = brokerLevels.HasCompleteData
                 ? Math.Max(brokerLevels.StopLevelPips, brokerLevels.FreezeLevelPips) + 1.0
                 : 0;
-            double atrPips = ReadAtrPips(snapshot, symbol);
-            double requiredSl = Math.Max(minSl, Math.Max(spread * 2.5, brokerMinimum));
-            if (IsFinitePositive(atrPips))
-                requiredSl = Math.Max(requiredSl, atrPips);
+            double requiredSl = Math.Max(1, Math.Max(spread * 2.5, brokerMinimum));
 
-            if (requiredSl > maxSl + 1e-9)
-            {
-                string reason = IsFinitePositive(atrPips) && atrPips >= requiredSl - 1e-9
-                    ? $"market volatility is too high for scalping: ATR needs about {requiredSl:F1} SL pips, above the guardrail {maxSl:F1} pips"
-                    : $"live conditions require about {requiredSl:F1} SL pips, above the guardrail {maxSl:F1} pips";
-                return new LiveScalpingConfigResult(
-                    cfg,
-                    false,
-                    reason + ".");
-            }
-
-            double slPips = RoundHalfPip(Math.Clamp(requiredSl, minSl, maxSl));
-            double preferredRr = cfg.StopLossPips > 0
-                ? Math.Max(ProfessionalMinRiskReward, cfg.TakeProfitPips / cfg.StopLossPips)
-                : ProfessionalMinRiskReward;
-            double requiredTp = Math.Max(
-                minTp,
-                Math.Max(slPips * preferredRr, spread * (100.0 / ProfessionalMaxSpreadPercentOfTp)));
-            if (requiredTp > maxTp + 1e-9)
+            if (requiredSl > slPips + 1e-9)
             {
                 return new LiveScalpingConfigResult(
                     cfg,
                     false,
-                    $"live conditions require about {requiredTp:F1} TP pips to preserve spread/R:R rules, above the guardrail {maxTp:F1} pips.");
+                    $"live conditions require about {requiredSl:F1} SL pips, above the Trade Page SL {slPips:F1} pips.");
             }
 
-            double tpPips = RoundHalfPip(Math.Clamp(requiredTp, minTp, maxTp));
+            double preferredRr = Math.Max(0.1, cfg.RiskRewardRatio);
+            double requiredTp = Math.Max(slPips * preferredRr, spread * (100.0 / ProfessionalMaxSpreadPercentOfTp));
+            if (requiredTp > tpPips + 1e-9)
+            {
+                return new LiveScalpingConfigResult(
+                    cfg,
+                    false,
+                    $"live conditions require about {requiredTp:F1} TP pips to preserve spread/R:R rules, above the Trade Page TP {tpPips:F1} pips.");
+            }
+
             double maxSpreadPips = RoundHalfPip(Math.Min(
                 cfg.MaxSpreadPips,
                 Math.Min(
@@ -441,10 +414,6 @@ namespace MT5TradingBot.Modules.Scalping
             TakeProfitPips = cfg.TakeProfitPips,
             MaxSpreadPips = cfg.MaxSpreadPips,
             DynamicValuesEnabled = cfg.DynamicValuesEnabled,
-            MinStopLossPips = cfg.MinStopLossPips,
-            MaxStopLossPips = cfg.MaxStopLossPips,
-            MinTakeProfitPips = cfg.MinTakeProfitPips,
-            MaxTakeProfitPips = cfg.MaxTakeProfitPips,
             PollIntervalMs = cfg.PollIntervalMs,
             CooldownSeconds = cfg.CooldownSeconds,
             DirectionMode = cfg.DirectionMode,

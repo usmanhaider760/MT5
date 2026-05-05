@@ -8,6 +8,7 @@ using MT5TradingBot.Modules.MarketData;
 using MT5TradingBot.Modules.PairScanner;
 using MT5TradingBot.Modules.PairSettings;
 using MT5TradingBot.Modules.NewsFilter;
+using MT5TradingBot.Modules.NormalTrading;
 using MT5TradingBot.Modules.RiskManagement;
 using MT5TradingBot.Modules.Scalping;
 using MT5TradingBot.Services;
@@ -17,6 +18,7 @@ using Serilog;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Globalization;
+using System.Reflection;
 using System.Security.Cryptography;
 
 namespace MT5TradingBot.UI
@@ -43,6 +45,8 @@ namespace MT5TradingBot.UI
         private readonly HashSet<long> _autoCloseInProgress = [];
         private bool _syncingAutoCloseValues;
         private IScalpingSessionService? _scalping;
+        private readonly ScalpingTradeManager _scalpingTradeManager = new();
+        private readonly NormalTradeManager _normalTradeManager = new();
         private readonly Button _btnStopScalping = new();
         private const int MaxScreenLogLines = 500;
         private const int MaxScreenLogChars = 180;
@@ -88,7 +92,10 @@ namespace MT5TradingBot.UI
             int    Leverage  = 100,
             TradeRequest? FinalRequest = null,
             bool AutoScalpingEnabled = false,
-            ScalpingConfig? ScalpingConfig = null);
+            ScalpingConfig? ScalpingConfig = null,
+            bool NormalTradingEnabled = false,
+            NormalTradingSettings? NormalTradingSettings = null,
+            CommonTradingSettings? CommonTradingSettings = null);
 
         // ==========================================================
         // Keep for WinForms designer compatibility
@@ -232,6 +239,7 @@ namespace MT5TradingBot.UI
             _btnConnect.Click           += BtnConnect_Click;
             _btnDisconnect.Click        += BtnDisconnect_Click;
             _chkAutoConn.CheckedChanged += ChkAutoConn_CheckedChanged;
+            _lblEaStatus.Click          += async (_, _) => await RefreshEaStatusButtonAsync(logResult: true);
 
             _btnClosePos.Click    += BtnClosePos_Click;
             _btnCloseAllPos.Click += BtnCloseAllPos_Click;
@@ -364,7 +372,7 @@ namespace MT5TradingBot.UI
                 StopLoss    = sl,
                 TakeProfit  = tp,
                 TakeProfit2 = tp2,
-                LotSize     = _chkAutoLot.Checked ? 0.01 : lot,
+                LotSize     = lot,
                 MoveSLToBreakevenAfterTP1 = _chkMoveSLBE.Checked,
                 MagicNumber = _cfg.Bot.MagicNumber,
                 Comment     = "Manual"
@@ -548,7 +556,7 @@ namespace MT5TradingBot.UI
                     Log($"[BOT] [OK] {pendingFiles.Length} pending signal file(s) in folder.", C_ACCENT);
 
                 // â"€â"€ 6. Config summary â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
-                Log($"[BOT] Settings -> Risk: {_cfg.Bot.MaxRiskPercent:F1}% | Max trades/day: {_cfg.Bot.MaxTradesPerDay} | Min R:R: {_cfg.Bot.MinRRRatio:F1} | Enforce R:R: {_cfg.Bot.EnforceRR}", C_ACCENT);
+                Log($"[BOT] Settings -> Risk: {_cfg.Bot.MaxRiskPercent:F1}% | Max trades/day: {_cfg.Bot.MaxTradesPerDay}", C_ACCENT);
                 int pairCount = _cfg.Bot.AllowedPairs.Count;
                 string pairSummary = pairCount == 0 ? "All pairs"
                     : pairCount <= 5 ? string.Join(", ", _cfg.Bot.AllowedPairs)
@@ -1372,7 +1380,7 @@ SAFETY RULES:
                 double rr = LotCalculator.RiskRewardRatio(entry, sl, tp);
 
                 double lots = 0.01;
-                if (!_chkAutoLot.Checked) double.TryParse(_txtLot.Text, out lots);
+                double.TryParse(_txtLot.Text, out lots);
 
                 string sym    = _cmbPair.SelectedItem?.ToString() ?? "";
                 double risk   = LotCalculator.DollarRisk(lots, entry, sl, sym);
@@ -1430,6 +1438,8 @@ SAFETY RULES:
                 _btnDisconnect.Enabled   = connected;
                 if (!connected) _refreshTimer.Stop();
                 UpdateEaDeploymentStatusBadge(force: true);
+                if (connected)
+                    _ = RefreshEaStatusButtonAsync(logResult: false);
             });
         }
 
@@ -1448,7 +1458,7 @@ SAFETY RULES:
                     _lblEaStatus.Text = status.Text;
                     _lblEaStatus.ForeColor = status.ForeColor;
                     _lblEaStatus.BackColor = status.BackColor;
-                    _lblEaStatus.BorderStyle = BorderStyle.FixedSingle;
+                    _lblEaStatus.FlatAppearance.BorderColor = C_BORDER;
                     _cardTooltip.SetToolTip(_lblEaStatus, status.Tooltip);
                 });
             }
@@ -1459,9 +1469,124 @@ SAFETY RULES:
                     _lblEaStatus.Text = "[?] EA Unknown";
                     _lblEaStatus.ForeColor = C_YELLOW;
                     _lblEaStatus.BackColor = Color.FromArgb(40, 32, 18);
+                    _lblEaStatus.FlatAppearance.BorderColor = C_BORDER;
                     _cardTooltip.SetToolTip(_lblEaStatus, $"Could not read EA deployment status: {ex.Message}");
                 });
             }
+        }
+
+        private async Task RefreshEaStatusButtonAsync(bool logResult)
+        {
+            UIThread(() =>
+            {
+                _lblEaStatus.Enabled = false;
+                _lblEaStatus.Text = "[...] EA Check";
+                _lblEaStatus.ForeColor = C_ACCENT;
+                _lblEaStatus.BackColor = Color.FromArgb(18, 28, 42);
+                _cardTooltip.SetToolTip(_lblEaStatus, "Checking live EA health from MT5...");
+            });
+
+            try
+            {
+                if (_bridge?.IsConnected != true)
+                {
+                    var fileStatus = ReadEaDeploymentBadgeStatus();
+                    UIThread(() =>
+                    {
+                        _lblEaStatus.Text = fileStatus.Text;
+                        _lblEaStatus.ForeColor = fileStatus.ForeColor;
+                        _lblEaStatus.BackColor = fileStatus.BackColor;
+                        _cardTooltip.SetToolTip(_lblEaStatus, fileStatus.Tooltip + "\n\nMT5 is not connected. Connect first, then click to check live EA health.");
+                    });
+                    if (logResult)
+                        Log("[EA] Live status check skipped: MT5 is not connected.", C_YELLOW);
+                    return;
+                }
+
+                var (success, health, error) = await _bridge.TryGetEaHealthAsync().ConfigureAwait(false);
+                if (success && health?.IsAlive == true)
+                {
+                    MarkEaReloadSatisfiedIfNeeded();
+                    string tooltip =
+                        $"EA is live and responding from MT5.\n" +
+                        $"Version: {health.Version}\n" +
+                        $"Build: {health.BuildIdentifier}\n" +
+                        $"Terminal: {health.TerminalName}\n" +
+                        $"Server: {health.Server}\n" +
+                        $"Checked: {DateTime.Now:HH:mm:ss}";
+                    UIThread(() =>
+                    {
+                        _lblEaStatus.Text = "[OK] EA Live";
+                        _lblEaStatus.ForeColor = C_GREEN;
+                        _lblEaStatus.BackColor = Color.FromArgb(16, 42, 28);
+                        _cardTooltip.SetToolTip(_lblEaStatus, tooltip);
+                    });
+                    if (logResult)
+                        Log("[EA] Live health check passed. EA is attached and responding.", C_GREEN);
+                    return;
+                }
+
+                UIThread(() =>
+                {
+                    _lblEaStatus.Text = "[X] EA No Reply";
+                    _lblEaStatus.ForeColor = C_RED;
+                    _lblEaStatus.BackColor = Color.FromArgb(45, 18, 24);
+                    _cardTooltip.SetToolTip(_lblEaStatus, $"MT5 is connected, but GET_EA_HEALTH did not return a live EA response.\n{error}");
+                });
+                if (logResult)
+                    Log($"[EA] Live health check failed: {error}", C_RED);
+            }
+            catch (Exception ex)
+            {
+                UIThread(() =>
+                {
+                    _lblEaStatus.Text = "[X] EA Check";
+                    _lblEaStatus.ForeColor = C_RED;
+                    _lblEaStatus.BackColor = Color.FromArgb(45, 18, 24);
+                    _cardTooltip.SetToolTip(_lblEaStatus, $"Could not check live EA health: {ex.Message}");
+                });
+                if (logResult)
+                    Log($"[EA] Live health check failed: {ex.Message}", C_RED);
+            }
+            finally
+            {
+                UIThread(() => _lblEaStatus.Enabled = true);
+            }
+        }
+
+        private static void MarkEaReloadSatisfiedIfNeeded()
+        {
+            foreach (string statusPath in GetEaDeploymentStatusPaths())
+                MarkEaReloadSatisfiedIfNeeded(statusPath);
+        }
+
+        private static void MarkEaReloadSatisfiedIfNeeded(string statusPath)
+        {
+            if (string.IsNullOrWhiteSpace(statusPath) || !File.Exists(statusPath))
+                return;
+
+            try
+            {
+                var status = JObject.Parse(File.ReadAllText(statusPath));
+                status["needs_mt5_reload"] = false;
+                status["message"] = "EA live health check passed after reattach.";
+                status["live_health_checked_at"] = DateTime.UtcNow.ToString("O", CultureInfo.InvariantCulture);
+                File.WriteAllText(statusPath, status.ToString(Formatting.Indented));
+            }
+            catch
+            {
+                // Badge refresh is advisory; do not interrupt trading status updates for a bad status file.
+            }
+        }
+
+        private static IEnumerable<string> GetEaDeploymentStatusPaths()
+        {
+            string preparedPath = AppPaths.PrepareEaDeployStatusFile();
+            yield return preparedPath;
+
+            string legacyPath = AppPaths.LegacyEaDeployStatusFile;
+            if (!string.Equals(preparedPath, legacyPath, StringComparison.OrdinalIgnoreCase))
+                yield return legacyPath;
         }
 
         private (string Text, Color ForeColor, Color BackColor, string Tooltip) ReadEaDeploymentBadgeStatus()
@@ -1493,18 +1618,28 @@ SAFETY RULES:
                     $"TradingBotEA is not present in the configured MT5 Experts folder.\nMQ5: {mq5Path}\nEX5: {ex5Path}");
             }
 
-            bool sourceAvailable = File.Exists(sourceMq5) && File.Exists(sourceEx5);
-            bool filesMatch = sourceAvailable &&
-                FilesMatch(sourceMq5, mq5Path) &&
-                FilesMatch(sourceEx5, ex5Path);
+            bool sourceMq5Available = File.Exists(sourceMq5);
+            bool mq5Matches = sourceMq5Available && FilesMatch(sourceMq5, mq5Path);
+            bool sourceEx5Available = File.Exists(sourceEx5);
+            bool sourceEx5Matches = sourceEx5Available && FilesMatch(sourceEx5, ex5Path);
+            bool deployedEx5Fresh = IsFileAtLeastAsNew(ex5Path, mq5Path);
 
-            if (!filesMatch)
+            if (!mq5Matches)
             {
                 return (
                     "[X] EA Outdated",
                     C_RED,
                     Color.FromArgb(45, 18, 24),
-                    $"MT5 Experts folder does not match the repository EA files. Restart the bot to copy the latest EA.\nMQ5: {mq5Path}\nEX5: {ex5Path}");
+                    $"MT5 Experts MQ5 does not match the repository EA source. Deploy the EA again, then re-attach it in MT5.\nSource: {sourceMq5}\nMT5: {mq5Path}");
+            }
+
+            if (!sourceEx5Matches && !deployedEx5Fresh)
+            {
+                return (
+                    "[X] EA Outdated",
+                    C_RED,
+                    Color.FromArgb(45, 18, 24),
+                    $"TradingBotEA.ex5 is older than the deployed MQ5 source. Compile/deploy the EA again, then re-attach it in MT5.\nMQ5: {mq5Path}\nEX5: {ex5Path}");
             }
 
             if (needsReload)
@@ -1520,7 +1655,7 @@ SAFETY RULES:
                 "[OK] EA File",
                 C_GREEN,
                 Color.FromArgb(16, 42, 28),
-                $"TradingBotEA files match the bot repository and are present in the MT5 Experts folder.\nEX5: {ex5Path}");
+                $"TradingBotEA source matches the repository and the compiled EX5 is fresh in the MT5 Experts folder.\nEX5: {ex5Path}");
         }
 
         private static bool FilesMatch(string leftPath, string rightPath)
@@ -1534,6 +1669,14 @@ SAFETY RULES:
             byte[] leftHash = SHA256.HashData(leftStream);
             byte[] rightHash = SHA256.HashData(rightStream);
             return leftHash.SequenceEqual(rightHash);
+        }
+
+        private static bool IsFileAtLeastAsNew(string candidatePath, string referencePath)
+        {
+            if (!File.Exists(candidatePath) || !File.Exists(referencePath))
+                return false;
+
+            return File.GetLastWriteTimeUtc(candidatePath) >= File.GetLastWriteTimeUtc(referencePath).AddSeconds(-5);
         }
 
         private void UpdateBotBadge(bool running)
@@ -1736,18 +1879,8 @@ SAFETY RULES:
             _gridPairSettings.SelectionMode = DataGridViewSelectionMode.FullRowSelect;
             _gridPairSettings.Columns.Add("Pair", "Pair");
             _gridPairSettings.Columns.Add("PipSize", "Pip size");
-            _gridPairSettings.Columns.Add("MaxSpread", "Max spread");
-            _gridPairSettings.Columns.Add("GoodSpread", "Good spread");
-            _gridPairSettings.Columns.Add("AcceptableSpread", "Acceptable spread");
-            _gridPairSettings.Columns.Add("MaxSl", "Max SL");
-            _gridPairSettings.Columns.Add("MinTp", "Min TP");
-            _gridPairSettings.Columns.Add("ScalpRR", "Scalp RR");
-            _gridPairSettings.Columns.Add("PreferredRR", "Preferred RR");
-            _gridPairSettings.Columns.Add("AtrSl", "ATR SL");
-            _gridPairSettings.Columns.Add("AtrTp", "ATR TP");
             _gridPairSettings.Columns.Add("AtrM5", "ATR M5");
             _gridPairSettings.Columns.Add("AtrM15", "ATR M15");
-            _gridPairSettings.Columns.Add("SpreadTpPct", "Spread/TP %");
             _gridPairSettings.Columns.Add("KeyLevelDistance", "Key level dist");
             _gridPairSettings.Columns.Add("BreakEven", "BE pips");
             _gridPairSettings.Columns.Add("Trailing", "Trailing");
@@ -1815,18 +1948,8 @@ SAFETY RULES:
                 int row = _gridPairSettings.Rows.Add(
                     settings.Pair,
                     settings.PipSize.ToString("0.#####", CultureInfo.InvariantCulture),
-                    settings.MaxSpreadPips.ToString("0.##", CultureInfo.InvariantCulture),
-                    settings.GoodSpreadPips.ToString("0.##", CultureInfo.InvariantCulture),
-                    settings.AcceptableSpreadPips.ToString("0.##", CultureInfo.InvariantCulture),
-                    settings.MaxSlPips.ToString("0.##", CultureInfo.InvariantCulture),
-                    settings.MinTpPips.ToString("0.##", CultureInfo.InvariantCulture),
-                    settings.ScalpingMinRR.ToString("0.##", CultureInfo.InvariantCulture),
-                    settings.PreferredRR.ToString("0.##", CultureInfo.InvariantCulture),
-                    settings.AtrMultiplierSl.ToString("0.##", CultureInfo.InvariantCulture),
-                    settings.AtrMultiplierTp.ToString("0.##", CultureInfo.InvariantCulture),
                     $"{settings.MinAtrPipsM5:0.##}-{settings.MaxAtrPipsM5:0.##}",
                     $"{settings.MinAtrPipsM15:0.##}-{settings.MaxAtrPipsM15:0.##}",
-                    settings.AvoidTradeIfSpreadAbovePercentOfTp.ToString("0.##", CultureInfo.InvariantCulture),
                     settings.MinimumDistanceFromKeyLevelPips.ToString("0.##", CultureInfo.InvariantCulture),
                     settings.BreakEvenAfterProfitPips.ToString("0.##", CultureInfo.InvariantCulture),
                     $"{settings.TrailingStartPips:0.##}/{settings.TrailingStepPips:0.##}",
@@ -1942,20 +2065,10 @@ SAFETY RULES:
           "pair_settings": {
             "GBPUSD": {
               "pip_size": 0.0001,
-              "max_spread_pips": 3,
-              "good_spread_pips": 1.5,
-              "acceptable_spread_pips": 2,
-              "max_sl_pips": 35,
-              "min_tp_pips": 8,
-              "scalping_min_rr": 1.0,
-              "preferred_rr": 1.5,
-              "atr_multiplier_sl": 1.0,
-              "atr_multiplier_tp": 1.2,
               "min_atr_pips_m5": 3,
               "max_atr_pips_m5": 30,
               "min_atr_pips_m15": 6,
               "max_atr_pips_m15": 60,
-              "avoid_trade_if_spread_above_percent_of_tp": 25,
               "minimum_distance_from_key_level_pips": 5,
               "break_even_after_profit_pips": 10,
               "trailing_start_pips": 15,
@@ -2047,9 +2160,6 @@ SAFETY RULES:
             MaxRiskPercent            = _cfg.Bot.MaxRiskPercent,
             MaxTradesPerDay           = _cfg.Bot.MaxTradesPerDay,
             PollIntervalMs            = _cfg.Bot.PollIntervalMs,
-            AutoLotCalculation        = _cfg.Bot.AutoLotCalculation,
-            MinRRRatio                = _cfg.Bot.MinRRRatio,
-            EnforceRR                 = _cfg.Bot.EnforceRR,
             DrawdownProtectionEnabled = _cfg.Bot.DrawdownProtectionEnabled,
             EmergencyCloseDrawdownPct = _cfg.Bot.EmergencyCloseDrawdownPct,
             RetryOnFail               = true,
@@ -2058,10 +2168,16 @@ SAFETY RULES:
             AutoStartOnLaunch         = _cfg.Bot.AutoStartOnLaunch,
             MagicNumber               = 999001,
             SymbolSuffix              = _cfg.Bot.SymbolSuffix,
-            Scalping                  = CloneScalpingConfig(_cfg.Bot.Scalping),
+            Scalping                  = CloneScalpingSettings(_cfg.Bot.Scalping),
             ScalpingByPair            = new Dictionary<string, ScalpingConfig>(
                 (_cfg.Bot.ScalpingByPair ?? new Dictionary<string, ScalpingConfig>())
                     .ToDictionary(kv => kv.Key, kv => CloneScalpingConfig(kv.Value)),
+                StringComparer.OrdinalIgnoreCase),
+            CommonTrading             = CloneCommonTradingSettings(_cfg.Bot.CommonTrading),
+            NormalTrading             = CloneNormalTradingSettings(_cfg.Bot.NormalTrading),
+            NormalTradingByPair       = new Dictionary<string, NormalTradingSettings>(
+                (_cfg.Bot.NormalTradingByPair ?? new Dictionary<string, NormalTradingSettings>())
+                    .ToDictionary(kv => kv.Key, kv => CloneNormalTradingSettings(kv.Value)),
                 StringComparer.OrdinalIgnoreCase)
         };
 
@@ -2463,7 +2579,6 @@ SAFETY RULES:
         private void TxtSL_TextChanged(object? sender, EventArgs e)    => RecalcRR();
         private void TxtTP_TextChanged(object? sender, EventArgs e)    => RecalcRR();
         private void TxtLot_TextChanged(object? sender, EventArgs e)   => RecalcRR();
-        private void ChkAutoLot_CheckedChanged(object? sender, EventArgs e) { _txtLot.Enabled = !_chkAutoLot.Checked; RecalcRR(); }
 
         private async void BtnBuy_Click(object? sender, EventArgs e)  => await SubmitTradeAsync(TradeType.BUY);
         private async void BtnSell_Click(object? sender, EventArgs e) => await SubmitTradeAsync(TradeType.SELL);
@@ -3328,7 +3443,7 @@ SAFETY RULES:
             try
             {
                 liveSnapshot = await AwaitOrDefaultAsync(
-                    _bridge.GetMarketSnapshotAsync(request, _cfg.Bot),
+                    _bridge.GetMarketSnapshotAsync(request, BuildReviewSnapshotBotConfig(request)),
                     "market snapshot").ConfigureAwait(false);
                 account = await AwaitOrDefaultAsync(
                     _bridge.GetAccountInfoAsync(),
@@ -3398,26 +3513,27 @@ SAFETY RULES:
             using var form = new Form
             {
                 Text = $"Review Trade - {request.TradeType} {request.Pair}",
-                Size = new Size(900, 720),
-                MinimumSize = new Size(760, 560),
+                Size = new Size(1280, 900),
+                MinimumSize = new Size(1080, 760),
                 StartPosition = FormStartPosition.CenterParent,
                 BackColor = Color.FromArgb(13, 13, 19),
                 ForeColor = Color.FromArgb(218, 218, 230),
-                Font = new Font("Segoe UI", 9F)
+                Font = new Font("Segoe UI", 9F),
+                Opacity = 0
             };
             AppIcon.ApplyTo(form);
+            form.SuspendLayout();
 
             var root = new TableLayoutPanel
             {
                 Dock = DockStyle.Fill,
                 ColumnCount = 1,
-                RowCount = 4,
+                RowCount = 3,
                 Padding = new Padding(14),
                 BackColor = form.BackColor
             };
             root.RowStyles.Add(new RowStyle(SizeType.Absolute, 58));
             root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-            root.RowStyles.Add(new RowStyle(SizeType.Absolute, 190));
             root.RowStyles.Add(new RowStyle(SizeType.Absolute, 78));
             form.Controls.Add(root);
 
@@ -3437,10 +3553,96 @@ SAFETY RULES:
             IReadOnlyCollection<LivePosition> latestPositions = reviewPositions ?? [];
             Func<double> getCurrentReviewLotSize = () => Math.Max(0.01, activeRequest.LotSize);
 
+            var scrollHost = new Panel
+            {
+                Dock = DockStyle.Fill,
+                AutoScroll = true,
+                BackColor = form.BackColor
+            };
+            root.Controls.Add(scrollHost, 0, 1);
+
+            var contentStack = new FlowLayoutPanel
+            {
+                Dock = DockStyle.None,
+                Location = new Point(0, 0),
+                AutoSize = true,
+                AutoSizeMode = AutoSizeMode.GrowAndShrink,
+                FlowDirection = FlowDirection.TopDown,
+                WrapContents = false,
+                Padding = new Padding(0, 0, 6, 16),
+                BackColor = form.BackColor
+            };
+            scrollHost.Controls.Add(contentStack);
+            EnableReviewDoubleBuffering(scrollHost);
+            EnableReviewDoubleBuffering(contentStack);
+
+            Action requestReviewContentResize = () => { };
+
+            Panel MakeReviewExpander(string text, Control body, bool expanded = true)
+            {
+                bool isExpanded = expanded;
+                var expander = new Panel
+                {
+                    Width = 900,
+                    Height = expanded ? 260 : 36,
+                    BackColor = Color.FromArgb(13, 13, 19),
+                    Margin = new Padding(0, 0, 0, 10)
+                };
+
+                var header = new Button
+                {
+                    Location = new Point(0, 0),
+                    Height = 34,
+                    TextAlign = ContentAlignment.MiddleLeft,
+                    FlatStyle = FlatStyle.Flat,
+                    BackColor = Color.FromArgb(18, 22, 34),
+                    ForeColor = Color.FromArgb(180, 220, 255),
+                    Font = new Font("Segoe UI Semibold", 9F, FontStyle.Bold),
+                    Cursor = Cursors.Hand
+                };
+                header.FlatAppearance.BorderColor = Color.FromArgb(48, 56, 72);
+                header.FlatAppearance.BorderSize = 1;
+
+                var bodyHost = new Panel
+                {
+                    Location = new Point(0, 42),
+                    BackColor = Color.FromArgb(13, 13, 19),
+                    Padding = new Padding(0),
+                    Visible = expanded
+                };
+                body.Location = new Point(0, 0);
+                bodyHost.Controls.Add(body);
+
+                void LayoutExpander()
+                {
+                    int width = Math.Max(320, expander.Width);
+                    header.SetBounds(0, 0, width, 34);
+                    header.Text = isExpanded ? $"[-] {text}" : $"[+] {text}";
+
+                    body.Width = width;
+                    int bodyHeight = Math.Max(1, body.Height + 8);
+                    bodyHost.SetBounds(0, 42, width, isExpanded ? bodyHeight : 0);
+                    bodyHost.Visible = isExpanded;
+                    expander.Height = isExpanded ? bodyHost.Bottom + 8 : 36;
+                }
+
+                header.Click += (_, _) =>
+                {
+                    isExpanded = !isExpanded;
+                    LayoutExpander();
+                    requestReviewContentResize();
+                };
+                expander.Resize += (_, _) => LayoutExpander();
+                expander.Controls.Add(header);
+                expander.Controls.Add(bodyHost);
+                LayoutExpander();
+                return expander;
+            }
+
             var bindings = new List<(string Path, Label Value, string Format)>();
-            var dashboard = BuildReviewDashboard(bindings, out var liveStatus);
-            root.Controls.Add(dashboard, 0, 1);
-            UpdateReviewExecutionBarrierSnapshot(currentSnapshot, request, request.LotSize, latestPositions);
+            var dashboard = BuildReviewDashboard(bindings, out var liveStatus, out var dashboardFlow, useInternalScroll: false);
+            var dataExpander = MakeReviewExpander("Live Market Data Groups", dashboard, expanded: true);
+            UpdateReviewExecutionBarrierSnapshot(currentSnapshot, request, request.LotSize, latestPositions, scalpingStrategy: false);
             RefreshReviewDashboard(currentSnapshot, bindings);
 
             bool fastRefreshing = false;
@@ -3462,7 +3664,7 @@ SAFETY RULES:
 
             void CommitReviewSnapshot(string lane)
             {
-                UpdateReviewExecutionBarrierSnapshot(currentSnapshot, activeRequest, getCurrentReviewLotSize(), latestPositions);
+                UpdateReviewExecutionBarrierSnapshot(currentSnapshot, activeRequest, getCurrentReviewLotSize(), latestPositions, scalpingStrategy: false);
                 latestSnapshotJson = currentSnapshot.ToString(Formatting.Indented);
                 form.Tag = latestSnapshotJson;
                 RefreshReviewDashboard(currentSnapshot, bindings);
@@ -3512,7 +3714,7 @@ SAFETY RULES:
                 try
                 {
                     ReloadReviewConfig();
-                    JObject? contextSnapshot = await _bridge.GetMarketSnapshotAsync(activeRequest, _cfg.Bot);
+                    JObject? contextSnapshot = await _bridge.GetMarketSnapshotAsync(activeRequest, BuildReviewSnapshotBotConfig(activeRequest));
                     if (contextSnapshot != null && !form.IsDisposed)
                     {
                         MergeReviewSnapshotSections(currentSnapshot, contextSnapshot,
@@ -3549,7 +3751,7 @@ SAFETY RULES:
                 try
                 {
                     ReloadReviewConfig();
-                    JObject? slowSnapshot = await _bridge.GetMarketSnapshotAsync(activeRequest, _cfg.Bot);
+                    JObject? slowSnapshot = await _bridge.GetMarketSnapshotAsync(activeRequest, BuildReviewSnapshotBotConfig(activeRequest));
                     if (slowSnapshot != null && !form.IsDisposed)
                     {
                         MergeReviewSnapshotSections(currentSnapshot, slowSnapshot,
@@ -3583,21 +3785,14 @@ SAFETY RULES:
             var fastTimer = new System.Windows.Forms.Timer { Interval = 1000 };
             fastTimer.Tick += async (_, _) => await RefreshReviewFastAsync();
             form.FormClosed += (_, _) => fastTimer.Stop();
-            fastTimer.Start();
 
             var contextTimer = new System.Windows.Forms.Timer { Interval = 5000 };
             contextTimer.Tick += async (_, _) => await RefreshReviewContextAsync();
             form.FormClosed += (_, _) => contextTimer.Stop();
-            contextTimer.Start();
 
             var slowTimer = new System.Windows.Forms.Timer { Interval = 60000 };
             slowTimer.Tick += async (_, _) => await RefreshReviewSlowAsync();
             form.FormClosed += (_, _) => slowTimer.Stop();
-            slowTimer.Start();
-
-            _ = RefreshReviewFastAsync();
-            _ = RefreshReviewContextAsync();
-            _ = RefreshReviewSlowAsync();
 
             var clockTimer = new System.Windows.Forms.Timer { Interval = 1000 };
             clockTimer.Tick += (_, _) =>
@@ -3607,27 +3802,122 @@ SAFETY RULES:
                     $"  {DateTime.Now:HH:mm:ss}  |  Fast: {FormatReviewSyncAge(lastFastSync)}  |  Context: {FormatReviewSyncAge(lastContextSync)}  |  Slow: {FormatReviewSyncAge(lastSlowSync)}";
             };
             form.FormClosed += (_, _) => clockTimer.Stop();
-            clockTimer.Start();
 
             // â"€â"€ Row 2: two-row host (lot/leverage + auto-close) â"€â"€â"€â"€
             var row2Host = new TableLayoutPanel
             {
-                Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 3,
-                BackColor = form.BackColor, Padding = new Padding(0)
+                ColumnCount = 2,
+                RowCount = 2,
+                BackColor = form.BackColor,
+                Padding = new Padding(0),
+                Margin = new Padding(0, 0, 0, 10)
             };
-            row2Host.RowStyles.Add(new RowStyle(SizeType.Absolute, 52));
-            row2Host.RowStyles.Add(new RowStyle(SizeType.Absolute, 48));
-            row2Host.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-            root.Controls.Add(row2Host, 0, 2);
+            row2Host.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
+            row2Host.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
+            row2Host.RowStyles.Add(new RowStyle(SizeType.Absolute, 124));
+            row2Host.RowStyles.Add(new RowStyle(SizeType.Absolute, 300));
+            contentStack.Controls.Add(row2Host);
+
+            FlowLayoutPanel lotPanel = null!;
+            FlowLayoutPanel scalpPanel = null!;
+            FlowLayoutPanel normalPanel = null!;
+
+            void ResizeReviewContent()
+            {
+                int width = Math.Max(980, scrollHost.ClientSize.Width - SystemInformation.VerticalScrollBarWidth - 10);
+                contentStack.Width = width;
+                dataExpander.Width = width;
+                dashboard.Width = width;
+                dashboardFlow.Width = width;
+                ResizeReviewGroups(dashboardFlow);
+                dashboardFlow.PerformLayout();
+                int dashboardGroupsHeight = MeasureFlowPanelHeight(dashboardFlow, 220);
+                dashboardFlow.Height = dashboardGroupsHeight;
+                dashboard.Height = dashboardGroupsHeight + 38;
+                if (dataExpander.Controls.Count > 1 && dataExpander.Controls[1] is Panel dataBody && dataBody.Visible)
+                {
+                    dataBody.SetBounds(0, 42, width, dashboard.Height + 8);
+                    dataExpander.Height = dataBody.Bottom + 8;
+                }
+                else
+                {
+                    dataExpander.Height = 36;
+                }
+                row2Host.Width = width;
+                int strategyColumnWidth = Math.Max(420, (width - 16) / 2);
+                if (lotPanel == null || scalpPanel == null || normalPanel == null)
+                    return;
+
+                lotPanel.Width = Math.Max(1, width - 8);
+                scalpPanel.Width = strategyColumnWidth;
+                normalPanel.Width = strategyColumnWidth;
+
+                lotPanel.PerformLayout();
+                scalpPanel.PerformLayout();
+                normalPanel.PerformLayout();
+
+                int commonHeight = MeasureFlowPanelHeight(lotPanel, 94) + 8;
+                int strategyHeight = Math.Max(
+                    172,
+                    Math.Max(
+                        MeasureFlowPanelHeight(scalpPanel, 154),
+                        MeasureFlowPanelHeight(normalPanel, 154)) + 12);
+
+                row2Host.RowStyles[0].Height = commonHeight;
+                row2Host.RowStyles[1].Height = strategyHeight;
+                row2Host.Height = commonHeight + strategyHeight + 12;
+                contentStack.PerformLayout();
+                scrollHost.AutoScrollMinSize = new Size(width, MeasureFlowPanelHeight(contentStack, contentStack.Height) + 18);
+            }
+            requestReviewContentResize = ResizeReviewContent;
+
+            scrollHost.Resize += (_, _) => ResizeReviewContent();
+            form.Load += (_, _) => ResizeReviewContent();
+            bool reviewRefreshStarted = false;
+            form.Shown += (_, _) =>
+            {
+                ResizeReviewContent();
+                form.BeginInvoke(new Action(async () =>
+                {
+                    ResizeReviewContent();
+                    form.Opacity = 1;
+                    if (!reviewRefreshStarted)
+                    {
+                        reviewRefreshStarted = true;
+                        await Task.Delay(120).ConfigureAwait(true);
+                        if (form.IsDisposed)
+                            return;
+
+                        fastTimer.Start();
+                        contextTimer.Start();
+                        slowTimer.Start();
+                        clockTimer.Start();
+                        _ = RefreshReviewFastAsync();
+                        _ = RefreshReviewContextAsync();
+                        _ = RefreshReviewSlowAsync();
+                    }
+                }));
+            };
+
+            void PaintSettingsPanel(Panel panel, Color accent, PaintEventArgs e)
+            {
+                using var border = new Pen(Color.FromArgb(48, 56, 72));
+                using var accentPen = new Pen(accent, 2);
+                e.Graphics.DrawRectangle(border, 0, 0, panel.Width - 1, panel.Height - 1);
+                e.Graphics.DrawLine(accentPen, 0, 0, panel.Width - 1, 0);
+            }
 
             // â"€â"€ Row 2a: Lot size + Leverage â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
-            var lotPanel = new FlowLayoutPanel
+            lotPanel = new FlowLayoutPanel
             {
                 Dock = DockStyle.Fill, FlowDirection = FlowDirection.LeftToRight,
-                WrapContents = false, Padding = new Padding(0, 8, 0, 0),
-                BackColor = form.BackColor
+                WrapContents = true, Padding = new Padding(10),
+                BackColor = Color.FromArgb(17, 19, 28),
+                Margin = new Padding(4)
             };
+            lotPanel.Paint += (_, e) => PaintSettingsPanel(lotPanel, Color.FromArgb(120, 170, 220), e);
             row2Host.Controls.Add(lotPanel, 0, 0);
+            row2Host.SetColumnSpan(lotPanel, 2);
 
             var lotOptions = BuildReviewLotOptions(symbol?.Symbol ?? request.Pair);
 
@@ -3644,8 +3934,9 @@ SAFETY RULES:
             };
             cmbLotSize.Items.AddRange(lotOptions);
             cmbLotSize.SelectedItem = lotOptions
+                .Where(o => !o.IsAutoFromRisk)
                 .OrderBy(o => Math.Abs(o.Size - Math.Max(0.01, request.LotSize)))
-                .First();
+                .FirstOrDefault() ?? lotOptions.First();
 
             var leverageOptions = new[] { "1:50", "1:100", "1:200", "1:500", "1:1000" };
             var cmbLeverage = new ComboBox
@@ -3667,6 +3958,7 @@ SAFETY RULES:
             cmbLeverage.SelectedItem = acctLevItem;
             if (cmbLeverage.SelectedIndex < 0) cmbLeverage.SelectedIndex = 0;
 
+            lotPanel.Controls.Add(MakeInlineLabel("Common Trade Settings"));
             lotPanel.Controls.Add(MakeInlineLabel("Lot size"));
             lotPanel.Controls.Add(cmbLotSize);
             lotPanel.Controls.Add(MakeInlineLabel("   Leverage"));
@@ -3684,19 +3976,37 @@ SAFETY RULES:
                 if (colon < 0 || !int.TryParse(levStr[(colon + 1)..], out int lev)) lev = 100;
                 if (equityForCalc <= 0 || entryForCalc <= 0 || activeRequest.StopLoss <= 0) return;
                 double baseLots = LotCalculator.Calculate(equityForCalc, _cfg.Bot.MaxRiskPercent, entryForCalc, activeRequest.StopLoss, activeRequest.Pair);
-                double scaledLots = Math.Max(0.01, Math.Min(100.0, Math.Round(baseLots * lev / 100.0, 2)));
-                cmbLotSize.SelectedItem = lotOptions.OrderBy(o => Math.Abs(o.Size - scaledLots)).First();
+                double scaledLots = BrokerLotSizeValidator.Normalize(baseLots * lev / 100.0, symbol);
+                cmbLotSize.SelectedItem = lotOptions.Where(o => !o.IsAutoFromRisk).OrderBy(o => Math.Abs(o.Size - scaledLots)).First();
             };
 
             // â"€â"€ Row 2b: Auto-close â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
-            var autoPanel = new FlowLayoutPanel
-            {
-                Dock = DockStyle.Fill, FlowDirection = FlowDirection.LeftToRight,
-                WrapContents = false, Padding = new Padding(0, 4, 0, 0),
-                BackColor = form.BackColor
-            };
-            row2Host.Controls.Add(autoPanel, 0, 1);
+            var autoPanel = lotPanel;
 
+            var cmbTradingMode = new ComboBox
+            {
+                DropDownStyle = ComboBoxStyle.DropDownList,
+                Width = 92,
+                Height = 28,
+                BackColor = Color.FromArgb(18, 20, 32),
+                ForeColor = Color.FromArgb(218, 218, 230),
+                FlatStyle = FlatStyle.Flat,
+                Font = new Font("Segoe UI", 8.5F),
+                Margin = new Padding(6, 4, 0, 0)
+            };
+            cmbTradingMode.Items.AddRange(new object[] { "Auto", "Manual" });
+            cmbTradingMode.SelectedIndex = _cfg.Bot.CommonTrading.TradingMode == TradingControlMode.Auto ? 0 : 1;
+            var chkCommonAi = new CheckBox
+            {
+                Text = "AI confirm",
+                AutoSize = false,
+                Size = new Size(92, 28),
+                ForeColor = Color.FromArgb(210, 150, 255),
+                BackColor = form.BackColor,
+                FlatStyle = FlatStyle.Flat,
+                Font = new Font("Segoe UI", 8.5F)
+            };
+            chkCommonAi.Checked = _cfg.Bot.CommonTrading.UseAiConfirmation;
             var chkAutoClose = new CheckBox
             {
                 Text = "Auto close after trade opens",
@@ -3707,33 +4017,59 @@ SAFETY RULES:
                 FlatStyle = FlatStyle.Flat,
                 Font = new Font("Segoe UI Semibold", 9F, FontStyle.Bold)
             };
+            chkAutoClose.Checked = _cfg.Bot.CommonTrading.AutoCloseAfterOpen;
             var nudPips = MakeReviewNumber(0, 10000, 0.5M, 1, 82);
             var nudMoney = MakeReviewNumber(0, 100000, 0.10M, 2, 92);
+            nudPips.Value = Math.Min(nudPips.Maximum, Math.Max(nudPips.Minimum, (decimal)_cfg.Bot.CommonTrading.ProfitTargetPips));
+            nudMoney.Value = Math.Min(nudMoney.Maximum, Math.Max(nudMoney.Minimum, (decimal)_cfg.Bot.CommonTrading.ProfitTargetUsd));
+            var btnCommonReset = new Button
+            {
+                Text = "Reset",
+                AutoSize = false,
+                Size = new Size(58, 24),
+                BackColor = Color.FromArgb(34, 46, 58),
+                ForeColor = Color.FromArgb(140, 210, 255),
+                FlatStyle = FlatStyle.Flat,
+                Font = new Font("Segoe UI Semibold", 8F, FontStyle.Bold),
+                Cursor = Cursors.Hand,
+                Margin = new Padding(4, 5, 10, 0)
+            };
+            btnCommonReset.FlatAppearance.BorderSize = 0;
+            _cardTooltip.SetToolTip(nudPips, "Global profit target in pips.");
+            _cardTooltip.SetToolTip(nudMoney, "0 = disabled. If auto-close is enabled and both targets are 0, close on any profit.");
+            _cardTooltip.SetToolTip(btnCommonReset, "Reset shared trade controls and refresh strategy defaults.");
+            autoPanel.Controls.Add(MakeInlineLabel("Trading Mode"));
+            autoPanel.Controls.Add(cmbTradingMode);
+            autoPanel.Controls.Add(chkCommonAi);
             autoPanel.Controls.Add(chkAutoClose);
             autoPanel.Controls.Add(MakeInlineLabel("Pips target"));
             autoPanel.Controls.Add(nudPips);
             autoPanel.Controls.Add(MakeInlineLabel("Money target"));
             autoPanel.Controls.Add(nudMoney);
-            autoPanel.Controls.Add(MakeInlineLabel("0 = close on any profit"));
+            autoPanel.Controls.Add(MakeInlineLabel("0 = disabled"));
+            autoPanel.Controls.Add(btnCommonReset);
 
-            var scalpPanel = new FlowLayoutPanel
+            scalpPanel = new FlowLayoutPanel
             {
                 Dock = DockStyle.Fill, FlowDirection = FlowDirection.LeftToRight,
-                WrapContents = true, Padding = new Padding(0, 4, 0, 0),
-                BackColor = form.BackColor
+                WrapContents = true, Padding = new Padding(10),
+                BackColor = Color.FromArgb(24, 20, 12),
+                Margin = new Padding(4)
             };
-            row2Host.Controls.Add(scalpPanel, 0, 2);
+            scalpPanel.Paint += (_, e) => PaintSettingsPanel(scalpPanel, Color.FromArgb(235, 170, 55), e);
+            row2Host.Controls.Add(scalpPanel, 0, 1);
 
             var chkAutoScalp = new CheckBox
             {
-                Text = "Auto scalping",
+                Text = "Enable Scalping",
                 AutoSize = false,
-                Size = new Size(112, 28),
+                Size = new Size(126, 28),
                 ForeColor = Color.Gold,
                 BackColor = Color.FromArgb(50, 42, 20),
                 FlatStyle = FlatStyle.Flat,
                 Font = new Font("Segoe UI Semibold", 9F, FontStyle.Bold)
             };
+            chkAutoScalp.Checked = _cfg.Bot.Scalping.Enabled;
             var cmbScalpMode = new ComboBox
             {
                 DropDownStyle = ComboBoxStyle.DropDownList,
@@ -3759,6 +4095,7 @@ SAFETY RULES:
             var nudScalpTp = MakeReviewNumber(1, 500, 0.5M, 1, 58);
             var nudScalpSlMoney = MakeReviewNumber(0, 100000, 0.10M, 2, 78);
             var nudScalpTpMoney = MakeReviewNumber(0, 100000, 0.10M, 2, 78);
+            var nudScalpRr = MakeReviewNumber(0.1M, 20, 0.1M, 1, 58);
             var nudScalpSpread = MakeReviewNumber(0.1M, 100, 0.1M, 1, 58);
             var btnScalpReset = new Button
             {
@@ -3774,15 +4111,16 @@ SAFETY RULES:
             };
             btnScalpReset.FlatAppearance.BorderSize = 0;
             _cardTooltip.SetToolTip(btnScalpReset, "Reset scalping values to bot suggestions for this pair.");
-            var chkScalpAi = new CheckBox
+            var btnStartScalping = MakeDialogButton(_scalping?.IsRunning == true ? "Stop Scalping" : "Start Scalping", Color.FromArgb(150, 88, 18));
+            btnStartScalping.ForeColor = Color.FromArgb(255, 220, 140);
+            var lblScalpingStatus = new Label
             {
-                Text = "AI confirm",
+                Text = $"Scalping Status: {(_scalping?.IsRunning == true ? "Running" : "Stopped")}",
+                ForeColor = _scalping?.IsRunning == true ? Color.Gold : Color.FromArgb(145, 150, 165),
                 AutoSize = false,
-                Size = new Size(92, 28),
-                ForeColor = Color.FromArgb(210, 150, 255),
-                BackColor = form.BackColor,
-                FlatStyle = FlatStyle.Flat,
-                Font = new Font("Segoe UI", 8.5F)
+                Size = new Size(190, 28),
+                TextAlign = ContentAlignment.MiddleLeft,
+                Margin = new Padding(6, 4, 0, 0)
             };
             decimal Clamp(NumericUpDown nud, decimal value) =>
                 Math.Min(nud.Maximum, Math.Max(nud.Minimum, value));
@@ -3800,8 +4138,8 @@ SAFETY RULES:
                 nudScalpMinutes.Value = Clamp(nudScalpMinutes, config.MaxMinutes);
                 nudScalpSl.Value = Clamp(nudScalpSl, (decimal)config.StopLossPips);
                 nudScalpTp.Value = Clamp(nudScalpTp, (decimal)config.TakeProfitPips);
+                nudScalpRr.Value = Clamp(nudScalpRr, (decimal)Math.Max(0.1, config.RiskRewardRatio));
                 nudScalpSpread.Value = Clamp(nudScalpSpread, (decimal)config.MaxSpreadPips);
-                chkScalpAi.Checked = config.UseAiConfirmation;
             }
 
             var savedScalping = GetSavedScalpingConfigForPair(request.Pair);
@@ -3827,12 +4165,13 @@ SAFETY RULES:
                     C_ACCENT);
             }
 
+            scalpPanel.Controls.Add(MakeInlineLabel("Scalping Strategy"));
             scalpPanel.Controls.Add(chkAutoScalp);
             scalpPanel.Controls.Add(MakeInlineLabel("Mode"));
             scalpPanel.Controls.Add(cmbScalpMode);
             scalpPanel.Controls.Add(MakeInlineLabel("Max trades"));
             scalpPanel.Controls.Add(nudScalpTrades);
-            scalpPanel.Controls.Add(MakeInlineLabel("Minutes"));
+            scalpPanel.Controls.Add(MakeInlineLabel("Trade Duration Minutes"));
             scalpPanel.Controls.Add(nudScalpMinutes);
             scalpPanel.Controls.Add(MakeInlineLabel("SL pips"));
             scalpPanel.Controls.Add(nudScalpSl);
@@ -3842,13 +4181,93 @@ SAFETY RULES:
             scalpPanel.Controls.Add(nudScalpTp);
             scalpPanel.Controls.Add(MakeInlineLabel("TP $"));
             scalpPanel.Controls.Add(nudScalpTpMoney);
+            scalpPanel.Controls.Add(MakeInlineLabel("Risk Reward Ratio"));
+            scalpPanel.Controls.Add(nudScalpRr);
             scalpPanel.Controls.Add(MakeInlineLabel("Max spread pips"));
             scalpPanel.Controls.Add(nudScalpSpread);
             scalpPanel.Controls.Add(btnScalpReset);
-            scalpPanel.Controls.Add(chkScalpAi);
+            scalpPanel.Controls.Add(btnStartScalping);
+            scalpPanel.Controls.Add(lblScalpingStatus);
+
+            normalPanel = new FlowLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                FlowDirection = FlowDirection.LeftToRight,
+                WrapContents = true,
+                Padding = new Padding(10),
+                BackColor = Color.FromArgb(13, 17, 26),
+                Margin = new Padding(4)
+            };
+            normalPanel.Paint += (_, e) => PaintSettingsPanel(normalPanel, Color.FromArgb(90, 160, 245), e);
+            row2Host.Controls.Add(normalPanel, 1, 1);
+
+            var chkNormalTrading = new CheckBox
+            {
+                Text = "Enable Normal Trading",
+                AutoSize = false,
+                Size = new Size(154, 28),
+                ForeColor = Color.FromArgb(135, 190, 255),
+                BackColor = Color.FromArgb(24, 36, 54),
+                FlatStyle = FlatStyle.Flat,
+                Font = new Font("Segoe UI Semibold", 9F, FontStyle.Bold)
+            };
+            var nudNormalTrades = MakeReviewNumber(1, 50, 1, 0, 52);
+            var nudNormalExpiry = MakeReviewNumber(1, 10080, 1, 0, 62);
+            var nudNormalSl = MakeReviewNumber(1, 5000, 0.5M, 1, 58);
+            var nudNormalTp = MakeReviewNumber(1, 10000, 0.5M, 1, 58);
+            var nudNormalSlMoney = MakeReviewNumber(0, 100000, 0.10M, 2, 78);
+            var nudNormalTpMoney = MakeReviewNumber(0, 100000, 0.10M, 2, 78);
+            var nudNormalSpread = MakeReviewNumber(0.1M, 500, 0.1M, 1, 58);
+            var nudNormalRr = MakeReviewNumber(0.1M, 20, 0.1M, 1, 58);
+            var btnStartNormal = MakeDialogButton(_normalTradeManager.IsRunning ? "Stop Normal Trading" : "Start Normal Trading", Color.FromArgb(24, 82, 150));
+            btnStartNormal.ForeColor = Color.FromArgb(170, 215, 255);
+            var lblNormalStatus = new Label
+            {
+                Text = $"Normal Trading Status: {(_normalTradeManager.IsRunning ? "Running" : "Stopped")}",
+                ForeColor = _normalTradeManager.IsRunning ? Color.FromArgb(130, 190, 255) : Color.FromArgb(145, 150, 165),
+                AutoSize = false,
+                Size = new Size(220, 28),
+                TextAlign = ContentAlignment.MiddleLeft,
+                Margin = new Padding(6, 4, 0, 0)
+            };
+
+            void ApplyNormalTradingSettingsToControls(NormalTradingSettings settings)
+            {
+                chkNormalTrading.Checked = settings.Enabled;
+                nudNormalTrades.Value = Clamp(nudNormalTrades, settings.MaxTrades);
+                nudNormalExpiry.Value = Clamp(nudNormalExpiry, settings.ExpiryMinutes);
+                nudNormalSl.Value = Clamp(nudNormalSl, (decimal)settings.StopLossPips);
+                nudNormalTp.Value = Clamp(nudNormalTp, (decimal)settings.TakeProfitPips);
+                nudNormalSpread.Value = Clamp(nudNormalSpread, (decimal)settings.MaxSpreadPips);
+                nudNormalRr.Value = Clamp(nudNormalRr, (decimal)Math.Max(0.1, settings.RiskRewardRatio));
+            }
+
+            ApplyNormalTradingSettingsToControls(GetSavedNormalTradingSettingsForPair(request.Pair) ?? CloneNormalTradingSettings(_cfg.Bot.NormalTrading));
+            normalPanel.Controls.Add(MakeInlineLabel("Normal Trading Strategy"));
+            normalPanel.Controls.Add(chkNormalTrading);
+            normalPanel.Controls.Add(MakeInlineLabel("Max trades"));
+            normalPanel.Controls.Add(nudNormalTrades);
+            normalPanel.Controls.Add(MakeInlineLabel("Trade Expiry Minutes"));
+            normalPanel.Controls.Add(nudNormalExpiry);
+            normalPanel.Controls.Add(MakeInlineLabel("SL pips"));
+            normalPanel.Controls.Add(nudNormalSl);
+            normalPanel.Controls.Add(MakeInlineLabel("SL $"));
+            normalPanel.Controls.Add(nudNormalSlMoney);
+            normalPanel.Controls.Add(MakeInlineLabel("TP pips"));
+            normalPanel.Controls.Add(nudNormalTp);
+            normalPanel.Controls.Add(MakeInlineLabel("TP $"));
+            normalPanel.Controls.Add(nudNormalTpMoney);
+            normalPanel.Controls.Add(MakeInlineLabel("Max spread pips"));
+            normalPanel.Controls.Add(nudNormalSpread);
+            normalPanel.Controls.Add(MakeInlineLabel("Risk Reward Ratio"));
+            normalPanel.Controls.Add(nudNormalRr);
+            normalPanel.Controls.Add(btnStartNormal);
+            normalPanel.Controls.Add(lblNormalStatus);
+            contentStack.Controls.Add(dataExpander);
 
             bool syncing = false;
             bool scalpSyncing = false;
+            bool normalSyncing = false;
             double price = symbol?.Ask > 0 ? symbol.Ask : 1.0;
             string sym = symbol?.Symbol ?? request.Pair;
             double PipValue() => Math.Max(0.0001, GetSelectedReviewLotSize() * LotCalculator.GetPipValuePerLot(sym.ToUpperInvariant(), price));
@@ -3858,6 +4277,13 @@ SAFETY RULES:
                 decimal pipValue = (decimal)PipValue();
                 nudScalpSlMoney.Value = Math.Min(nudScalpSlMoney.Maximum, Math.Round(nudScalpSl.Value * pipValue, 2));
                 nudScalpTpMoney.Value = Math.Min(nudScalpTpMoney.Maximum, Math.Round(nudScalpTp.Value * pipValue, 2));
+            }
+
+            void SyncNormalMoneyFromPips()
+            {
+                decimal pipValue = (decimal)PipValue();
+                nudNormalSlMoney.Value = Math.Min(nudNormalSlMoney.Maximum, Math.Round(nudNormalSl.Value * pipValue, 2));
+                nudNormalTpMoney.Value = Math.Min(nudNormalTpMoney.Maximum, Math.Round(nudNormalTp.Value * pipValue, 2));
             }
 
             nudPips.ValueChanged += (_, _) =>
@@ -3886,7 +4312,13 @@ SAFETY RULES:
                     SyncScalpMoneyFromPips();
                     scalpSyncing = false;
                 }
-                UpdateReviewExecutionBarrierSnapshot(currentSnapshot, activeRequest, GetSelectedReviewLotSize(), latestPositions);
+                if (!normalSyncing)
+                {
+                    normalSyncing = true;
+                    SyncNormalMoneyFromPips();
+                    normalSyncing = false;
+                }
+                UpdateReviewExecutionBarrierSnapshot(currentSnapshot, activeRequest, GetSelectedReviewLotSize(), latestPositions, chkAutoScalp.Checked);
                 latestSnapshotJson = currentSnapshot.ToString(Formatting.Indented);
                 form.Tag = latestSnapshotJson;
                 RefreshReviewDashboard(currentSnapshot, bindings);
@@ -3897,12 +4329,24 @@ SAFETY RULES:
                 if (scalpSyncing) return;
                 scalpSyncing = true;
                 nudScalpSlMoney.Value = Math.Min(nudScalpSlMoney.Maximum, Math.Round(nudScalpSl.Value * (decimal)PipValue(), 2));
+                nudScalpTp.Value = Math.Min(nudScalpTp.Maximum, Math.Max(nudScalpTp.Minimum, Math.Round(nudScalpSl.Value * nudScalpRr.Value, 1)));
+                nudScalpTpMoney.Value = Math.Min(nudScalpTpMoney.Maximum, Math.Round(nudScalpTp.Value * (decimal)PipValue(), 2));
                 scalpSyncing = false;
             };
             nudScalpTp.ValueChanged += (_, _) =>
             {
                 if (scalpSyncing) return;
                 scalpSyncing = true;
+                nudScalpTpMoney.Value = Math.Min(nudScalpTpMoney.Maximum, Math.Round(nudScalpTp.Value * (decimal)PipValue(), 2));
+                if (nudScalpSl.Value > 0)
+                    nudScalpRr.Value = Math.Min(nudScalpRr.Maximum, Math.Max(nudScalpRr.Minimum, Math.Round(nudScalpTp.Value / nudScalpSl.Value, 1)));
+                scalpSyncing = false;
+            };
+            nudScalpRr.ValueChanged += (_, _) =>
+            {
+                if (scalpSyncing) return;
+                scalpSyncing = true;
+                nudScalpTp.Value = Math.Min(nudScalpTp.Maximum, Math.Max(nudScalpTp.Minimum, Math.Round(nudScalpSl.Value * nudScalpRr.Value, 1)));
                 nudScalpTpMoney.Value = Math.Min(nudScalpTpMoney.Maximum, Math.Round(nudScalpTp.Value * (decimal)PipValue(), 2));
                 scalpSyncing = false;
             };
@@ -3924,6 +4368,50 @@ SAFETY RULES:
                     nudScalpTp.Value = Math.Min(nudScalpTp.Maximum, Math.Max(nudScalpTp.Minimum, Math.Round(nudScalpTpMoney.Value / pipValue, 1)));
                 scalpSyncing = false;
             };
+            nudNormalSl.ValueChanged += (_, _) =>
+            {
+                if (normalSyncing) return;
+                normalSyncing = true;
+                nudNormalSlMoney.Value = Math.Min(nudNormalSlMoney.Maximum, Math.Round(nudNormalSl.Value * (decimal)PipValue(), 2));
+                nudNormalTp.Value = Math.Min(nudNormalTp.Maximum, Math.Max(nudNormalTp.Minimum, Math.Round(nudNormalSl.Value * nudNormalRr.Value, 1)));
+                nudNormalTpMoney.Value = Math.Min(nudNormalTpMoney.Maximum, Math.Round(nudNormalTp.Value * (decimal)PipValue(), 2));
+                normalSyncing = false;
+            };
+            nudNormalTp.ValueChanged += (_, _) =>
+            {
+                if (normalSyncing) return;
+                normalSyncing = true;
+                nudNormalTpMoney.Value = Math.Min(nudNormalTpMoney.Maximum, Math.Round(nudNormalTp.Value * (decimal)PipValue(), 2));
+                if (nudNormalSl.Value > 0)
+                    nudNormalRr.Value = Math.Min(nudNormalRr.Maximum, Math.Max(nudNormalRr.Minimum, Math.Round(nudNormalTp.Value / nudNormalSl.Value, 1)));
+                normalSyncing = false;
+            };
+            nudNormalRr.ValueChanged += (_, _) =>
+            {
+                if (normalSyncing) return;
+                normalSyncing = true;
+                nudNormalTp.Value = Math.Min(nudNormalTp.Maximum, Math.Max(nudNormalTp.Minimum, Math.Round(nudNormalSl.Value * nudNormalRr.Value, 1)));
+                nudNormalTpMoney.Value = Math.Min(nudNormalTpMoney.Maximum, Math.Round(nudNormalTp.Value * (decimal)PipValue(), 2));
+                normalSyncing = false;
+            };
+            nudNormalSlMoney.ValueChanged += (_, _) =>
+            {
+                if (normalSyncing) return;
+                normalSyncing = true;
+                decimal pipValue = (decimal)PipValue();
+                if (pipValue > 0)
+                    nudNormalSl.Value = Math.Min(nudNormalSl.Maximum, Math.Max(nudNormalSl.Minimum, Math.Round(nudNormalSlMoney.Value / pipValue, 1)));
+                normalSyncing = false;
+            };
+            nudNormalTpMoney.ValueChanged += (_, _) =>
+            {
+                if (normalSyncing) return;
+                normalSyncing = true;
+                decimal pipValue = (decimal)PipValue();
+                if (pipValue > 0)
+                    nudNormalTp.Value = Math.Min(nudNormalTp.Maximum, Math.Max(nudNormalTp.Minimum, Math.Round(nudNormalTpMoney.Value / pipValue, 1)));
+                normalSyncing = false;
+            };
             btnScalpReset.Click += (_, _) =>
             {
                 scalpSyncing = true;
@@ -3937,10 +4425,39 @@ SAFETY RULES:
                     $"max spread {suggested.MaxSpreadPips:F1} pips.",
                     C_ACCENT);
             };
+            btnCommonReset.Click += (_, _) =>
+            {
+                cmbTradingMode.SelectedIndex = 1;
+                chkCommonAi.Checked = false;
+                chkAutoClose.Checked = false;
+                nudPips.Value = 0;
+                nudMoney.Value = 0;
+                var suggested = BuildSuggestedScalpingConfigForPair(activeRequest.Pair, symbol);
+                ApplyScalpingConfigToControls(suggested);
+                SyncScalpMoneyFromPips();
+                ApplyNormalTradingSettingsToControls(new NormalTradingSettings
+                {
+                    Enabled = true,
+                    StopLossPips = Math.Max(1, suggested.StopLossPips * 3),
+                    TakeProfitPips = Math.Max(1, suggested.TakeProfitPips * 3),
+                    MaxSpreadPips = Math.Max(suggested.MaxSpreadPips, 30),
+                    RiskRewardRatio = 2.0
+                });
+                SyncNormalMoneyFromPips();
+            };
             SyncScalpMoneyFromPips();
+            SyncNormalMoneyFromPips();
 
-            double GetSelectedReviewLotSize() =>
-                cmbLotSize.SelectedItem is LotSizeOption selected ? selected.Size : Math.Max(0.01, activeRequest.LotSize);
+            double GetSelectedReviewLotSize()
+            {
+                double selectedLot = cmbLotSize.SelectedItem is LotSizeOption selected && selected.IsAutoFromRisk
+                    ? CalculateReviewLotFromRisk(activeRequest, account, symbol)
+                    : cmbLotSize.SelectedItem is LotSizeOption manual
+                        ? manual.Size
+                        : Math.Max(0.01, activeRequest.LotSize);
+
+                return BrokerLotSizeValidator.Normalize(selectedLot, symbol);
+            }
             getCurrentReviewLotSize = GetSelectedReviewLotSize;
 
             int GetSelectedReviewLeverage()
@@ -3953,7 +4470,7 @@ SAFETY RULES:
             string BuildCurrentAiInputPrompt() =>
                 BuildFilledAiInputPrompt(latestSnapshotJson, GetSelectedReviewLotSize(), GetSelectedReviewLeverage());
 
-            UpdateReviewExecutionBarrierSnapshot(currentSnapshot, request, GetSelectedReviewLotSize(), latestPositions);
+            UpdateReviewExecutionBarrierSnapshot(currentSnapshot, request, GetSelectedReviewLotSize(), latestPositions, chkAutoScalp.Checked);
             latestSnapshotJson = currentSnapshot.ToString(Formatting.Indented);
             form.Tag = latestSnapshotJson;
             RefreshReviewDashboard(currentSnapshot, bindings);
@@ -3965,7 +4482,7 @@ SAFETY RULES:
             };
             bottomHost.RowStyles.Add(new RowStyle(SizeType.Absolute, 22));
             bottomHost.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-            root.Controls.Add(bottomHost, 0, 3);
+            root.Controls.Add(bottomHost, 0, 2);
 
             var lblPlayStatus = new Label
             {
@@ -3993,7 +4510,7 @@ SAFETY RULES:
             TradeReviewDecision decision = new(false, false, 0, 0);
 
             // â"€â"€ Build buttons â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
-            var btnPlay         = MakeDialogButton("Play / Start Trade", C_GREEN);
+            var btnPlay         = MakeDialogButton("Start Normal Trading", C_GREEN);
             var btnCancel       = MakeDialogButton("Cancel", Color.FromArgb(110, 110, 130));
             var btnSignalJson   = MakeDialogButton("Signal",      Color.FromArgb(20, 38, 68));
             var btnViewJson     = MakeDialogButton("Values JSON", Color.FromArgb(28, 45, 80));
@@ -4006,7 +4523,6 @@ SAFETY RULES:
             btnAiResponse.ForeColor   = Color.FromArgb(210, 150, 255);
             btnAiResponse.Enabled     = false;
 
-            buttons.Controls.Add(btnPlay);
             buttons.Controls.Add(btnCancel);
             buttons.Controls.Add(btnSignalJson);
             buttons.Controls.Add(btnViewJson);
@@ -4221,12 +4737,46 @@ SAFETY RULES:
             }
 
             // â"€â"€ Button: Play / Start Trade â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
+            btnStartScalping.Click += (_, _) =>
+            {
+                if (_scalping?.IsRunning == true)
+                {
+                    _ = Task.Run(async () =>
+                    {
+                        await _scalping.StopAsync().ConfigureAwait(false);
+                        _scalpingTradeManager.Stop();
+                    });
+                    lblScalpingStatus.Text = "Scalping Status: Stopping";
+                    return;
+                }
+
+                chkAutoScalp.Checked = true;
+                btnPlay.PerformClick();
+            };
+
+            btnStartNormal.Click += (_, _) =>
+            {
+                if (_normalTradeManager.IsRunning)
+                {
+                    _normalTradeManager.Stop();
+                    lblNormalStatus.Text = "Normal Trading Status: Stopped";
+                    lblNormalStatus.ForeColor = Color.FromArgb(145, 150, 165);
+                    btnStartNormal.Text = "Start Normal Trading";
+                    Log("[BOT] Normal trading manager stopped.", C_YELLOW);
+                    return;
+                }
+
+                chkAutoScalp.Checked = false;
+                btnPlay.PerformClick();
+            };
+
             btnPlay.Click += async (_, _) =>
             {
                 btnPlay.Enabled   = false;
                 btnPlay.Text      = "Analyzing...";
 
-                bool aiEnabled = !string.IsNullOrWhiteSpace(_cfg.Claude.ApiKey)
+                bool aiEnabled = chkCommonAi.Checked
+                              && !string.IsNullOrWhiteSpace(_cfg.Claude.ApiKey)
                               && !_cfg.Claude.ApiKey.StartsWith("sk-ant-..")
                               && _cfg.Claude.ApiKey.Length > 20;
                 bool autoScalpingRequested = chkAutoScalp.Checked;
@@ -4237,10 +4787,53 @@ SAFETY RULES:
                     nudScalpMinutes,
                     nudScalpSl,
                     nudScalpTp,
+                    nudScalpRr,
                     nudScalpSpread,
-                    chkScalpAi);
+                    chkCommonAi);
+                scalpingConfig.UseAiConfirmation = chkCommonAi.Checked;
+                scalpingConfig.Enabled = chkAutoScalp.Checked;
+                var normalTradingSettings = BuildNormalTradingSettingsFromReview(
+                    chkNormalTrading,
+                    nudNormalTrades,
+                    nudNormalExpiry,
+                    nudNormalSl,
+                    nudNormalTp,
+                    nudNormalSpread,
+                    nudNormalRr);
+                var commonTradingSettings = BuildCommonTradingSettingsFromReview(
+                    cmbTradingMode,
+                    chkCommonAi,
+                    chkAutoClose,
+                    nudPips,
+                    nudMoney);
 
+                _cfg.Bot.CommonTrading = commonTradingSettings;
                 await SaveScalpingConfigForPairAsync(activeRequest.Pair, scalpingConfig);
+                await SaveNormalTradingSettingsForPairAsync(activeRequest.Pair, normalTradingSettings);
+                if (!autoScalpingRequested)
+                {
+                    if (!normalTradingSettings.Enabled)
+                    {
+                        SetPlayStatus("Normal trading is disabled.", C_YELLOW);
+                        Log("[BOT] Normal trading start blocked because Enable Normal Trading is unchecked.", C_YELLOW);
+                        btnPlay.Text = "Start Normal Trading";
+                        btnPlay.Enabled = true;
+                        return;
+                    }
+
+                    activeRequest = ApplyNormalTradingSettingsToRequest(activeRequest, normalTradingSettings, symbol);
+                    PatchSnapshotSignalFields(currentSnapshot, activeRequest);
+                }
+                else
+                {
+                    activeRequest = ApplyScalpingSettingsToRequest(activeRequest, scalpingConfig, symbol);
+                    PatchSnapshotSignalFields(currentSnapshot, activeRequest);
+                }
+
+                UpdateReviewExecutionBarrierSnapshot(currentSnapshot, activeRequest, GetSelectedReviewLotSize(), latestPositions, autoScalpingRequested);
+                latestSnapshotJson = currentSnapshot.ToString(Formatting.Indented);
+                form.Tag = latestSnapshotJson;
+                RefreshReviewDashboard(currentSnapshot, bindings);
 
                 var failedRules = GetFailedReviewBarrierMessages(
                     currentSnapshot,
@@ -4267,7 +4860,7 @@ SAFETY RULES:
 
                     SetPlayStatus("Trade blocked because one or more required rules are not fulfilled.", C_RED);
                     Log("[BOT] Trade blocked by review safety rules: " + string.Join(" | ", failedRules), C_RED);
-                    btnPlay.Text    = "Play / Start Trade";
+                    btnPlay.Text    = "Start Normal Trading";
                     btnPlay.Enabled = true;
                     return;
                 }
@@ -4286,7 +4879,7 @@ SAFETY RULES:
                     {
                         SetPlayStatus("Trade cancelled after warning review.", C_YELLOW);
                         Log("[BOT] Trade cancelled after review warnings.", C_YELLOW);
-                        btnPlay.Text = "Play / Start Trade";
+                        btnPlay.Text = "Start Normal Trading";
                         btnPlay.Enabled = true;
                         return;
                     }
@@ -4300,6 +4893,7 @@ SAFETY RULES:
                 {
                     Log("[SCALP] Auto scalping selected - skipping one-shot signal AI/SL/TP validation.", C_ACCENT);
                     SetPlayStatus("Starting auto scalping session...", Color.Gold);
+                    _scalpingTradeManager.Start(scalpingConfig);
                 }
                 else if (aiEnabled)
                 {
@@ -4318,7 +4912,7 @@ SAFETY RULES:
                         {
                             SetPlayStatus($"AI Error: {error}", C_RED);
                             Log($"[AI] Analysis failed: {error}", C_RED);
-                            btnPlay.Text    = "Play / Start Trade";
+                            btnPlay.Text    = "Start Normal Trading";
                             btnPlay.Enabled = true;
                             return;
                         }
@@ -4330,7 +4924,7 @@ SAFETY RULES:
                             string reasons = ExtractAiBlockingReasons(respJson);
                             SetPlayStatus($"AI: {aiDecision} - {reasons}", C_YELLOW);
                             Log($"[AI] Trade not approved. Decision: {aiDecision} | {reasons}", C_YELLOW);
-                            btnPlay.Text    = "Play / Start Trade";
+                            btnPlay.Text    = "Start Normal Trading";
                             btnPlay.Enabled = true;
                             return;
                         }
@@ -4342,7 +4936,7 @@ SAFETY RULES:
                         {
                             SetPlayStatus($"AI response invalid: {aiSignalError}", C_RED);
                             Log($"[AI] Approved response rejected by local validation: {aiSignalError}", C_RED);
-                            btnPlay.Text    = "Play / Start Trade";
+                            btnPlay.Text    = "Start Normal Trading";
                             btnPlay.Enabled = true;
                             return;
                         }
@@ -4356,7 +4950,7 @@ SAFETY RULES:
                     {
                         SetPlayStatus($"Error: {ex.Message}", C_RED);
                         Log($"[AI] Exception during analysis: {ex.Message}", C_RED);
-                        btnPlay.Text    = "Play / Start Trade";
+                        btnPlay.Text    = "Start Normal Trading";
                         btnPlay.Enabled = true;
                         return;
                     }
@@ -4367,17 +4961,27 @@ SAFETY RULES:
                     SetPlayStatus("AI not configured - executing directly.", C_YELLOW);
                 }
 
+                double finalReviewLotSize = GetSelectedReviewLotSize();
+                if (aiCompletedRequest != null)
+                    aiCompletedRequest.LotSize = finalReviewLotSize;
+                activeRequest.LotSize = finalReviewLotSize;
+
                 form.Tag = latestSnapshotJson;
+                if (!chkAutoScalp.Checked && chkNormalTrading.Checked)
+                    _normalTradeManager.Start(normalTradingSettings);
                 decision  = new TradeReviewDecision(
                     true,
                     chkAutoClose.Checked,
                     (double)nudPips.Value,
                     (double)nudMoney.Value,
-                    GetSelectedReviewLotSize(),
+                    finalReviewLotSize,
                     GetSelectedReviewLeverage(),
                     aiCompletedRequest,
                     chkAutoScalp.Checked,
-                    scalpingConfig);
+                    scalpingConfig,
+                    !chkAutoScalp.Checked && chkNormalTrading.Checked,
+                    normalTradingSettings,
+                    commonTradingSettings);
                 form.DialogResult = DialogResult.OK;
                 form.Close();
             };
@@ -4398,7 +5002,7 @@ SAFETY RULES:
                     activeRequest = newReq;
                     title.Text = $"{newReq.TradeType} {newReq.Pair} | Lots {newReq.LotSize:F2} | SL {newReq.StopLoss:F5} | TP {newReq.TakeProfit:F5}";
                     PatchSnapshotSignalFields(currentSnapshot, activeRequest);
-                    UpdateReviewExecutionBarrierSnapshot(currentSnapshot, activeRequest, getCurrentReviewLotSize(), latestPositions);
+                    UpdateReviewExecutionBarrierSnapshot(currentSnapshot, activeRequest, getCurrentReviewLotSize(), latestPositions, scalpingStrategy: false);
                     latestSnapshotJson = currentSnapshot.ToString(Formatting.Indented);
                     form.Tag = latestSnapshotJson;
                     RefreshReviewDashboard(currentSnapshot, bindings);
@@ -4438,23 +5042,32 @@ SAFETY RULES:
                 sigFileWatcher?.Dispose();
             };
 
+            EnableReviewDoubleBuffering(form);
+            ResizeReviewContent();
+            form.ResumeLayout(true);
             form.ShowDialog(this);
             return decision;
         }
 
         private Control BuildReviewDashboard(
             List<(string Path, Label Value, string Format)> bindings,
-            out Label liveStatus)
+            out Label liveStatus,
+            out FlowLayoutPanel groupsFlow,
+            bool useInternalScroll = true)
         {
             var host = new TableLayoutPanel
             {
-                Dock = DockStyle.Fill,
+                Dock = useInternalScroll ? DockStyle.Fill : DockStyle.Top,
+                AutoSize = !useInternalScroll,
+                AutoSizeMode = AutoSizeMode.GrowAndShrink,
                 ColumnCount = 1,
                 RowCount = 2,
                 BackColor = Color.FromArgb(13, 13, 19)
             };
             host.RowStyles.Add(new RowStyle(SizeType.Absolute, 30));
-            host.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+            host.RowStyles.Add(useInternalScroll
+                ? new RowStyle(SizeType.Percent, 100)
+                : new RowStyle(SizeType.AutoSize));
 
             liveStatus = new Label
             {
@@ -4466,24 +5079,32 @@ SAFETY RULES:
             };
             host.Controls.Add(liveStatus, 0, 0);
 
-            var scroll = new Panel
-            {
-                Dock = DockStyle.Fill,
-                AutoScroll = true,
-                BackColor = Color.FromArgb(13, 13, 19)
-            };
-            host.Controls.Add(scroll, 0, 1);
-
             var flow = new FlowLayoutPanel
             {
                 Dock = DockStyle.Top,
                 AutoSize = true,
+                AutoSizeMode = AutoSizeMode.GrowAndShrink,
                 WrapContents = true,
                 FlowDirection = FlowDirection.LeftToRight,
                 Padding = new Padding(0, 0, 12, 12),
-                BackColor = scroll.BackColor
+                BackColor = host.BackColor
             };
-            scroll.Controls.Add(flow);
+            groupsFlow = flow;
+            if (useInternalScroll)
+            {
+                var scroll = new Panel
+                {
+                    Dock = DockStyle.Fill,
+                    AutoScroll = true,
+                    BackColor = Color.FromArgb(13, 13, 19)
+                };
+                host.Controls.Add(scroll, 0, 1);
+                scroll.Controls.Add(flow);
+            }
+            else
+            {
+                host.Controls.Add(flow, 0, 1);
+            }
 
             var reviewTips = new ToolTip
             {
@@ -4534,8 +5155,8 @@ SAFETY RULES:
                 ("Money at risk", "risk.dollar_risk", "money"),
                 ("Profit at TP1", "risk.dollar_profit_tp1", "money"),
                 ("Profit at TP2", "risk.dollar_profit_tp2", "money"),
-                ("Stop-loss distance", "risk.sl_distance_pips", "pips"),
-                ("TP1 distance", "risk.tp1_distance_pips", "pips"),
+                ("Trade Page SL", "effective_trade_settings.stop_loss_pips", "pips"),
+                ("Trade Page TP", "effective_trade_settings.take_profit_pips", "pips"),
                 ("Risk/reward ratio", "risk.rr_ratio", "ratio"),
                 ("Max risk per trade", "risk.max_risk_pct", "pct"),
                 ("Daily loss room left", "risk.daily_loss_remaining", "money")
@@ -4638,7 +5259,8 @@ SAFETY RULES:
             JObject snapshot,
             TradeRequest request,
             double selectedLotSize,
-            IReadOnlyCollection<LivePosition> positions)
+            IReadOnlyCollection<LivePosition> positions,
+            bool scalpingStrategy)
         {
             var reviewRequest = CloneReviewRequest(request);
             reviewRequest.LotSize = Math.Max(0.01, selectedLotSize);
@@ -4655,8 +5277,11 @@ SAFETY RULES:
 
             string pair = reviewRequest.Pair.ToUpperInvariant();
             var pairRules = _pairSettings?.GetForPair(pair);
-            double minRr = pairRules?.ScalpingMinRR > 0 ? pairRules.ScalpingMinRR : _cfg.Bot.MinRRRatio;
-            double maxSpreadPips = pairRules?.MaxSpreadPips > 0 ? pairRules.MaxSpreadPips : _cfg.Bot.MaxSpreadPips;
+            double requiredRr = GetRequiredReviewRiskReward(scalpingStrategy);
+            double requiredSlPips = GetRequiredReviewStopLossPips(scalpingStrategy);
+            double requiredTpPips = GetRequiredReviewTakeProfitPips(scalpingStrategy);
+            string strategyName = GetReviewStrategyName(scalpingStrategy);
+            double maxSpreadPips = GetRequiredReviewMaxSpread(scalpingStrategy);
             bool pairAllowed = _cfg.Bot.AllowedPairs.Count == 0 || _cfg.Bot.AllowedPairs.Contains(pair);
 
             double tradesToday = ReadReviewNumber(snapshot, "account.daily_trades_taken");
@@ -4670,13 +5295,15 @@ SAFETY RULES:
             bool freeMarginOk = accountOk && (double.IsNaN(balance) || balance <= 0 || freeMargin >= balance * 0.05);
 
             double rr = CalculateReviewRiskReward(snapshot, reviewRequest);
-            bool rrOk = !_cfg.Bot.EnforceRR || rr >= minRr;
+            bool rrOk = rr >= requiredRr;
 
             double entry = GetReviewReferenceEntry(snapshot, reviewRequest);
-            double newTradeRisk = entry > 0 && reviewRequest.StopLoss != 0
+            bool stopLossValid = IsReviewStopLossValid(reviewRequest.TradeType, entry, reviewRequest.StopLoss);
+            bool takeProfitValid = IsReviewTakeProfitValid(reviewRequest.TradeType, entry, reviewRequest.TakeProfit);
+            bool takeProfit2Valid = IsReviewTakeProfitValid(reviewRequest.TradeType, entry, reviewRequest.TakeProfit2);
+            double newTradeRisk = stopLossValid
                 ? LotCalculator.DollarRisk(reviewRequest.LotSize, entry, reviewRequest.StopLoss, reviewRequest.Pair)
-                : ReadReviewNumber(snapshot, "risk.dollar_risk");
-            if (double.IsNaN(newTradeRisk)) newTradeRisk = 0;
+                : 0;
 
             double openRisk = positions
                 .Where(p => p.StopLoss > 0)
@@ -4720,9 +5347,7 @@ SAFETY RULES:
                     ? $"Current: equity {equity:0.00}, free {freeMargin:0.00} | Base: equity > 0 and margin known"
                     : "Current: unavailable | Base: equity > 0 and margin known",
                 ["rr_ok"] = rrOk,
-                ["rr_detail"] = _cfg.Bot.EnforceRR
-                    ? $"Current: {rr:0.00} | Base: >= {minRr:0.00}{(pairRules == null ? "" : $" ({pairRules.Pair})")}"
-                    : $"Current: {rr:0.00} | Base: disabled",
+                ["rr_detail"] = $"Current: {rr:0.00} | Base: >= {requiredRr:0.00} ({strategyName} trade page)",
                 ["free_margin_ok"] = freeMarginOk,
                 ["free_margin_detail"] = accountOk
                     ? $"Current: {freeMargin:0.00} | Base: >= {(Math.Max(0, balance) * 0.05):0.00}"
@@ -4738,7 +5363,7 @@ SAFETY RULES:
                     ? "Current: not checked | Base: disabled"
                     : double.IsNaN(spread)
                         ? $"Current: unavailable | Base: <= {maxSpreadPips:0.0} pips"
-                        : $"Current: {spread:0.0} pips | Base: <= {maxSpreadPips:0.0} pips{(pairRules == null ? "" : $" ({pairRules.Pair})")}",
+                        : $"Current: {spread:0.0} pips | Base: <= {maxSpreadPips:0.0} pips ({strategyName} trade page)",
                 ["news_ok"] = newsOk,
                 ["news_detail"] = string.Equals(_cfg.ApiIntegrations.NewsProvider, "None", StringComparison.OrdinalIgnoreCase)
                     ? "Current: disabled | Base: news filter disabled"
@@ -4750,17 +5375,29 @@ SAFETY RULES:
             };
 
             UpsertReviewNumber(snapshot, "risk.calculated_lot", reviewRequest.LotSize);
+            snapshot["effective_trade_settings"] = new JObject
+            {
+                ["strategy"] = strategyName,
+                ["stop_loss_pips"] = requiredSlPips,
+                ["take_profit_pips"] = requiredTpPips,
+                ["required_risk_reward_ratio"] = requiredRr,
+                ["actual_risk_reward_ratio"] = Math.Round(rr, 2),
+                ["max_spread_pips"] = maxSpreadPips,
+                ["current_spread_pips"] = double.IsNaN(spread) ? null : Math.Round(spread, 1)
+            };
+            UpsertReviewNumber(snapshot, "risk.required_rr_ratio", requiredRr);
             if (entry > 0)
             {
                 UpsertReviewNumber(snapshot, "risk.rr_ratio", rr);
                 UpsertReviewNumber(snapshot, "risk.dollar_risk", newTradeRisk);
                 UpsertReviewNumber(snapshot, "risk.dollar_profit_tp1",
-                    LotCalculator.DollarProfit(reviewRequest.LotSize, entry, reviewRequest.TakeProfit, reviewRequest.Pair));
-                if (reviewRequest.TakeProfit2 > 0)
-                {
-                    UpsertReviewNumber(snapshot, "risk.dollar_profit_tp2",
-                        LotCalculator.DollarProfit(reviewRequest.LotSize, entry, reviewRequest.TakeProfit2, reviewRequest.Pair));
-                }
+                    takeProfitValid
+                        ? LotCalculator.DollarProfit(reviewRequest.LotSize, entry, reviewRequest.TakeProfit, reviewRequest.Pair)
+                        : 0);
+                UpsertReviewNumber(snapshot, "risk.dollar_profit_tp2",
+                    takeProfit2Valid
+                        ? LotCalculator.DollarProfit(reviewRequest.LotSize, entry, reviewRequest.TakeProfit2, reviewRequest.Pair)
+                        : 0);
             }
         }
 
@@ -4777,12 +5414,28 @@ SAFETY RULES:
             LotSize = request.LotSize,
             MaxSpreadPips = request.MaxSpreadPips,
             Comment = request.Comment,
+            Strategy = request.Strategy,
             MagicNumber = request.MagicNumber,
             ExpiryMinutes = request.ExpiryMinutes,
             MoveSLToBreakevenAfterTP1 = request.MoveSLToBreakevenAfterTP1,
             SlToBeTrigerPct = request.SlToBeTrigerPct,
             CreatedAt = request.CreatedAt
         };
+
+        private BotConfig BuildReviewSnapshotBotConfig(TradeRequest request)
+        {
+            bool scalpingStrategy = string.Equals(request.Strategy, "Scalping", StringComparison.OrdinalIgnoreCase);
+            double maxSpreadPips = GetRequiredReviewMaxSpread(scalpingStrategy);
+
+            return new BotConfig
+            {
+                MaxRiskPercent = _cfg.Bot.MaxRiskPercent,
+                EmergencyCloseDrawdownPct = _cfg.Bot.EmergencyCloseDrawdownPct,
+                MaxSpreadPips = maxSpreadPips,
+                Scalping = CloneScalpingSettings(_cfg.Bot.Scalping),
+                NormalTrading = CloneNormalTradingSettings(_cfg.Bot.NormalTrading)
+            };
+        }
 
         private static double ReadReviewNumber(JObject snapshot, string path)
         {
@@ -4814,9 +5467,48 @@ SAFETY RULES:
         {
             double entry = GetReviewReferenceEntry(snapshot, request);
             return entry > 0
+                && IsReviewStopLossValid(request.TradeType, entry, request.StopLoss)
+                && IsReviewTakeProfitValid(request.TradeType, entry, request.TakeProfit)
                 ? LotCalculator.RiskRewardRatio(entry, request.StopLoss, request.TakeProfit)
                 : 0;
         }
+
+        private double GetRequiredReviewRiskReward(bool scalpingStrategy) =>
+            Math.Max(
+                0.1,
+                scalpingStrategy
+                    ? _cfg.Bot.Scalping.RiskRewardRatio
+                    : _cfg.Bot.NormalTrading.RiskRewardRatio);
+
+        private double GetRequiredReviewStopLossPips(bool scalpingStrategy) =>
+            Math.Max(
+                0.1,
+                scalpingStrategy
+                    ? _cfg.Bot.Scalping.StopLossPips
+                    : _cfg.Bot.NormalTrading.StopLossPips);
+
+        private double GetRequiredReviewTakeProfitPips(bool scalpingStrategy) =>
+            Math.Max(
+                0.1,
+                scalpingStrategy
+                    ? _cfg.Bot.Scalping.TakeProfitPips
+                    : _cfg.Bot.NormalTrading.TakeProfitPips);
+
+        private double GetRequiredReviewMaxSpread(bool scalpingStrategy) =>
+            Math.Max(
+                0,
+                scalpingStrategy
+                    ? _cfg.Bot.Scalping.MaxSpreadPips
+                    : _cfg.Bot.NormalTrading.MaxSpreadPips);
+
+        private static string GetReviewStrategyName(bool scalpingStrategy) =>
+            scalpingStrategy ? "Scalping" : "Normal";
+
+        private static bool IsReviewStopLossValid(TradeType type, double entry, double stopLoss) =>
+            entry > 0 && stopLoss > 0 && (type == TradeType.BUY ? stopLoss < entry : stopLoss > entry);
+
+        private static bool IsReviewTakeProfitValid(TradeType type, double entry, double takeProfit) =>
+            entry > 0 && takeProfit > 0 && (type == TradeType.BUY ? takeProfit > entry : takeProfit < entry);
 
         private static void UpsertReviewNumber(JObject snapshot, string path, double value)
         {
@@ -5007,6 +5699,39 @@ SAFETY RULES:
             }
         }
 
+        private static int MeasureFlowPanelHeight(FlowLayoutPanel flow, int minimumHeight)
+        {
+            flow.PerformLayout();
+
+            int height = flow.Padding.Top + flow.Padding.Bottom;
+            foreach (Control child in flow.Controls)
+            {
+                if (!child.Visible)
+                    continue;
+
+                height = Math.Max(height, child.Bottom + child.Margin.Bottom + flow.Padding.Bottom);
+            }
+
+            return Math.Max(minimumHeight, height);
+        }
+
+        private static void EnableReviewDoubleBuffering(Control control)
+        {
+            try
+            {
+                typeof(Control)
+                    .GetProperty("DoubleBuffered", BindingFlags.Instance | BindingFlags.NonPublic)
+                    ?.SetValue(control, true, null);
+            }
+            catch
+            {
+                // Rendering optimization only; ignore controls that do not expose this property.
+            }
+
+            foreach (Control child in control.Controls)
+                EnableReviewDoubleBuffering(child);
+        }
+
         private static string GetReviewGroupTooltip(string title)
         {
             string intro = title switch
@@ -5054,7 +5779,7 @@ SAFETY RULES:
                 "execution_barriers.rr_detail" => "Checks whether expected reward is high enough compared with the stop-loss risk.",
                 "execution_barriers.free_margin_detail" => "Checks whether the account has enough available margin before opening another trade.",
                 "execution_barriers.portfolio_risk_detail" => "Checks whether total open risk plus this trade stays within the account risk cap.",
-                "execution_barriers.spread_detail" => "Checks whether current spread is inside the pair or global spread limit.",
+                "execution_barriers.spread_detail" => "Checks whether current spread is inside the Trade Page max spread limit.",
                 "execution_barriers.news_detail" => "Checks whether high-impact news is inside the configured blackout window.",
                 "account.balance" => "Closed account value before current floating profit or loss.",
                 "account.equity" => "Live account value including open trade profit or loss.",
@@ -5075,8 +5800,8 @@ SAFETY RULES:
                 "risk.dollar_risk" => "Estimated loss if stop loss is hit with the selected lot size.",
                 "risk.dollar_profit_tp1" => "Estimated profit if the first take-profit target is hit.",
                 "risk.dollar_profit_tp2" => "Estimated profit if the second take-profit target is hit.",
-                "risk.sl_distance_pips" => "Distance from entry price to stop loss.",
-                "risk.tp1_distance_pips" => "Distance from entry price to first take profit.",
+                "effective_trade_settings.stop_loss_pips" => "Stop-loss pips from the selected Trade Page strategy.",
+                "effective_trade_settings.take_profit_pips" => "Take-profit pips from the selected Trade Page strategy.",
                 "risk.rr_ratio" => "Reward compared with risk. 1.5 means target profit is 1.5 times the stop-loss risk.",
                 "risk.max_risk_pct" => "Maximum account percentage allowed for one trade by configuration.",
                 "risk.daily_loss_remaining" => "Estimated loss room left before the daily loss protection limit is reached.",
@@ -5163,10 +5888,10 @@ SAFETY RULES:
                     "execution_barriers.pair_allowed_detail" => "Calculated from the signal pair and the Bot Configuration allowed-pair list, which is synced from Pair Settings.",
                     "execution_barriers.daily_limit_detail" => "Uses today's trade count from the MT5/review snapshot and compares it with Bot Configuration max trades per day.",
                     "execution_barriers.account_detail" => "Uses live account equity and free margin returned by MT5 through the EA/bridge snapshot.",
-                    "execution_barriers.rr_detail" => "Calculated from entry, stop loss, take profit, and the minimum R:R from Pair Settings or Bot Configuration.",
+                    "execution_barriers.rr_detail" => "Calculated from entry, stop loss, take profit, and the Trade Page R:R setting.",
                     "execution_barriers.free_margin_detail" => "Uses live MT5 free margin and balance from the account snapshot.",
                     "execution_barriers.portfolio_risk_detail" => "Calculated from live open positions, their stop losses, this trade's selected lot size, and Bot Configuration max total risk.",
-                    "execution_barriers.spread_detail" => "Uses live MT5 spread and compares it with the pair-specific spread limit or global bot spread limit.",
+                    "execution_barriers.spread_detail" => "Uses live MT5 spread and compares it with the Trade Page max spread setting for the selected strategy.",
                     "execution_barriers.news_detail" => "Uses cached Financial Modeling Prep economic-calendar events and compares them with configured news blackout minutes.",
                     _ => "Calculated inside the Review Trade window from the current snapshot and bot safety settings."
                 };
@@ -5405,8 +6130,9 @@ SAFETY RULES:
             var warnings = new List<TradeWarningItem>();
             string pair = request.Pair.ToUpperInvariant();
             var pairRules = _pairSettings?.GetForPair(pair);
-            double minRr = pairRules?.ScalpingMinRR > 0 ? pairRules.ScalpingMinRR : _cfg.Bot.MinRRRatio;
-            double maxSpread = pairRules?.MaxSpreadPips > 0 ? pairRules.MaxSpreadPips : _cfg.Bot.MaxSpreadPips;
+            double requiredRr = GetRequiredReviewRiskReward(autoScalpingRequested);
+            string strategyName = GetReviewStrategyName(autoScalpingRequested);
+            double maxSpread = GetRequiredReviewMaxSpread(autoScalpingRequested);
 
             if (!autoScalpingRequested && !aiEnabled)
             {
@@ -5421,21 +6147,19 @@ SAFETY RULES:
             }
 
             double rr = CalculateReviewRiskReward(snapshot, request);
-            if (!double.IsNaN(rr) && minRr > 0)
+            if (!double.IsNaN(rr) && requiredRr > 0)
             {
-                bool rrWarn = _cfg.Bot.EnforceRR
-                    ? rr >= minRr && rr < minRr * 1.15
-                    : rr < minRr;
+                bool rrWarn = rr >= requiredRr && rr < requiredRr * 1.15;
                 if (rrWarn)
                 {
                     warnings.Add(new TradeWarningItem(
-                        _cfg.Bot.EnforceRR ? "Risk/reward is close to the minimum" : "Risk/reward is below the configured preference",
+                        "Risk/reward is close to the required ratio",
                         "The reward compared with stop-loss risk is weak for this pair. A small spread or entry movement can reduce the effective R:R further.",
                         $"{rr:0.00} R:R",
                         "Review snapshot: entry, stop loss, take profit, selected lot size",
-                        $"{minRr:0.00} minimum R:R",
-                        pairRules == null ? "Bot Configuration: Min R:R Ratio" : $"Pair Settings: {pairRules.Pair} scalping_min_rr",
-                        rr >= minRr ? "Current value passes, but is less than 15% above the base value." : "Current value is below the base value; enforcement is disabled."));
+                        $"{requiredRr:0.00} required R:R",
+                        $"{strategyName} trade page Risk Reward Ratio",
+                        "Current value passes, but is less than 15% above the required value."));
                 }
             }
 
@@ -5448,7 +6172,7 @@ SAFETY RULES:
                     $"{spread:0.0} pips",
                     "Live MT5 symbol snapshot: price.spread_pips",
                     $"<= {maxSpread:0.0} pips",
-                    pairRules == null ? "Bot Configuration: Max spread pips" : $"Pair Settings: {pairRules.Pair} max_spread_pips",
+                    $"{strategyName} trade page Max Spread Pips",
                     "Current spread is at least 75% of the base limit."));
             }
 
@@ -6188,16 +6912,23 @@ SAFETY RULES:
             double pipSize = pairRules?.PipSize > 0
                 ? pairRules.PipSize
                 : LotCalculator.GetPipSize((symbol?.Symbol ?? request.Pair).ToUpperInvariant());
-            double maxSpreadPips = pairRules?.MaxSpreadPips > 0 ? pairRules.MaxSpreadPips : _cfg.Bot.MaxSpreadPips;
-            double slPips = entry > 0 ? Math.Abs(entry - request.StopLoss) / pipSize : 0;
-            double tpPips = entry > 0 ? Math.Abs(request.TakeProfit - entry) / pipSize : 0;
+            bool scalpingStrategy = string.Equals(request.Strategy, "Scalping", StringComparison.OrdinalIgnoreCase);
+            double maxSpreadPips = GetRequiredReviewMaxSpread(scalpingStrategy);
+            bool slValid = IsReviewStopLossValid(request.TradeType, entry, request.StopLoss);
+            bool tpValid = IsReviewTakeProfitValid(request.TradeType, entry, request.TakeProfit);
+            bool tp2Valid = IsReviewTakeProfitValid(request.TradeType, entry, request.TakeProfit2);
+            double slPips = slValid ? Math.Abs(entry - request.StopLoss) / pipSize : 0;
+            double tpPips = tpValid ? Math.Abs(request.TakeProfit - entry) / pipSize : 0;
             double rr = slPips > 0 ? tpPips / slPips : 0;
-            double dollarRisk    = entry > 0 ? LotCalculator.DollarRisk(request.LotSize, entry, request.StopLoss, request.Pair) : 0;
-            double dollarProfit  = entry > 0 ? LotCalculator.DollarProfit(request.LotSize, entry, request.TakeProfit, request.Pair) : 0;
-            double dollarProfit2 = entry > 0 && request.TakeProfit2 > 0
+            double dollarRisk    = slValid ? LotCalculator.DollarRisk(request.LotSize, entry, request.StopLoss, request.Pair) : 0;
+            double dollarProfit  = tpValid ? LotCalculator.DollarProfit(request.LotSize, entry, request.TakeProfit, request.Pair) : 0;
+            double dollarProfit2 = tp2Valid
                 ? LotCalculator.DollarProfit(request.LotSize, entry, request.TakeProfit2, request.Pair) : 0;
-            double tp2Pips       = entry > 0 && request.TakeProfit2 > 0
+            double tp2Pips       = tp2Valid
                 ? Math.Abs(request.TakeProfit2 - entry) / pipSize : 0;
+            double marginRequired = account?.Leverage > 0 && symbol?.ContractSize > 0 && request.LotSize > 0 && entry > 0
+                ? Math.Round(symbol.ContractSize.Value * request.LotSize * entry / account.Leverage, 2)
+                : 0;
             double maxLossDollar = account != null
                 ? Math.Round(account.Equity * _cfg.Bot.EmergencyCloseDrawdownPct / 100.0, 2) : 0;
             double dailyLossRemaining = account != null
@@ -6299,7 +7030,7 @@ SAFETY RULES:
                 {
                     ["max_risk_pct"]          = _cfg.Bot.MaxRiskPercent,
                     ["max_risk_dollar"]       = account == null ? 0 : Math.Round(account.Equity * _cfg.Bot.MaxRiskPercent / 100.0, 2),
-                    ["min_rr_ratio"]          = pairRules?.ScalpingMinRR > 0 ? pairRules.ScalpingMinRR : _cfg.Bot.MinRRRatio,
+                    ["required_rr_ratio"]     = _cfg.Bot.NormalTrading.RiskRewardRatio,
                     ["suggested_sl"]          = request.StopLoss,
                     ["suggested_tp1"]         = request.TakeProfit,
                     ["suggested_tp2"]         = request.TakeProfit2,
@@ -6311,6 +7042,7 @@ SAFETY RULES:
                     ["dollar_risk"]           = Math.Round(dollarRisk, 2),
                     ["dollar_profit_tp1"]     = Math.Round(dollarProfit, 2),
                     ["dollar_profit_tp2"]     = Math.Round(dollarProfit2, 2),
+                    ["margin_required"]       = marginRequired,
                     ["daily_loss_remaining"]  = dailyLossRemaining,
                     ["daily_loss_limit_dollar"] = maxLossDollar
                 },
@@ -6323,20 +7055,10 @@ SAFETY RULES:
                 {
                     pair = pairRules.Pair,
                     pip_size = pairRules.PipSize,
-                    max_spread_pips = pairRules.MaxSpreadPips,
-                    good_spread_pips = pairRules.GoodSpreadPips,
-                    acceptable_spread_pips = pairRules.AcceptableSpreadPips,
-                    max_sl_pips = pairRules.MaxSlPips,
-                    min_tp_pips = pairRules.MinTpPips,
-                    scalping_min_rr = pairRules.ScalpingMinRR,
-                    preferred_rr = pairRules.PreferredRR,
-                    atr_multiplier_sl = pairRules.AtrMultiplierSl,
-                    atr_multiplier_tp = pairRules.AtrMultiplierTp,
                     min_atr_pips_m5 = pairRules.MinAtrPipsM5,
                     max_atr_pips_m5 = pairRules.MaxAtrPipsM5,
                     min_atr_pips_m15 = pairRules.MinAtrPipsM15,
                     max_atr_pips_m15 = pairRules.MaxAtrPipsM15,
-                    avoid_trade_if_spread_above_percent_of_tp = pairRules.AvoidTradeIfSpreadAbovePercentOfTp,
                     minimum_distance_from_key_level_pips = pairRules.MinimumDistanceFromKeyLevelPips,
                     break_even_after_profit_pips = pairRules.BreakEvenAfterProfitPips,
                     trailing_start_pips = pairRules.TrailingStartPips,
@@ -6362,14 +7084,17 @@ SAFETY RULES:
             double entry = req.EntryPrice > 0 ? req.EntryPrice
                 : (req.TradeType == TradeType.BUY ? ask : bid);
 
-            double slPips  = entry > 0 && req.StopLoss   > 0 ? Math.Abs(entry - req.StopLoss)   / pipSize : 0;
-            double tpPips  = entry > 0 && req.TakeProfit  > 0 ? Math.Abs(req.TakeProfit  - entry) / pipSize : 0;
-            double tp2Pips = entry > 0 && req.TakeProfit2 > 0 ? Math.Abs(req.TakeProfit2 - entry) / pipSize : 0;
+            bool slValid = IsReviewStopLossValid(req.TradeType, entry, req.StopLoss);
+            bool tpValid = IsReviewTakeProfitValid(req.TradeType, entry, req.TakeProfit);
+            bool tp2Valid = IsReviewTakeProfitValid(req.TradeType, entry, req.TakeProfit2);
+            double slPips  = slValid ? Math.Abs(entry - req.StopLoss) / pipSize : 0;
+            double tpPips  = tpValid ? Math.Abs(req.TakeProfit - entry) / pipSize : 0;
+            double tp2Pips = tp2Valid ? Math.Abs(req.TakeProfit2 - entry) / pipSize : 0;
             double rr      = slPips > 0 ? Math.Round(tpPips / slPips, 2) : 0;
 
-            double dollarRisk    = entry > 0 && req.StopLoss   > 0 ? LotCalculator.DollarRisk(req.LotSize,   entry, req.StopLoss,   req.Pair) : 0;
-            double dollarProfit  = entry > 0 && req.TakeProfit  > 0 ? LotCalculator.DollarProfit(req.LotSize, entry, req.TakeProfit,  req.Pair) : 0;
-            double dollarProfit2 = entry > 0 && req.TakeProfit2 > 0 ? LotCalculator.DollarProfit(req.LotSize, entry, req.TakeProfit2, req.Pair) : 0;
+            double dollarRisk    = slValid ? LotCalculator.DollarRisk(req.LotSize, entry, req.StopLoss, req.Pair) : 0;
+            double dollarProfit  = tpValid ? LotCalculator.DollarProfit(req.LotSize, entry, req.TakeProfit, req.Pair) : 0;
+            double dollarProfit2 = tp2Valid ? LotCalculator.DollarProfit(req.LotSize, entry, req.TakeProfit2, req.Pair) : 0;
 
             if (snapshot["risk"] is not JObject risk) return;
             risk["suggested_sl"]      = req.StopLoss;
@@ -6456,7 +7181,7 @@ SAFETY RULES:
             }
 
             await SaveScalpingConfigForPairAsync(req.Pair, review.ScalpingConfig).ConfigureAwait(false);
-            _cfg.Bot.Scalping = review.ScalpingConfig;
+            _cfg.Bot.Scalping = CloneScalpingSettings(review.ScalpingConfig);
             _bot ??= CreateBot();
             _bot.UpdateConfig(_cfg.Bot);
             _bot.UpdateApiConfig(_cfg.ApiIntegrations);
@@ -6634,6 +7359,7 @@ SAFETY RULES:
                     ? $"[OK] Trade placed: {req.Pair} ticket #{result.Ticket}"
                     : $"[ERROR] Execute failed: {result.ErrorMessage}",
                     result.IsSuccess ? C_GREEN : C_RED);
+                _normalTradeManager.Stop();
 
                 if (result.IsSuccess)
                     await RefreshPositionsAsync().ConfigureAwait(false);
@@ -7214,8 +7940,7 @@ SAFETY RULES:
                     Log($"[BOT] Opening detail for {info.Pair} without final SL/TP. Enter or adjust levels in the review window before approving.", C_YELLOW);
 
                 double lot = 0.01;
-                if (!_chkAutoLot.Checked &&
-                    double.TryParse(_txtLot.Text, NumberStyles.Any, CultureInfo.InvariantCulture, out var uiLot) &&
+                if (double.TryParse(_txtLot.Text, NumberStyles.Any, CultureInfo.InvariantCulture, out var uiLot) &&
                     uiLot >= 0.01)
                 {
                     lot = uiLot;
@@ -7289,6 +8014,7 @@ SAFETY RULES:
                 _bot.UpdateApiConfig(_cfg.ApiIntegrations);
 
                 var result = await _bot.ExecuteTradeWithValidationAsync(req).ConfigureAwait(false);
+                _normalTradeManager.Stop();
 
                 info.Status = result.IsSuccess ? "Executed" : "Rejected";
                 info.ShortReason = result.IsSuccess ? $"Ticket #{result.Ticket}" : result.ErrorMessage;
@@ -7595,14 +8321,35 @@ SAFETY RULES:
             public string   ShortReason { get; set; } = "Pair selected";
         }
 
-        private sealed class LotSizeOption(string name, double size, string units, string pipValue)
+        private double CalculateReviewLotFromRisk(TradeRequest request, AccountInfo? account, SymbolInfo? symbol)
         {
-            public string Name     { get; } = name;
-            public double Size     { get; } = size;
-            public string Units    { get; } = units;
-            public string PipValue { get; } = pipValue;
+            double entry = request.EntryPrice > 0
+                ? request.EntryPrice
+                : symbol != null
+                    ? request.TradeType == TradeType.BUY ? symbol.Ask : symbol.Bid
+                    : 0;
 
-            public override string ToString() => $"{Name}  {Size:F2}  |  {Units}  |  {PipValue}";
+            double equity = account?.Equity ?? 0;
+            double lotSize = LotCalculator.Calculate(
+                equity,
+                _cfg.Bot.MaxRiskPercent,
+                entry,
+                request.StopLoss,
+                request.Pair);
+
+            return BrokerLotSizeValidator.Normalize(lotSize, symbol);
+        }
+
+        private sealed class LotSizeOption(string name, double size, string units, string pipValue, bool isAutoFromRisk = false)
+        {
+            public string Name          { get; } = name;
+            public double Size          { get; } = size;
+            public string Units         { get; } = units;
+            public string PipValue      { get; } = pipValue;
+            public bool IsAutoFromRisk  { get; } = isAutoFromRisk;
+
+            public override string ToString() =>
+                IsAutoFromRisk ? Name : $"{Name}  {Size:F2}  |  {Units}  |  {PipValue}";
         }
 
         private static LotSizeOption[] BuildReviewLotOptions(string symbol)
@@ -7614,6 +8361,7 @@ SAFETY RULES:
             {
                 return
                 [
+                    new LotSizeOption("Auto From Risk %", 0, "risk", "Bot Max Risk %", true),
                     new LotSizeOption("Micro Lot",    0.01, "1 oz",   $"{symbol} approx ${standardPipValue * 0.01:0.00}/pip"),
                     new LotSizeOption("Mini Lot",     0.10, "10 oz",  $"{symbol} approx ${standardPipValue * 0.10:0.00}/pip"),
                     new LotSizeOption("Standard Lot", 1.00, "100 oz", $"{symbol} approx ${standardPipValue:0.00}/pip")
@@ -7624,6 +8372,7 @@ SAFETY RULES:
             {
                 return
                 [
+                    new LotSizeOption("Auto From Risk %", 0, "risk", "Bot Max Risk %", true),
                     new LotSizeOption("Micro Lot",    0.01, "50 oz",    $"{symbol} approx ${standardPipValue * 0.01:0.00}/pip"),
                     new LotSizeOption("Mini Lot",     0.10, "500 oz",   $"{symbol} approx ${standardPipValue * 0.10:0.00}/pip"),
                     new LotSizeOption("Standard Lot", 1.00, "5,000 oz", $"{symbol} approx ${standardPipValue:0.00}/pip")
@@ -7632,6 +8381,7 @@ SAFETY RULES:
 
             return
             [
+                new LotSizeOption("Auto From Risk %", 0, "risk", "Bot Max Risk %", true),
                 new LotSizeOption("Micro Lot",    0.01, "1,000 units",   $"{symbol} approx ${standardPipValue * 0.01:0.00}/pip"),
                 new LotSizeOption("Mini Lot",     0.10, "10,000 units",  $"{symbol} approx ${standardPipValue * 0.10:0.00}/pip"),
                 new LotSizeOption("Standard Lot", 1.00, "100,000 units", $"{symbol} approx ${standardPipValue:0.00}/pip")
@@ -7659,50 +8409,52 @@ SAFETY RULES:
             if (string.IsNullOrWhiteSpace(key))
                 return;
 
-            _cfg.Bot.Scalping = CloneScalpingConfig(config);
+            _cfg.Bot.Scalping = CloneScalpingSettings(config);
             _cfg.Bot.ScalpingByPair ??= new Dictionary<string, ScalpingConfig>(StringComparer.OrdinalIgnoreCase);
             _cfg.Bot.ScalpingByPair[key] = CloneScalpingConfig(config);
             await _settings.SaveAsync(_cfg).ConfigureAwait(false);
             Log($"[SCALP] Saved scalping settings for {key}.", C_ACCENT);
         }
 
+        private NormalTradingSettings? GetSavedNormalTradingSettingsForPair(string pair)
+        {
+            string key = NormalizePairKey(pair);
+            _cfg.Bot.NormalTradingByPair ??= new Dictionary<string, NormalTradingSettings>(StringComparer.OrdinalIgnoreCase);
+            return !string.IsNullOrWhiteSpace(key) &&
+                   _cfg.Bot.NormalTradingByPair.TryGetValue(key, out var saved)
+                ? CloneNormalTradingSettings(saved)
+                : null;
+        }
+
+        private async Task SaveNormalTradingSettingsForPairAsync(string pair, NormalTradingSettings settings)
+        {
+            string key = NormalizePairKey(pair);
+            if (string.IsNullOrWhiteSpace(key))
+                return;
+
+            _cfg.Bot.NormalTrading = CloneNormalTradingSettings(settings);
+            _cfg.Bot.NormalTradingByPair ??= new Dictionary<string, NormalTradingSettings>(StringComparer.OrdinalIgnoreCase);
+            _cfg.Bot.NormalTradingByPair[key] = CloneNormalTradingSettings(settings);
+            await _settings.SaveAsync(_cfg).ConfigureAwait(false);
+            Log($"[BOT] Saved normal trading settings for {key}.", C_ACCENT);
+        }
+
         private ScalpingConfig BuildSuggestedScalpingConfigForPair(string pair, SymbolInfo? symbol)
         {
             var pairRules = _pairSettings?.GetForPair(pair);
             double liveSpread = symbol?.SpreadPips > 0 ? symbol.SpreadPips : 0;
-            double configuredMaxSpread = pairRules?.MaxSpreadPips > 0
-                ? pairRules.MaxSpreadPips
-                : _cfg.Bot.MaxSpreadPips > 0
-                    ? _cfg.Bot.MaxSpreadPips
-                    : 3;
-            double goodSpread = pairRules?.GoodSpreadPips > 0
-                ? pairRules.GoodSpreadPips
-                : configuredMaxSpread * 0.5;
-            double acceptableSpread = pairRules?.AcceptableSpreadPips > 0
-                ? pairRules.AcceptableSpreadPips
-                : configuredMaxSpread * 0.75;
+            double configuredMaxSpread = _cfg.Bot.Scalping.MaxSpreadPips > 0
+                ? _cfg.Bot.Scalping.MaxSpreadPips
+                : 3;
             double spreadForCalc = liveSpread > 0
                 ? liveSpread
-                : Math.Max(goodSpread, acceptableSpread);
+                : configuredMaxSpread * 0.75;
 
-            double minSl = pairRules?.MinSlPips > 0 ? pairRules.MinSlPips : 8;
-            double maxSl = pairRules?.MaxSlPips > minSl ? pairRules.MaxSlPips : 500;
-            double minTp = pairRules?.MinTpPips > 0 ? pairRules.MinTpPips : minSl;
-            double minRr = Math.Max(1.5, pairRules?.ScalpingMinRR > 0 ? pairRules.ScalpingMinRR : _cfg.Bot.MinRRRatio);
-            double preferredRr = Math.Max(minRr, pairRules?.PreferredRR > 0 ? pairRules.PreferredRR : minRr);
-            double atrFloor = pairRules?.MinAtrPipsM5 > 0
-                ? pairRules.MinAtrPipsM5 * Math.Max(1.0, pairRules.AtrMultiplierSl)
-                : 0;
-
-            double slPips = RoundHalfPip(Math.Clamp(
-                Math.Max(minSl, Math.Max(spreadForCalc * 2.0, atrFloor)),
-                minSl,
-                maxSl));
-            double tpPips = RoundHalfPip(Math.Max(
-                minTp,
-                Math.Min(500, Math.Max(slPips * preferredRr, spreadForCalc * 5.0))));
+            double slPips = Math.Max(1, _cfg.Bot.Scalping.StopLossPips);
+            double requiredRr = Math.Max(0.1, _cfg.Bot.Scalping.RiskRewardRatio);
+            double tpPips = Math.Max(1, _cfg.Bot.Scalping.TakeProfitPips);
             double maxSpreadPips = RoundHalfPip(Math.Clamp(
-                Math.Max(goodSpread, liveSpread > 0 ? liveSpread * 1.15 : acceptableSpread),
+                liveSpread > 0 ? Math.Max(0.1, liveSpread * 1.15) : configuredMaxSpread,
                 0.1,
                 Math.Min(tpPips * 0.20, Math.Min(100, Math.Max(0.1, configuredMaxSpread)))));
 
@@ -7714,12 +8466,9 @@ SAFETY RULES:
                 ProfitTargetUsd = Math.Max(20, _cfg.Bot.Scalping.ProfitTargetUsd),
                 StopLossPips = slPips,
                 TakeProfitPips = tpPips,
+                RiskRewardRatio = requiredRr,
                 MaxSpreadPips = maxSpreadPips,
                 DynamicValuesEnabled = true,
-                MinStopLossPips = minSl,
-                MaxStopLossPips = maxSl,
-                MinTakeProfitPips = minTp,
-                MaxTakeProfitPips = Math.Max(500, tpPips),
                 PollIntervalMs = _cfg.Bot.Scalping.PollIntervalMs,
                 CooldownSeconds = _cfg.Bot.Scalping.CooldownSeconds,
                 DirectionMode = ScalpingDirectionMode.Auto,
@@ -7730,39 +8479,27 @@ SAFETY RULES:
             };
         }
 
-        private ScalpingConfig BuildScalpingConfigFromReview(
+        private ScalpingSettings BuildScalpingConfigFromReview(
             string pair,
             ComboBox mode,
             NumericUpDown trades,
             NumericUpDown minutes,
             NumericUpDown sl,
             NumericUpDown tp,
+            NumericUpDown rr,
             NumericUpDown spread,
             CheckBox aiConfirm)
         {
-            var cfg = CloneScalpingConfig(_cfg.Bot.Scalping);
+            var cfg = CloneScalpingSettings(_cfg.Bot.Scalping);
             cfg.MaxTrades = Math.Clamp((int)trades.Value, 1, 6);
             cfg.MaxMinutes = Math.Clamp((int)minutes.Value, 1, 90);
             cfg.StopLossPips = (double)sl.Value;
             cfg.TakeProfitPips = (double)tp.Value;
+            cfg.RiskRewardRatio = Math.Max(0.1, (double)rr.Value);
             cfg.MaxSpreadPips = (double)spread.Value;
             cfg.DynamicValuesEnabled = true;
             var pairRules = _pairSettings?.GetForPair(pair);
-            double minRr = Math.Max(1.5, pairRules?.ScalpingMinRR > 0 ? pairRules.ScalpingMinRR : _cfg.Bot.MinRRRatio);
-            cfg.TakeProfitPips = RoundHalfPip(Math.Max(cfg.TakeProfitPips, cfg.StopLossPips * minRr));
             cfg.MaxSpreadPips = RoundHalfPip(Math.Min(cfg.MaxSpreadPips, cfg.TakeProfitPips * 0.20));
-            cfg.MinStopLossPips = pairRules?.MinSlPips > 0
-                ? pairRules.MinSlPips
-                : Math.Max(1, Math.Min(cfg.StopLossPips, cfg.MinStopLossPips > 0 ? cfg.MinStopLossPips : cfg.StopLossPips));
-            cfg.MaxStopLossPips = pairRules?.MaxSlPips > cfg.MinStopLossPips
-                ? pairRules.MaxSlPips
-                : Math.Max(cfg.MinStopLossPips, Math.Max(cfg.StopLossPips, cfg.MaxStopLossPips));
-            cfg.MinTakeProfitPips = pairRules?.MinTpPips > 0
-                ? pairRules.MinTpPips
-                : Math.Max(1, Math.Min(cfg.TakeProfitPips, cfg.MinTakeProfitPips > 0 ? cfg.MinTakeProfitPips : cfg.TakeProfitPips));
-            cfg.MaxTakeProfitPips = Math.Max(
-                cfg.MinTakeProfitPips,
-                Math.Max(cfg.TakeProfitPips, cfg.MaxTakeProfitPips > 0 ? cfg.MaxTakeProfitPips : cfg.MaxStopLossPips));
             cfg.RequireSnapshotConfirmation = true;
             cfg.AllowPyramiding = false;
             cfg.MinDecisionScore = Math.Max(6, cfg.MinDecisionScore);
@@ -7775,6 +8512,110 @@ SAFETY RULES:
                 _ => ScalpingDirectionMode.Auto
             };
             return cfg;
+        }
+
+        private static CommonTradingSettings BuildCommonTradingSettingsFromReview(
+            ComboBox mode,
+            CheckBox aiConfirm,
+            CheckBox autoClose,
+            NumericUpDown pipsTarget,
+            NumericUpDown moneyTarget) => new()
+            {
+                TradingMode = mode.SelectedIndex == 0 ? TradingControlMode.Auto : TradingControlMode.Manual,
+                UseAiConfirmation = aiConfirm.Checked,
+                AutoCloseAfterOpen = autoClose.Checked,
+                ProfitTargetPips = (double)pipsTarget.Value,
+                ProfitTargetUsd = (double)moneyTarget.Value
+            };
+
+        private static NormalTradingSettings BuildNormalTradingSettingsFromReview(
+            CheckBox enabled,
+            NumericUpDown trades,
+            NumericUpDown expiry,
+            NumericUpDown sl,
+            NumericUpDown tp,
+            NumericUpDown spread,
+            NumericUpDown rr) => new()
+            {
+                Enabled = enabled.Checked,
+                MaxTrades = Math.Clamp((int)trades.Value, 1, 50),
+                ExpiryMinutes = Math.Clamp((int)expiry.Value, 1, 10080),
+                StopLossPips = (double)sl.Value,
+                TakeProfitPips = (double)tp.Value,
+                MaxSpreadPips = (double)spread.Value,
+                RiskRewardRatio = Math.Max(0.1, (double)rr.Value)
+            };
+
+        private static TradeRequest ApplyNormalTradingSettingsToRequest(
+            TradeRequest request,
+            NormalTradingSettings settings,
+            SymbolInfo? symbol)
+        {
+            double entry = request.EntryPrice > 0
+                ? request.EntryPrice
+                : symbol != null
+                    ? request.TradeType == TradeType.BUY ? symbol.Ask : symbol.Bid
+                    : 0;
+            if (entry <= 0)
+                return request;
+
+            double pipSize = request.Pair.Contains("JPY", StringComparison.OrdinalIgnoreCase) ? 0.01 : 0.0001;
+            if (request.Pair.Contains("XAU", StringComparison.OrdinalIgnoreCase))
+                pipSize = 0.01;
+
+            double slDistance = settings.StopLossPips * pipSize;
+            double tpDistance = Math.Max(settings.TakeProfitPips, settings.StopLossPips * settings.RiskRewardRatio) * pipSize;
+            request.EntryPrice = entry;
+            request.Strategy = "Normal";
+            request.MaxSpreadPips = settings.MaxSpreadPips;
+            if (request.TradeType == TradeType.BUY)
+            {
+                request.StopLoss = entry - slDistance;
+                request.TakeProfit = entry + tpDistance;
+            }
+            else
+            {
+                request.StopLoss = entry + slDistance;
+                request.TakeProfit = entry - tpDistance;
+            }
+
+            return request;
+        }
+
+        private static TradeRequest ApplyScalpingSettingsToRequest(
+            TradeRequest request,
+            ScalpingConfig settings,
+            SymbolInfo? symbol)
+        {
+            double entry = request.EntryPrice > 0
+                ? request.EntryPrice
+                : symbol != null
+                    ? request.TradeType == TradeType.BUY ? symbol.Ask : symbol.Bid
+                    : 0;
+            if (entry <= 0)
+                return request;
+
+            double pipSize = request.Pair.Contains("JPY", StringComparison.OrdinalIgnoreCase) ? 0.01 : 0.0001;
+            if (request.Pair.Contains("XAU", StringComparison.OrdinalIgnoreCase))
+                pipSize = 0.01;
+
+            double slDistance = settings.StopLossPips * pipSize;
+            double tpDistance = Math.Max(settings.TakeProfitPips, settings.StopLossPips * settings.RiskRewardRatio) * pipSize;
+            request.EntryPrice = entry;
+            request.Strategy = "Scalping";
+            request.MaxSpreadPips = settings.MaxSpreadPips;
+            if (request.TradeType == TradeType.BUY)
+            {
+                request.StopLoss = entry - slDistance;
+                request.TakeProfit = entry + tpDistance;
+            }
+            else
+            {
+                request.StopLoss = entry + slDistance;
+                request.TakeProfit = entry - tpDistance;
+            }
+
+            return request;
         }
 
         private static ScalpingConfig MergeSavedScalpingPreferences(ScalpingConfig saved, ScalpingConfig suggested)
@@ -7802,12 +8643,9 @@ SAFETY RULES:
             ProfitTargetUsd = config.ProfitTargetUsd,
             StopLossPips = config.StopLossPips,
             TakeProfitPips = config.TakeProfitPips,
+            RiskRewardRatio = config.RiskRewardRatio,
             MaxSpreadPips = config.MaxSpreadPips,
             DynamicValuesEnabled = config.DynamicValuesEnabled,
-            MinStopLossPips = config.MinStopLossPips,
-            MaxStopLossPips = config.MaxStopLossPips,
-            MinTakeProfitPips = config.MinTakeProfitPips,
-            MaxTakeProfitPips = config.MaxTakeProfitPips,
             PollIntervalMs = config.PollIntervalMs,
             CooldownSeconds = config.CooldownSeconds,
             DirectionMode = config.DirectionMode,
@@ -7815,6 +8653,47 @@ SAFETY RULES:
             RequireSnapshotConfirmation = config.RequireSnapshotConfirmation,
             MinDecisionScore = config.MinDecisionScore,
             UseAiConfirmation = config.UseAiConfirmation
+        };
+
+        private static ScalpingSettings CloneScalpingSettings(ScalpingConfig config) => new()
+        {
+            Enabled = config is ScalpingSettings settings && settings.Enabled,
+            MaxTrades = config.MaxTrades,
+            MaxMinutes = config.MaxMinutes,
+            MaxSessionLossUsd = config.MaxSessionLossUsd,
+            ProfitTargetUsd = config.ProfitTargetUsd,
+            StopLossPips = config.StopLossPips,
+            TakeProfitPips = config.TakeProfitPips,
+            RiskRewardRatio = config.RiskRewardRatio,
+            MaxSpreadPips = config.MaxSpreadPips,
+            DynamicValuesEnabled = config.DynamicValuesEnabled,
+            PollIntervalMs = config.PollIntervalMs,
+            CooldownSeconds = config.CooldownSeconds,
+            DirectionMode = config.DirectionMode,
+            AllowPyramiding = config.AllowPyramiding,
+            RequireSnapshotConfirmation = config.RequireSnapshotConfirmation,
+            MinDecisionScore = config.MinDecisionScore,
+            UseAiConfirmation = config.UseAiConfirmation
+        };
+
+        private static CommonTradingSettings CloneCommonTradingSettings(CommonTradingSettings settings) => new()
+        {
+            TradingMode = settings.TradingMode,
+            UseAiConfirmation = settings.UseAiConfirmation,
+            AutoCloseAfterOpen = settings.AutoCloseAfterOpen,
+            ProfitTargetPips = settings.ProfitTargetPips,
+            ProfitTargetUsd = settings.ProfitTargetUsd
+        };
+
+        private static NormalTradingSettings CloneNormalTradingSettings(NormalTradingSettings settings) => new()
+        {
+            Enabled = settings.Enabled,
+            MaxTrades = settings.MaxTrades,
+            ExpiryMinutes = settings.ExpiryMinutes,
+            StopLossPips = settings.StopLossPips,
+            TakeProfitPips = settings.TakeProfitPips,
+            MaxSpreadPips = settings.MaxSpreadPips,
+            RiskRewardRatio = settings.RiskRewardRatio
         };
 
         private static string NormalizePairKey(string pair) =>

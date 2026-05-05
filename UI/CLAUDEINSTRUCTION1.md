@@ -55,8 +55,6 @@ Key files and their roles:
 
   settings.json
     - news_currencies: duplicated 50+ times — known bug
-    - atr_multiplier_sl: 1.0 defined but never read — fix in Fix 6
-    - atr_multiplier_tp: 1.2 defined but never read — fix in Fix 6
 
 Snapshot JSON contract between EA and C#:
   indicators.m5.adx         — ADX value on M5
@@ -299,8 +297,6 @@ missing filter for a live account.
 
 Also fix StrategyEngine.cs line ~39 where SL = flat 15 pips.
 Replace with ATR-based SL using the already-defined config values:
-  atr_multiplier_sl = 1.0  (in settings.json — read this value)
-  atr_multiplier_tp = 1.2  (in settings.json — read this value)
 
 HOW — ATR spike filter (ScalpingSessionService.cs):
   Add a private rolling list to store recent ATR values:
@@ -329,10 +325,8 @@ HOW — Fix StrategyEngine.cs flat SL:
   Location: line ~39 where stopDistance is set
   Replace flat 15 pips with:
     var atrPips  = request.Snapshot?.indicators?.m5?.atr ?? 15;
-    var slMult   = _config.GetValue<double>("Trading:atr_multiplier_sl", 1.5);
-    var tpMult   = _config.GetValue<double>("Trading:atr_multiplier_tp", 2.5);
-    var stopDistance = Math.Max(atrPips * slMult, info.SpreadPips * 3) * pipSize;
-    var tpDistance   = atrPips * tpMult * pipSize;
+    var stopDistance = config.NormalTrading.StopLossPips * pipSize;
+    var tpDistance   = config.NormalTrading.TakeProfitPips * pipSize;
 
   If _config is not injected in StrategyEngine, read multipliers from
   the pair settings object that is already passed to the method.

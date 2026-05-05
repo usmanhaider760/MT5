@@ -875,7 +875,7 @@ namespace MT5TradingBot.Services
                 }
                 var pairRules = _pairSettings?.GetForPair(request.Pair);
                 if (pairRules != null)
-                    Log($"[BOT] Pair-specific rules loaded for {pairRules.Pair}: max spread {pairRules.MaxSpreadPips:F1}, SL {pairRules.MinSlPips:F1}-{pairRules.MaxSlPips:F1} pips, min TP {pairRules.MinTpPips:F1} pips, min R:R {pairRules.ScalpingMinRR:F2}.");
+                    Log($"[BOT] Pair-specific rules loaded for {pairRules.Pair}.");
 
                 if (liveMode && !HasUsableSymbolSafetyData(symbolInfo))
                     return Fail(request.Id, "NO_SYMBOL_DATA",
@@ -893,6 +893,7 @@ namespace MT5TradingBot.Services
                 double livePrice = symbolInfo != null
                     ? (request.TradeType == Models.TradeType.BUY ? symbolInfo.Ask : symbolInfo.Bid)
                     : 0;
+                ApplyTradePageSlTp(request, symbolInfo, livePrice);
 
                 // ── 6. Risk validation (delegated to RiskManager) ──
                 var stopLevelBlock = CheckBrokerStopLevel(
@@ -2522,6 +2523,36 @@ namespace MT5TradingBot.Services
 
         private static bool IsFinite(double value) =>
             !double.IsNaN(value) && !double.IsInfinity(value);
+
+        private void ApplyTradePageSlTp(TradeRequest request, SymbolInfo? symbolInfo, double livePrice)
+        {
+            if (symbolInfo == null || !IsFinitePositive(livePrice))
+                return;
+
+            bool scalpingStrategy = string.Equals(request.Strategy, "Scalping", StringComparison.OrdinalIgnoreCase)
+                || (!string.Equals(request.Strategy, "Normal", StringComparison.OrdinalIgnoreCase) && _cfg.Scalping.Enabled);
+            double slPips = scalpingStrategy
+                ? _cfg.Scalping.StopLossPips
+                : _cfg.NormalTrading.StopLossPips;
+            double tpPips = scalpingStrategy
+                ? _cfg.Scalping.TakeProfitPips
+                : _cfg.NormalTrading.TakeProfitPips;
+            if (!IsFinitePositive(slPips) || !IsFinitePositive(tpPips))
+                return;
+
+            double pipSize = LotCalculator.GetPipSize(request.Pair.ToUpperInvariant());
+            if (request.TradeType == Models.TradeType.BUY)
+            {
+                request.StopLoss = livePrice - slPips * pipSize;
+                request.TakeProfit = livePrice + tpPips * pipSize;
+            }
+            else
+            {
+                request.StopLoss = livePrice + slPips * pipSize;
+                request.TakeProfit = livePrice - tpPips * pipSize;
+            }
+            request.Strategy = scalpingStrategy ? "Scalping" : "Normal";
+        }
 
         private readonly record struct SymbolExposure(
             double ProjectedLots,

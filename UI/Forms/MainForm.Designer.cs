@@ -21,7 +21,7 @@ namespace MT5TradingBot.UI
         private Label _lblTitle;
         private Panel _pnlDot;
         private Label _lblConnStatus;
-        private Label _lblEaStatus;
+        private Button _lblEaStatus;
         private Label _lblTime;
 
         // ── Connection bar ────────────────────────────────────────
@@ -68,7 +68,6 @@ namespace MT5TradingBot.UI
         private TextBox _txtTP;
         private Label _lblTP2Label;
         private TextBox _txtTP2;
-        private CheckBox _chkAutoLot;
         private Label _lblLotLabel;
         private TextBox _txtLot;
         private CheckBox _chkMoveSLBE;
@@ -105,8 +104,6 @@ namespace MT5TradingBot.UI
         private TextBox _txtWatchFolder;
         private Label _lblRiskLabel;
         private NumericUpDown _nudRisk;
-        private Label _lblMinRRLabel;
-        private NumericUpDown _nudMinRR;
         private Label _lblMaxTradesLabel;
         private NumericUpDown _nudMaxTrades;
         private Label _lblPollMsLabel;
@@ -117,8 +114,6 @@ namespace MT5TradingBot.UI
         private ComboBox _cmbAllowedPair;
         private Label _lblDrawdownLabel;
         private NumericUpDown _nudDrawdownPct;
-        private CheckBox _chkAutoLotBot;
-        private CheckBox _chkEnforceRR;
         private CheckBox _chkDrawdown;
         private CheckBox _chkAutoStart;
         private Button _btnStartBot;
@@ -213,7 +208,7 @@ namespace MT5TradingBot.UI
             _lblTitle = new Label();
             _pnlDot = new Panel();
             _lblConnStatus = new Label();
-            _lblEaStatus = new Label();
+            _lblEaStatus = new Button();
             _lblTime = new Label();
             _pnlConnBar = new Panel();
             _cmbMode = new ComboBox();
@@ -247,7 +242,6 @@ namespace MT5TradingBot.UI
             _txtTP = new TextBox();
             _lblTP2Label = new Label();
             _txtTP2 = new TextBox();
-            _chkAutoLot = new CheckBox();
             _lblLotLabel = new Label();
             _txtLot = new TextBox();
             _chkMoveSLBE = new CheckBox();
@@ -281,8 +275,6 @@ namespace MT5TradingBot.UI
             _txtWatchFolder = new TextBox();
             _lblRiskLabel = new Label();
             _nudRisk = new NumericUpDown();
-            _lblMinRRLabel = new Label();
-            _nudMinRR = new NumericUpDown();
             _lblMaxTradesLabel = new Label();
             _nudMaxTrades = new NumericUpDown();
             _lblPollMsLabel = new Label();
@@ -293,8 +285,6 @@ namespace MT5TradingBot.UI
             _cmbAllowedPair = new ComboBox();
             _lblDrawdownLabel = new Label();
             _nudDrawdownPct = new NumericUpDown();
-            _chkAutoLotBot = new CheckBox();
-            _chkEnforceRR = new CheckBox();
             _chkDrawdown = new CheckBox();
             _chkAutoStart = new CheckBox();
             _btnStartBot = new Button();
@@ -411,7 +401,6 @@ namespace MT5TradingBot.UI
             _tabBot.SuspendLayout();
             _pnlBotCard.SuspendLayout();
             ((System.ComponentModel.ISupportInitialize)_nudRisk).BeginInit();
-            ((System.ComponentModel.ISupportInitialize)_nudMinRR).BeginInit();
             ((System.ComponentModel.ISupportInitialize)_nudMaxTrades).BeginInit();
             ((System.ComponentModel.ISupportInitialize)_nudPollMs).BeginInit();
             ((System.ComponentModel.ISupportInitialize)_nudRetry).BeginInit();
@@ -681,7 +670,6 @@ namespace MT5TradingBot.UI
             _pnlTradeLeft.Controls.Add(_txtTP);
             _pnlTradeLeft.Controls.Add(_lblTP2Label);
             _pnlTradeLeft.Controls.Add(_txtTP2);
-            _pnlTradeLeft.Controls.Add(_chkAutoLot);
             _pnlTradeLeft.Controls.Add(_lblLotLabel);
             _pnlTradeLeft.Controls.Add(_txtLot);
             _pnlTradeLeft.Controls.Add(_chkMoveSLBE);
@@ -868,13 +856,6 @@ namespace MT5TradingBot.UI
             _txtTP2.TabIndex = 14;
             _txtTP2.Text = "0 (optional)";
             // 
-            // _chkAutoLot
-            // 
-            _chkAutoLot.Location = new Point(0, 0);
-            _chkAutoLot.Name = "_chkAutoLot";
-            _chkAutoLot.Size = new Size(104, 24);
-            _chkAutoLot.TabIndex = 15;
-            // 
             // _lblLotLabel
             // 
             _lblLotLabel.AutoSize = true;
@@ -890,7 +871,7 @@ namespace MT5TradingBot.UI
             // 
             _txtLot.BackColor = Color.FromArgb(22, 22, 32);
             _txtLot.BorderStyle = BorderStyle.FixedSingle;
-            _txtLot.Enabled = false;
+            _txtLot.Enabled = true;
             _txtLot.Font = new Font("Consolas", 9F);
             _txtLot.ForeColor = Color.FromArgb(218, 218, 230);
             _txtLot.Location = new Point(130, 300);
@@ -1270,8 +1251,6 @@ namespace MT5TradingBot.UI
             _pnlBotCard.Controls.Add(_txtWatchFolder);
             _pnlBotCard.Controls.Add(_lblRiskLabel);
             _pnlBotCard.Controls.Add(_nudRisk);
-            _pnlBotCard.Controls.Add(_lblMinRRLabel);
-            _pnlBotCard.Controls.Add(_nudMinRR);
             _pnlBotCard.Controls.Add(_lblMaxTradesLabel);
             _pnlBotCard.Controls.Add(_nudMaxTrades);
             _pnlBotCard.Controls.Add(_lblPollMsLabel);
@@ -1282,8 +1261,6 @@ namespace MT5TradingBot.UI
             _pnlBotCard.Controls.Add(_cmbAllowedPair);
             _pnlBotCard.Controls.Add(_lblDrawdownLabel);
             _pnlBotCard.Controls.Add(_nudDrawdownPct);
-            _pnlBotCard.Controls.Add(_chkAutoLotBot);
-            _pnlBotCard.Controls.Add(_chkEnforceRR);
             _pnlBotCard.Controls.Add(_chkDrawdown);
             _pnlBotCard.Controls.Add(_chkAutoStart);
             _pnlBotCard.Controls.Add(_btnStartBot);
@@ -1351,32 +1328,6 @@ namespace MT5TradingBot.UI
             _nudRisk.Size = new Size(100, 19);
             _nudRisk.TabIndex = 4;
             _nudRisk.Value = new decimal(new int[] { 1, 0, 0, 0 });
-            // 
-            // _lblMinRRLabel
-            // 
-            _lblMinRRLabel.AutoSize = true;
-            _lblMinRRLabel.Font = new Font("Segoe UI", 9F);
-            _lblMinRRLabel.ForeColor = Color.FromArgb(110, 110, 130);
-            _lblMinRRLabel.Location = new Point(14, 114);
-            _lblMinRRLabel.Name = "_lblMinRRLabel";
-            _lblMinRRLabel.Size = new Size(78, 15);
-            _lblMinRRLabel.TabIndex = 5;
-            _lblMinRRLabel.Text = "Min R:R Ratio";
-            // 
-            // _nudMinRR
-            // 
-            _nudMinRR.BackColor = Color.FromArgb(22, 22, 32);
-            _nudMinRR.BorderStyle = BorderStyle.None;
-            _nudMinRR.DecimalPlaces = 1;
-            _nudMinRR.ForeColor = Color.FromArgb(218, 218, 230);
-            _nudMinRR.Increment = new decimal(new int[] { 1, 0, 0, 65536 });
-            _nudMinRR.Location = new Point(200, 112);
-            _nudMinRR.Maximum = new decimal(new int[] { 10, 0, 0, 0 });
-            _nudMinRR.Minimum = new decimal(new int[] { 5, 0, 0, 65536 });
-            _nudMinRR.Name = "_nudMinRR";
-            _nudMinRR.Size = new Size(100, 19);
-            _nudMinRR.TabIndex = 6;
-            _nudMinRR.Value = new decimal(new int[] { 15, 0, 0, 65536 });
             // 
             // _lblMaxTradesLabel
             // 
@@ -1496,24 +1447,6 @@ namespace MT5TradingBot.UI
             _nudDrawdownPct.Size = new Size(100, 19);
             _nudDrawdownPct.TabIndex = 16;
             _nudDrawdownPct.Value = new decimal(new int[] { 10, 0, 0, 0 });
-            // 
-            // _chkAutoLotBot
-            // 
-            _chkAutoLotBot.Location = new Point(0, 0);
-            _chkAutoLotBot.Name = "_chkAutoLotBot";
-            _chkAutoLotBot.Size = new Size(104, 24);
-            _chkAutoLotBot.TabIndex = 17;
-            _chkAutoLotBot.Text = "Auto calculate lot size";
-            _chkAutoLotBot.UseVisualStyleBackColor = false;
-            // 
-            // _chkEnforceRR
-            // 
-            _chkEnforceRR.Location = new Point(0, 0);
-            _chkEnforceRR.Name = "_chkEnforceRR";
-            _chkEnforceRR.Size = new Size(104, 24);
-            _chkEnforceRR.TabIndex = 18;
-            _chkEnforceRR.Text = "Enforce minimum R:R";
-            _chkEnforceRR.UseVisualStyleBackColor = false;
             // 
             // _chkDrawdown
             // 
@@ -2558,7 +2491,6 @@ namespace MT5TradingBot.UI
             _pnlBotCard.ResumeLayout(false);
             _pnlBotCard.PerformLayout();
             ((System.ComponentModel.ISupportInitialize)_nudRisk).EndInit();
-            ((System.ComponentModel.ISupportInitialize)_nudMinRR).EndInit();
             ((System.ComponentModel.ISupportInitialize)_nudMaxTrades).EndInit();
             ((System.ComponentModel.ISupportInitialize)_nudPollMs).EndInit();
             ((System.ComponentModel.ISupportInitialize)_nudRetry).EndInit();

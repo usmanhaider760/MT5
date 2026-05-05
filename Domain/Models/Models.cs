@@ -92,6 +92,9 @@ namespace MT5TradingBot.Models
         [JsonProperty("comment")]
         public string Comment { get; set; } = "MT5Bot";
 
+        [JsonProperty("strategy")]
+        public string Strategy { get; set; } = "";
+
         [JsonProperty("magic_number")]
         public int MagicNumber { get; set; } = 999001;
 
@@ -414,17 +417,8 @@ namespace MT5TradingBot.Models
         [JsonProperty("allowed_pairs")]
         public List<string> AllowedPairs { get; set; } = [];
 
-        [JsonProperty("auto_lot_calculation")]
-        public bool AutoLotCalculation { get; set; } = true;
-
         [JsonProperty("magic_number")]
         public int MagicNumber { get; set; } = 999001;
-
-        [JsonProperty("min_rr_ratio")]
-        public double MinRRRatio { get; set; } = 1.5;
-
-        [JsonProperty("enforce_rr")]
-        public bool EnforceRR { get; set; } = true;
 
         [JsonProperty("max_spread_pips")]
         public double MaxSpreadPips { get; set; } = 3.0;
@@ -647,10 +641,19 @@ namespace MT5TradingBot.Models
         public bool AllowSyncDuringTrading { get; set; } = false;
 
         [JsonProperty("scalping")]
-        public ScalpingConfig Scalping { get; set; } = new();
+        public ScalpingSettings Scalping { get; set; } = new();
 
         [JsonProperty("scalping_by_pair")]
         public Dictionary<string, ScalpingConfig> ScalpingByPair { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+
+        [JsonProperty("common_trading")]
+        public CommonTradingSettings CommonTrading { get; set; } = new();
+
+        [JsonProperty("normal_trading")]
+        public NormalTradingSettings NormalTrading { get; set; } = new();
+
+        [JsonProperty("normal_trading_by_pair")]
+        public Dictionary<string, NormalTradingSettings> NormalTradingByPair { get; set; } = new(StringComparer.OrdinalIgnoreCase);
     }
 
     public sealed class DemoForwardTestConfig
@@ -854,7 +857,7 @@ namespace MT5TradingBot.Models
         public double MaxSpreadPips { get; set; }
     }
 
-    public sealed class ScalpingConfig
+    public class ScalpingConfig
     {
         [JsonProperty("max_trades")]
         public int MaxTrades { get; set; } = 3;
@@ -874,23 +877,14 @@ namespace MT5TradingBot.Models
         [JsonProperty("tp_pips")]
         public double TakeProfitPips { get; set; } = 15;
 
+        [JsonProperty("risk_reward_ratio")]
+        public double RiskRewardRatio { get; set; } = 1.5;
+
         [JsonProperty("max_spread_pips")]
         public double MaxSpreadPips { get; set; } = 3;
 
         [JsonProperty("dynamic_values_enabled")]
         public bool DynamicValuesEnabled { get; set; } = true;
-
-        [JsonProperty("min_sl_pips")]
-        public double MinStopLossPips { get; set; }
-
-        [JsonProperty("max_sl_pips")]
-        public double MaxStopLossPips { get; set; }
-
-        [JsonProperty("min_tp_pips")]
-        public double MinTakeProfitPips { get; set; }
-
-        [JsonProperty("max_tp_pips")]
-        public double MaxTakeProfitPips { get; set; }
 
         [JsonProperty("poll_interval_ms")]
         public int PollIntervalMs { get; set; } = 2000;
@@ -914,6 +908,60 @@ namespace MT5TradingBot.Models
         public bool UseAiConfirmation { get; set; } = false;
     }
 
+    public sealed class ScalpingSettings : ScalpingConfig
+    {
+        [JsonProperty("enabled")]
+        public bool Enabled { get; set; } = false;
+    }
+
+    public sealed class CommonTradingSettings
+    {
+        [JsonProperty("trading_mode")]
+        public TradingControlMode TradingMode { get; set; } = TradingControlMode.Manual;
+
+        [JsonProperty("use_ai_confirmation")]
+        public bool UseAiConfirmation { get; set; } = false;
+
+        [JsonProperty("auto_close_after_open")]
+        public bool AutoCloseAfterOpen { get; set; } = false;
+
+        [JsonProperty("profit_target_pips")]
+        public double ProfitTargetPips { get; set; }
+
+        [JsonProperty("profit_target_usd")]
+        public double ProfitTargetUsd { get; set; }
+    }
+
+    public sealed class NormalTradingSettings
+    {
+        [JsonProperty("enabled")]
+        public bool Enabled { get; set; } = true;
+
+        [JsonProperty("max_trades")]
+        public int MaxTrades { get; set; } = 1;
+
+        [JsonProperty("expiry_minutes")]
+        public int ExpiryMinutes { get; set; } = 240;
+
+        [JsonProperty("sl_pips")]
+        public double StopLossPips { get; set; } = 50;
+
+        [JsonProperty("tp_pips")]
+        public double TakeProfitPips { get; set; } = 100;
+
+        [JsonProperty("max_spread_pips")]
+        public double MaxSpreadPips { get; set; } = 30;
+
+        [JsonProperty("risk_reward_ratio")]
+        public double RiskRewardRatio { get; set; } = 2.0;
+    }
+
+    public enum TradingControlMode
+    {
+        Auto = 0,
+        Manual = 1
+    }
+
     public sealed class PairTradingSettings
     {
         [JsonIgnore]
@@ -921,36 +969,6 @@ namespace MT5TradingBot.Models
 
         [JsonProperty("pip_size")]
         public double PipSize { get; set; } = 0.0001;
-
-        [JsonProperty("max_spread_pips")]
-        public double MaxSpreadPips { get; set; } = 3;
-
-        [JsonProperty("good_spread_pips")]
-        public double GoodSpreadPips { get; set; } = 1.5;
-
-        [JsonProperty("acceptable_spread_pips")]
-        public double AcceptableSpreadPips { get; set; } = 2;
-
-        [JsonProperty("min_sl_pips")]
-        public double MinSlPips { get; set; } = 8;
-
-        [JsonProperty("max_sl_pips")]
-        public double MaxSlPips { get; set; } = 35;
-
-        [JsonProperty("min_tp_pips")]
-        public double MinTpPips { get; set; } = 8;
-
-        [JsonProperty("scalping_min_rr")]
-        public double ScalpingMinRR { get; set; } = 1.5;
-
-        [JsonProperty("preferred_rr")]
-        public double PreferredRR { get; set; } = 1.5;
-
-        [JsonProperty("atr_multiplier_sl")]
-        public double AtrMultiplierSl { get; set; } = 1.0;
-
-        [JsonProperty("atr_multiplier_tp")]
-        public double AtrMultiplierTp { get; set; } = 1.2;
 
         [JsonProperty("min_atr_pips_m5")]
         public double MinAtrPipsM5 { get; set; }
@@ -963,9 +981,6 @@ namespace MT5TradingBot.Models
 
         [JsonProperty("max_atr_pips_m15")]
         public double MaxAtrPipsM15 { get; set; }
-
-        [JsonProperty("avoid_trade_if_spread_above_percent_of_tp")]
-        public double AvoidTradeIfSpreadAbovePercentOfTp { get; set; }
 
         [JsonProperty("minimum_distance_from_key_level_pips")]
         public double MinimumDistanceFromKeyLevelPips { get; set; }

@@ -207,7 +207,6 @@ namespace MT5TradingBot.Modules.BrokerIntegration
                 take_profit_2 = req.TakeProfit2,
                 lot_size = req.LotSize,
                 max_risk_pct = bot.MaxRiskPercent,
-                min_rr_ratio = bot.MinRRRatio,
                 daily_loss_limit_pct = bot.EmergencyCloseDrawdownPct,
                 max_spread_pips = bot.MaxSpreadPips
             }, Formatting.None);

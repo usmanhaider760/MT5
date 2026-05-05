@@ -74,7 +74,7 @@ namespace MT5TradingBot.Modules.StrategyProof
                 "Base strategy SL/TP generation",
                 "Trading/StrategyEngine/StrategyEngine.cs",
                 "StrategyEngine.CreateInitialSignalAsync",
-                "Uses stopDistance=max(15 pips, spread*3) and takeProfitDistance=stopDistance*max(MinRRRatio, 1.5). This creates provisional levels only because direction remains Hold.",
+                "Uses stopDistance=max(15 pips, spread*3) and takeProfitDistance from the normal trade-page RiskRewardRatio. This creates provisional levels only because direction remains Hold.",
                 ["Math.Max(15 * pipSize", "info.SpreadPips * 3", "takeProfitDistance = stopDistance"]),
 
             Evidence(
@@ -122,8 +122,8 @@ namespace MT5TradingBot.Modules.StrategyProof
                 "Lot sizing source",
                 "Trading/RiskManagement/RiskManager.cs",
                 "RiskManager.ValidateAsync",
-                "When AutoLotCalculation is enabled, lot size is calculated from equity, MaxRiskPercent, reference entry, SL, and pair. Otherwise the request lot size is used. AutoBot applies ValidatedLotSize before execution.",
-                ["config.AutoLotCalculation", "LotCalculator.Calculate", "ValidatedLotSize"]),
+                "Lot size is selected on the Review Trade page. Auto From Risk % calculates from equity, MaxRiskPercent, reference entry, SL, and pair; manual lot selections use the dropdown value. AutoBot applies ValidatedLotSize before execution.",
+                ["Review Trade lot dropdown", "LotCalculator.Calculate", "ValidatedLotSize"]),
 
             Evidence(
                 root,

@@ -22,8 +22,6 @@ namespace MT5TradingBot.UI
         // ── Numeric fields ──────────────────────────────────────────────────
         private Label         _lblRiskLabel;
         private NumericUpDown _nudRisk;
-        private Label         _lblMinRRLabel;
-        private NumericUpDown _nudMinRR;
         private Label         _lblMaxTradesLabel;
         private NumericUpDown _nudMaxTrades;
         private Label         _lblPollMsLabel;
@@ -34,8 +32,6 @@ namespace MT5TradingBot.UI
         private NumericUpDown _nudDrawdownPct;
 
         // ── Checkboxes ──────────────────────────────────────────────────────
-        private CheckBox _chkAutoLot;
-        private CheckBox _chkEnforceRR;
         private CheckBox _chkDrawdown;
         private CheckBox _chkAutoStart;
 
@@ -50,8 +46,6 @@ namespace MT5TradingBot.UI
             _pnlSettings      = new Panel();
             _lblRiskLabel     = new Label();
             _nudRisk          = new NumericUpDown();
-            _lblMinRRLabel    = new Label();
-            _nudMinRR         = new NumericUpDown();
             _lblMaxTradesLabel = new Label();
             _nudMaxTrades     = new NumericUpDown();
             _lblPollMsLabel   = new Label();
@@ -60,8 +54,6 @@ namespace MT5TradingBot.UI
             _nudRetry         = new NumericUpDown();
             _lblDrawdownLabel = new Label();
             _nudDrawdownPct   = new NumericUpDown();
-            _chkAutoLot       = new CheckBox();
-            _chkEnforceRR     = new CheckBox();
             _chkDrawdown      = new CheckBox();
             _chkAutoStart     = new CheckBox();
             _btnSave          = new Button();
@@ -96,29 +88,25 @@ namespace MT5TradingBot.UI
             const int FieldW = 110;
 
             PlaceRow(_lblRiskLabel,      "Max Risk %",           _nudRisk,      16,  FieldX, FieldW);
-            PlaceRow(_lblMinRRLabel,     "Min R:R Ratio",        _nudMinRR,     54,  FieldX, FieldW);
-            PlaceRow(_lblMaxTradesLabel, "Max Trades / Day",     _nudMaxTrades, 92,  FieldX, FieldW);
-            PlaceRow(_lblPollMsLabel,    "Poll Interval (ms)",   _nudPollMs,    130, FieldX, FieldW);
-            PlaceRow(_lblRetryLabel,     "Retry Count",          _nudRetry,     168, FieldX, FieldW);
-            PlaceRow(_lblDrawdownLabel,  "Drawdown Stop %",      _nudDrawdownPct, 206, FieldX, FieldW);
+            PlaceRow(_lblMaxTradesLabel, "Max Trades / Day",     _nudMaxTrades, 54,  FieldX, FieldW);
+            PlaceRow(_lblPollMsLabel,    "Poll Interval (ms)",   _nudPollMs,    92, FieldX, FieldW);
+            PlaceRow(_lblRetryLabel,     "Retry Count",          _nudRetry,     130, FieldX, FieldW);
+            PlaceRow(_lblDrawdownLabel,  "Drawdown Stop %",      _nudDrawdownPct, 168, FieldX, FieldW);
 
             _nudRisk.DecimalPlaces  = 1; _nudRisk.Minimum  = 0.1m;  _nudRisk.Maximum  = 50m;    _nudRisk.Increment  = 0.1m;
-            _nudMinRR.DecimalPlaces = 1; _nudMinRR.Minimum = 0.5m;  _nudMinRR.Maximum = 10m;    _nudMinRR.Increment = 0.1m;
             _nudMaxTrades.Minimum   = 1;                             _nudMaxTrades.Maximum = 100;
             _nudPollMs.Minimum      = 500; _nudPollMs.Maximum = 60000; _nudPollMs.Increment = 500;
             _nudRetry.Minimum       = 1;   _nudRetry.Maximum  = 10;
             _nudDrawdownPct.DecimalPlaces = 1; _nudDrawdownPct.Minimum = 1m; _nudDrawdownPct.Maximum = 50m; _nudDrawdownPct.Increment = 0.5m;
 
-            PlaceCheckBox(_chkAutoLot,   "Auto-calculate lot size from risk %", 256);
-            PlaceCheckBox(_chkEnforceRR, "Enforce minimum R:R (reject signals below)", 290);
-            PlaceCheckBox(_chkDrawdown,  "Enable drawdown protection (emergency stop)", 324);
-            PlaceCheckBox(_chkAutoStart, "Auto-start bot on app launch", 358);
+            PlaceCheckBox(_chkDrawdown,  "Enable drawdown protection (emergency stop)", 218);
+            PlaceCheckBox(_chkAutoStart, "Auto-start bot on app launch", 252);
 
             foreach (var c in new Control[] {
-                _lblRiskLabel, _nudRisk, _lblMinRRLabel, _nudMinRR,
+                _lblRiskLabel, _nudRisk,
                 _lblMaxTradesLabel, _nudMaxTrades, _lblPollMsLabel, _nudPollMs,
                 _lblRetryLabel, _nudRetry, _lblDrawdownLabel, _nudDrawdownPct,
-                _chkAutoLot, _chkEnforceRR, _chkDrawdown, _chkAutoStart })
+                _chkDrawdown, _chkAutoStart })
             {
                 _pnlSettings.Controls.Add(c);
             }

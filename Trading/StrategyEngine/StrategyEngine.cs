@@ -38,7 +38,7 @@ namespace MT5TradingBot.Modules.StrategyEngine
                 double pipSize = GetPipSize(candidate.Pair);
                 double minSlPips = GetMinStopPips(candidate.Pair);
                 double stopDistance = Math.Max(minSlPips * pipSize, info.SpreadPips * 3 * pipSize);
-                double takeProfitDistance = stopDistance * Math.Max(config.MinRRRatio, 1.5);
+                double takeProfitDistance = stopDistance * Math.Max(config.NormalTrading.RiskRewardRatio, 0.1);
 
                 return new MarketSignal
                 {

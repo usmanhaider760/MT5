@@ -14,6 +14,28 @@ namespace MT5TradingBot.Core
 
     public static class BrokerLotSizeValidator
     {
+        public static double Normalize(double lotSize, SymbolInfo? symbolInfo)
+        {
+            double minLot = symbolInfo != null && IsFinitePositive(symbolInfo.MinLot) ? symbolInfo.MinLot : 0.01;
+            double maxLot = symbolInfo != null && IsFinitePositive(symbolInfo.MaxLot) ? symbolInfo.MaxLot : 100.0;
+            double lotStep = symbolInfo?.LotStep.HasValue == true && IsFinitePositive(symbolInfo.LotStep.Value)
+                ? symbolInfo.LotStep.Value
+                : 0.01;
+            if (maxLot < minLot)
+                maxLot = minLot;
+
+            if (!IsFinitePositive(lotSize))
+                lotSize = minLot;
+
+            lotSize = Math.Min(Math.Max(lotSize, minLot), maxLot);
+
+            double steps = Math.Floor((lotSize - minLot) / lotStep + 1e-9);
+            double normalized = minLot + steps * lotStep;
+            normalized = Math.Min(Math.Max(normalized, minLot), maxLot);
+
+            return Math.Round(normalized, LotStepDecimals(lotStep));
+        }
+
         public static BrokerLotSizeValidation Validate(double lotSize, SymbolInfo? symbolInfo)
         {
             if (symbolInfo == null)
@@ -116,5 +138,13 @@ namespace MT5TradingBot.Core
 
         private static bool IsFiniteNonNegative(double value) =>
             !double.IsNaN(value) && !double.IsInfinity(value) && value >= 0;
+
+        private static int LotStepDecimals(double lotStep)
+        {
+            int decimals = 0;
+            while (decimals < 8 && Math.Abs(lotStep - Math.Round(lotStep, decimals)) > 1e-9)
+                decimals++;
+            return decimals;
+        }
     }
 }

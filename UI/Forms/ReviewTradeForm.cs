@@ -58,15 +58,12 @@ namespace MT5TradingBot.UI
         private void PopulateFromConfig()
         {
             SetNud(_nudRisk,        (decimal)_cfg.MaxRiskPercent);
-            SetNud(_nudMinRR,       (decimal)_cfg.MinRRRatio);
             SetNud(_nudMaxTrades,   _cfg.MaxTradesPerDay);
             SetNud(_nudMaxConcurrent, _cfg.MaxConcurrentPositions);
             SetNud(_nudPollMs,      _cfg.PollIntervalMs);
             SetNud(_nudRetry,       _cfg.RetryCount);
             SetNud(_nudDrawdownPct, (decimal)_cfg.EmergencyCloseDrawdownPct);
             SetNud(_nudBeTrigger,   (decimal)_cfg.SlToBeTrigerPct);
-            _chkAutoLot.Checked   = _cfg.AutoLotCalculation;
-            _chkEnforceRR.Checked = _cfg.EnforceRR;
             _chkDrawdown.Checked  = _cfg.DrawdownProtectionEnabled;
             _chkAutoStart.Checked = _cfg.AutoStartOnLaunch;
 
@@ -80,15 +77,12 @@ namespace MT5TradingBot.UI
         private void BtnSave_Click(object? sender, EventArgs e)
         {
             _cfg.MaxRiskPercent            = (double)_nudRisk.Value;
-            _cfg.MinRRRatio                = (double)_nudMinRR.Value;
             _cfg.MaxTradesPerDay           = (int)_nudMaxTrades.Value;
             _cfg.MaxConcurrentPositions    = (int)_nudMaxConcurrent.Value;
             _cfg.PollIntervalMs            = (int)_nudPollMs.Value;
             _cfg.RetryCount                = (int)_nudRetry.Value;
             _cfg.EmergencyCloseDrawdownPct = (double)_nudDrawdownPct.Value;
             _cfg.SlToBeTrigerPct           = (double)_nudBeTrigger.Value;
-            _cfg.AutoLotCalculation        = _chkAutoLot.Checked;
-            _cfg.EnforceRR                 = _chkEnforceRR.Checked;
             _cfg.DrawdownProtectionEnabled = _chkDrawdown.Checked;
             _cfg.AutoStartOnLaunch         = _chkAutoStart.Checked;
             _cfg.OperatingMode             = (BotMode)_cmbOperatingMode.SelectedIndex;
@@ -133,7 +127,7 @@ namespace MT5TradingBot.UI
             _cmbOperatingMode.Font      = new Font("Segoe UI", 9F);
 
             // Labels
-            foreach (var lbl in new[] { _lblRiskLabel, _lblMinRRLabel, _lblMaxTradesLabel,
+            foreach (var lbl in new[] { _lblRiskLabel, _lblMaxTradesLabel,
                                          _lblMaxConcurrentLabel,
                                          _lblPollMsLabel, _lblRetryLabel, _lblDrawdownLabel,
                                          _lblBeTriggerLabel, _lblOperatingModeLabel })
@@ -152,7 +146,7 @@ namespace MT5TradingBot.UI
             };
 
             // NumericUpDowns
-            foreach (var nud in new[] { _nudRisk, _nudMinRR, _nudMaxTrades, _nudMaxConcurrent, _nudPollMs, _nudRetry, _nudDrawdownPct, _nudBeTrigger })
+            foreach (var nud in new[] { _nudRisk, _nudMaxTrades, _nudMaxConcurrent, _nudPollMs, _nudRetry, _nudDrawdownPct, _nudBeTrigger })
             {
                 nud.BackColor    = C_SURFACE;
                 nud.ForeColor    = C_TEXT;
@@ -161,7 +155,7 @@ namespace MT5TradingBot.UI
             }
 
             // Checkboxes
-            foreach (var chk in new[] { _chkAutoLot, _chkEnforceRR, _chkDrawdown, _chkAutoStart, _chkPaperTrading })
+            foreach (var chk in new[] { _chkDrawdown, _chkAutoStart, _chkPaperTrading })
             {
                 chk.Font                  = new Font("Segoe UI", 9F);
                 chk.ForeColor             = C_TEXT;
@@ -209,8 +203,6 @@ namespace MT5TradingBot.UI
             PlaceRow(_lblOperatingModeLabel, _lblOperatingModeLabel.Text, _cmbOperatingMode, 320, fieldX, 160);
             _chkPaperTrading.Location = new Point(16, 360);
             _chkPaperTrading.AutoSize = true;
-            _chkAutoLot.Location = new Point(_chkAutoLot.Left, _chkAutoLot.Top + delta);
-            _chkEnforceRR.Location = new Point(_chkEnforceRR.Left, _chkEnforceRR.Top + delta);
             _chkDrawdown.Location = new Point(_chkDrawdown.Left, _chkDrawdown.Top + delta);
             _chkAutoStart.Location = new Point(_chkAutoStart.Left, _chkAutoStart.Top + delta);
 

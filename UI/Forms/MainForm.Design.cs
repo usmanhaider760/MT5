@@ -149,13 +149,11 @@ namespace MT5TradingBot.UI
             PlaceField(_lblTPLabel, _txtTP, 248);
             PlaceField(_lblTP2Label, _txtTP2, 284);
 
-            _chkAutoLot.Location = new Point(18, 326);
-            _chkAutoLot.Size = new Size(180, 24);
-            PlaceField(_lblLotLabel, _txtLot, 364, 120);
-            _chkMoveSLBE.Location = new Point(18, 402);
+            PlaceField(_lblLotLabel, _txtLot, 326, 120);
+            _chkMoveSLBE.Location = new Point(18, 364);
             _chkMoveSLBE.Size = new Size(260, 24);
 
-            _pnlRR.Location = new Point(18, 444);
+            _pnlRR.Location = new Point(18, 406);
             _pnlRR.Size = new Size(322, 84);
             _lblRR.Location = new Point(14, 12);
             _lblRR.Size = new Size(290, 20);
@@ -350,10 +348,9 @@ namespace MT5TradingBot.UI
             _btnOpenFolder.Size = new Size(118, 30);
             _btnOpenFolder.Text = "Select Folder";
             PlaceField(_lblRiskLabel, _nudRisk, 134, 110, 176);
-            PlaceField(_lblMinRRLabel, _nudMinRR, 172, 110, 176);
-            PlaceField(_lblMaxTradesLabel, _nudMaxTrades, 210, 110, 176);
-            PlaceField(_lblPollMsLabel, _nudPollMs, 248, 130, 176);
-            PlaceField(_lblRetryLabel, _nudRetry, 286, 110, 176);
+            PlaceField(_lblMaxTradesLabel, _nudMaxTrades, 172, 110, 176);
+            PlaceField(_lblPollMsLabel, _nudPollMs, 210, 130, 176);
+            PlaceField(_lblRetryLabel, _nudRetry, 248, 110, 176);
 
             // Allowed pairs — CheckedListBox (label above, list below)
             _lblAllowedPairsLabel.AutoSize = false;
@@ -364,15 +361,11 @@ namespace MT5TradingBot.UI
             _cmbAllowedPair.Size = new Size(340, 26);
 
             // Drawdown and checkboxes shifted down by 122 (148 - 26 = 122)
-            PlaceField(_lblDrawdownLabel, _nudDrawdownPct, 324, 110, 176);
+            PlaceField(_lblDrawdownLabel, _nudDrawdownPct, 286, 110, 176);
 
-            _chkAutoLotBot.Location = new Point(18, 374);
-            _chkEnforceRR.Location = new Point(18, 408);
-            _chkDrawdown.Location = new Point(18, 442);
-            _chkAutoStart.Location = new Point(18, 476);
-            _chkAutoLotBot.Size = _chkEnforceRR.Size = _chkDrawdown.Size = _chkAutoStart.Size = new Size(360, 24);
-            _chkAutoLotBot.Text = "Auto calculate lot size";
-            _chkEnforceRR.Text = "Enforce minimum R:R";
+            _chkDrawdown.Location = new Point(18, 336);
+            _chkAutoStart.Location = new Point(18, 370);
+            _chkDrawdown.Size = _chkAutoStart.Size = new Size(360, 24);
             _chkDrawdown.Text = "Enable drawdown protection";
             _chkAutoStart.Text = "Auto start on launch";
 
@@ -748,9 +741,12 @@ namespace MT5TradingBot.UI
             _lblConnStatus.ForeColor = C_MUTED;
             _lblEaStatus.AutoSize = false;
             _lblEaStatus.TextAlign = ContentAlignment.MiddleCenter;
-            _lblEaStatus.BorderStyle = BorderStyle.FixedSingle;
+            _lblEaStatus.FlatStyle = FlatStyle.Flat;
+            _lblEaStatus.FlatAppearance.BorderColor = C_BORDER;
+            _lblEaStatus.FlatAppearance.BorderSize = 1;
             _lblEaStatus.ForeColor = C_MUTED;
             _lblEaStatus.BackColor = Color.FromArgb(18, 18, 28);
+            _lblEaStatus.Cursor = Cursors.Hand;
             _lblTime.ForeColor = C_MUTED;
             _lblBotBadge.ForeColor = C_RED;
             _lblClaudeBadge.ForeColor = C_RED;

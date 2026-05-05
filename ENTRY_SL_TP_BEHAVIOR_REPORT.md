@@ -22,7 +22,7 @@ Source reviewed: `STRATEGY_EXTRACTION_REPORT.md` and current source files under 
 
 | Source | SL calculation | TP calculation | Fixed / ATR / score / AI / config | Varies by symbol/session/volatility/confidence? |
 |---|---|---|---|---|
-| `StrategyEngine.CreateInitialSignalAsync` | `mid - max(15 pips, spread * 3)` rounded to symbol digits | `mid + stopDistance * max(config.MinRRRatio, 1.5)` rounded to symbol digits | Spread-aware plus config R:R; not ATR, score, or AI | Symbol pip size and symbol digits vary; spread varies. Direction remains HOLD, so levels are provisional. |
+| `StrategyEngine.CreateInitialSignalAsync` | `mid - max(15 pips, spread * 3)` rounded to symbol digits | `mid + stopDistance * normal trade-page R:R` rounded to symbol digits | Spread-aware plus trade-page R:R; not ATR, score, or AI | Symbol pip size and symbol digits vary; spread varies. Direction remains HOLD, so levels are provisional. |
 | `ScalpingSessionService.BuildRequest` BUY | `ask - slPips * pipSize` | `ask + tpPips * pipSize` | Config pip distances, optionally `ScalpingDecision.SuggestedSlPips/TpPips` if set | Actual code currently does not set suggested pips in `EvaluateSnapshot`; effective values are config. Pip size varies by symbol. |
 | `ScalpingSessionService.BuildRequest` SELL | `bid + slPips * pipSize` | `bid - tpPips * pipSize` | Config pip distances, optionally decision-suggested pips if present | Same as BUY. Rounded to 5 decimals regardless of symbol digits. |
 | UI suggested scalping config | `StopLossPips = max(pair min SL, spread * 2, pair ATR floor)` clamped to pair max SL, rounded half pip | `TakeProfitPips = max(pair min TP, slPips * preferredRR, spread * 4)` capped 500, rounded half pip | Config suggestion uses pair settings, live spread, preferred R:R, and pair ATR floor setting | Varies by symbol pair settings and live spread. This creates config values, not direct trade SL/TP. |
@@ -47,7 +47,7 @@ Source reviewed: `STRATEGY_EXTRACTION_REPORT.md` and current source files under 
 
 ## Exact SL/TP Details
 
-- Base strategy: `mid = (Ask + Bid) / 2`; `pipSize` is `0.01` for JPY, `0.1` for XAU/GOLD, `0.01` for XAG, `1.0` for BTC/ETH, else `0.0001`. Stop distance is `max(15 * pipSize, SpreadPips * 3 * pipSize)`. TP distance is stop distance times `max(config.MinRRRatio, 1.5)`. SL is always below mid and TP above mid because base signal stays HOLD rather than directional SELL.
+- Base strategy: `mid = (Ask + Bid) / 2`; `pipSize` is `0.01` for JPY, `0.1` for XAU/GOLD, `0.01` for XAG, `1.0` for BTC/ETH, else `0.0001`. Stop distance is `max(15 * pipSize, SpreadPips * 3 * pipSize)`. TP distance is stop distance times the normal trade-page R:R. SL is always below mid and TP above mid because base signal stays HOLD rather than directional SELL.
 - Scalping: market entry reference is ask for BUY and bid for SELL; actual `EntryPrice` is set to `0` for market execution. SL/TP are fixed pip distances from current bid/ask using `LotCalculator.GetPipSize(pair)`, rounded to 5 decimals.
 - AI/manual/JSON: SL/TP are absolute prices supplied by the user, JSON producer, or AI JSON. The central gate validates them but does not recalculate them.
 - TP2: `AutoBotService` logs `TakeProfit2` but one-click broker execution sends one trade using `TakeProfit`.

@@ -55,7 +55,7 @@ The base deterministic strategy currently produces mostly HOLD. `StrategyEngine.
 |---|---|---|
 | Verified | Deterministic base strategy | Selects the highest-score available scanner pair, tie-breaking by lower spread. Fetches symbol data, calculates mid price, sets market order, SL below mid, TP above mid, but returns Direction=Hold. |
 | Verified | Base strategy Buy/Sell generation | The base strategy does not produce deterministic Buy/Sell. Its reason states direction remains HOLD until AI/user decision confirms setup. |
-| Verified | Base strategy SL/TP generation | Uses stopDistance=max(15 pips, spread*3) and takeProfitDistance=stopDistance*max(MinRRRatio, 1.5). This creates provisional levels only because direction remains Hold. |
+| Verified | Base strategy SL/TP generation | Uses stopDistance=max(15 pips, spread*3) and takeProfitDistance from the normal trade-page R:R. This creates provisional levels only because direction remains Hold. |
 | Verified | Scalping deterministic preconditions | Auto scalping waits for MT5 connection, session time, max trade count, max loss/profit target, symbol data, max spread, news risk, pyramiding rules, and cooldown before evaluating a setup. |
 | Verified | Scalping direction generation | DirectionMode can force BuyOnly/SellOnly, use the reviewed signal direction, or Auto-check both BUY and SELL and choose the only/stronger side that passes. |
 | Verified | Scalping confirmation rules | Snapshot scoring checks M5/M15/H1 trend, M5 candle direction, M5/M15 MACD, M5 price vs EMA20/EMA50, RSI zone, stochastic guard, doji/inside-bar rejection, and room to support/resistance. Approved requires score >= MinDecisionScore. |

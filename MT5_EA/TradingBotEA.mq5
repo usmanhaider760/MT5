@@ -824,7 +824,6 @@ string CmdGetMarketSnapshot(string reqId, string json)
    if(lots <= 0) lots = SymbolInfoDouble(sym, SYMBOL_VOLUME_MIN);
 
    double maxRiskPct = JsonDbl(data, "max_risk_pct");
-   double minRr = JsonDbl(data, "min_rr_ratio");
    double dailyLossPct = JsonDbl(data, "daily_loss_limit_pct");
    double maxSpreadPips = JsonDbl(data, "max_spread_pips");
 
@@ -871,7 +870,7 @@ string CmdGetMarketSnapshot(string reqId, string json)
    d += "\"positions\":" + SnapshotPositionsJson(sym, tradeType) + ",";
    d += "\"last_order\":{\"ticket\":0,\"execution_result\":\"NONE\",\"fill_price\":0.00000,\"slippage\":0,\"error_code\":0,\"requote\":false},";
    d += "\"history\":" + SnapshotHistoryJson() + ",";
-   d += "\"risk\":" + SnapshotRiskJson(sym, tradeType, entry, sl, tp1, tp2, lots, maxRiskPct, minRr, dailyLossPct) + ",";
+   d += "\"risk\":" + SnapshotRiskJson(sym, tradeType, entry, sl, tp1, tp2, lots, maxRiskPct, dailyLossPct) + ",";
    d += "\"news\":{\"news_risk_level\":\"UNAVAILABLE\",\"high_impact_next_60_min\":false,\"events_last_2_hours\":[],\"events_next_60_min\":[],\"source\":\"MT5 EA has no configured news/calendar feed\"}";
    d += "}";
 
@@ -1145,6 +1144,7 @@ string SnapshotCandleJson(string sym, ENUM_TIMEFRAMES tf)
 string SnapshotIndicatorsJson(string sym, ENUM_TIMEFRAMES tf, bool includeEma200, bool includeBands)
 {
    int digits = (int)SymbolInfoInteger(sym, SYMBOL_DIGITS);
+   double pip = SnapshotPipSize(sym);
    double close = SnapshotClose(sym, tf, 1);
    double rsi = SnapshotBufferValue(iRSI(sym, tf, 14, PRICE_CLOSE), 0, 1);
    int macdHandle = iMACD(sym, tf, 12, 26, 9, PRICE_CLOSE);
@@ -1182,12 +1182,13 @@ string SnapshotIndicatorsJson(string sym, ENUM_TIMEFRAMES tf, bool includeEma200
       int bandsHandle = iBands(sym, tf, 20, 0, 2.0, PRICE_CLOSE);
       if(bandsHandle != INVALID_HANDLE)
       {
-         double up[], mid[], low[];
-         ArraySetAsSeries(up, true);
+         double mid[], up[], low[];
          ArraySetAsSeries(mid, true);
+         ArraySetAsSeries(up, true);
          ArraySetAsSeries(low, true);
-         if(CopyBuffer(bandsHandle, 0, 1, 1, up) > 0) bandsUpper = up[0];
-         if(CopyBuffer(bandsHandle, 1, 1, 1, mid) > 0) bandsMid = mid[0];
+         // MQL5 iBands buffers: 0=middle/base, 1=upper, 2=lower.
+         if(CopyBuffer(bandsHandle, 0, 1, 1, mid) > 0) bandsMid = mid[0];
+         if(CopyBuffer(bandsHandle, 1, 1, 1, up) > 0) bandsUpper = up[0];
          if(CopyBuffer(bandsHandle, 2, 1, 1, low) > 0) bandsLower = low[0];
          IndicatorRelease(bandsHandle);
       }
@@ -1215,6 +1216,7 @@ string SnapshotIndicatorsJson(string sym, ENUM_TIMEFRAMES tf, bool includeEma200
       d += "\"bollinger_position\":\"" + (close >= bandsUpper ? "UPPER" : (close <= bandsLower ? "LOWER" : "MIDDLE")) + "\",";
    }
    d += "\"atr\":" + DoubleToString(atr, digits) + ",";
+   d += "\"atr_pips\":" + DoubleToString(pip > 0.0 ? atr / pip : 0.0, 1) + ",";
    d += "\"stoch_k\":" + DoubleToString(stochK, 1) + ",";
    d += "\"stoch_d\":" + DoubleToString(stochD, 1) + ",";
    d += "\"stoch_signal\":\"" + (stochK >= 80 ? "OVERBOUGHT" : (stochK <= 20 ? "OVERSOLD" : "NEUTRAL")) + "\",";
@@ -1278,6 +1280,18 @@ string SnapshotLevelsJson(string sym)
    double r1 = pivot * 2.0 - prevLow;
    double s2 = pivot - (prevHigh - prevLow);
    double r2 = pivot + (prevHigh - prevLow);
+   MqlRates w1[];
+   ArraySetAsSeries(w1, true);
+   CopyRates(sym, PERIOD_W1, 0, 2, w1);
+   double weeklyHigh = ArraySize(w1) > 1 ? w1[1].high : 0.0;
+   double weeklyLow = ArraySize(w1) > 1 ? w1[1].low : 0.0;
+   double weeklyClose = ArraySize(w1) > 1 ? w1[1].close : 0.0;
+   double weeklyPivot = weeklyHigh > 0 && weeklyLow > 0 ? (weeklyHigh + weeklyLow + weeklyClose) / 3.0 : 0.0;
+   double weeklyS1 = weeklyPivot > 0 ? weeklyPivot * 2.0 - weeklyHigh : 0.0;
+   double weeklyR1 = weeklyPivot > 0 ? weeklyPivot * 2.0 - weeklyLow : 0.0;
+   double asianHigh = g_AsianHigh;
+   double asianLow = g_AsianLow;
+   SnapshotAsianRange(sym, asianHigh, asianLow);
    double support = bid >= s1 ? s1 : s2;
    double resistance = bid <= r1 ? r1 : r2;
    string d = "{";
@@ -1291,15 +1305,39 @@ string SnapshotLevelsJson(string sym)
    d += "\"key_level_type\":\"" + (MathAbs(bid - support) <= MathAbs(resistance - bid) ? "SUPPORT" : "RESISTANCE") + "\",";
    d += "\"prev_day_high\":" + DoubleToString(prevHigh, digits) + ",";
    d += "\"prev_day_low\":" + DoubleToString(prevLow, digits) + ",";
-   d += "\"asian_high\":" + DoubleToString(g_AsianHigh, digits) + ",\"asian_low\":" + DoubleToString(g_AsianLow, digits) + ",";
+   d += "\"asian_high\":" + DoubleToString(asianHigh, digits) + ",\"asian_low\":" + DoubleToString(asianLow, digits) + ",";
    d += "\"daily_pivot\":" + DoubleToString(pivot, digits) + ",";
    d += "\"daily_s1\":" + DoubleToString(s1, digits) + ",";
    d += "\"daily_s2\":" + DoubleToString(s2, digits) + ",";
    d += "\"daily_r1\":" + DoubleToString(r1, digits) + ",";
    d += "\"daily_r2\":" + DoubleToString(r2, digits) + ",";
-   d += "\"weekly_pivot\":0.00000,\"weekly_s1\":0.00000,\"weekly_r1\":0.00000";
+   d += "\"weekly_pivot\":" + DoubleToString(weeklyPivot, digits) + ",";
+   d += "\"weekly_s1\":" + DoubleToString(weeklyS1, digits) + ",";
+   d += "\"weekly_r1\":" + DoubleToString(weeklyR1, digits);
    d += "}";
    return d;
+}
+
+void SnapshotAsianRange(string sym, double &asianHigh, double &asianLow)
+{
+   if(asianHigh > 0.0 && asianLow > 0.0) return;
+
+   MqlDateTime dt;
+   TimeToStruct(TimeCurrent(), dt);
+   dt.hour = 0;
+   dt.min = 0;
+   dt.sec = 0;
+   datetime from = StructToTime(dt);
+   datetime to = from + 7 * 60 * 60;
+
+   MqlRates rates[];
+   ArraySetAsSeries(rates, true);
+   int copied = CopyRates(sym, PERIOD_M15, from, to, rates);
+   for(int i = 0; i < copied; i++)
+   {
+      if(asianHigh == 0.0 || rates[i].high > asianHigh) asianHigh = rates[i].high;
+      if(asianLow == 0.0 || rates[i].low < asianLow) asianLow = rates[i].low;
+   }
 }
 
 string SnapshotPositionsJson(string sym, string tradeType)
@@ -1330,8 +1368,14 @@ string SnapshotPositionsJson(string sym, string tradeType)
       arr += "\"lots\":" + DoubleToString(PosInfo.Volume(), 2) + ",";
       arr += "\"open_price\":" + DoubleToString(PosInfo.PriceOpen(), 5) + ",";
       arr += "\"current_price\":" + DoubleToString(PosInfo.PriceCurrent(), 5) + ",";
+      double pip = SnapshotPipSize(PosInfo.Symbol());
+      double openPips = pip > 0.0
+         ? (PosInfo.PositionType() == POSITION_TYPE_BUY
+            ? (PosInfo.PriceCurrent() - PosInfo.PriceOpen()) / pip
+            : (PosInfo.PriceOpen() - PosInfo.PriceCurrent()) / pip)
+         : 0.0;
       arr += "\"pnl\":" + DoubleToString(PosInfo.Profit(), 2) + ",";
-      arr += "\"pips\":0.0";
+      arr += "\"pips\":" + DoubleToString(openPips, 1);
       arr += "}";
    }
    arr += "]";
@@ -1347,7 +1391,7 @@ string SnapshotPositionsJson(string sym, string tradeType)
    return d;
 }
 
-string SnapshotRiskJson(string sym, string tradeType, double entry, double sl, double tp1, double tp2, double lots, double maxRiskPct, double minRr, double dailyLossPct)
+string SnapshotRiskJson(string sym, string tradeType, double entry, double sl, double tp1, double tp2, double lots, double maxRiskPct, double dailyLossPct)
 {
    int digits = (int)SymbolInfoInteger(sym, SYMBOL_DIGITS);
    double bid = SymbolInfoDouble(sym, SYMBOL_BID);
@@ -1355,16 +1399,20 @@ string SnapshotRiskJson(string sym, string tradeType, double entry, double sl, d
    if(entry <= 0) entry = tradeType == "SELL" ? bid : ask;
    double pip = SnapshotPipSize(sym);
    double pipValue = SnapshotPipValuePerLot(sym);
-   double slPips = pip > 0 ? MathAbs(entry - sl) / pip : 0.0;
-   double tp1Pips = pip > 0 ? MathAbs(tp1 - entry) / pip : 0.0;
-   double tp2Pips = pip > 0 && tp2 > 0 ? MathAbs(tp2 - entry) / pip : 0.0;
+   bool isSell = SnapshotIsSell(tradeType);
+   bool slValid = sl > 0.0 && (isSell ? sl > entry : sl < entry);
+   bool tp1Valid = tp1 > 0.0 && (isSell ? tp1 < entry : tp1 > entry);
+   bool tp2Valid = tp2 > 0.0 && (isSell ? tp2 < entry : tp2 > entry);
+   double slPips = pip > 0 && slValid ? MathAbs(entry - sl) / pip : 0.0;
+   double tp1Pips = pip > 0 && tp1Valid ? MathAbs(tp1 - entry) / pip : 0.0;
+   double tp2Pips = pip > 0 && tp2Valid ? MathAbs(tp2 - entry) / pip : 0.0;
    double rr = slPips > 0 ? tp1Pips / slPips : 0.0;
    double equity = AccountInfoDouble(ACCOUNT_EQUITY);
    double dailyLimit = dailyLossPct > 0 ? equity * dailyLossPct / 100.0 : 0.0;
+   double marginRequired = SnapshotMarginRequired(sym, tradeType, lots, entry);
    string d = "{";
    d += "\"max_risk_pct\":" + DoubleToString(maxRiskPct, 2) + ",";
    d += "\"max_risk_dollar\":" + DoubleToString(maxRiskPct > 0 ? equity * maxRiskPct / 100.0 : 0.0, 2) + ",";
-   d += "\"min_rr_ratio\":" + DoubleToString(minRr, 2) + ",";
    d += "\"suggested_sl\":" + DoubleToString(sl, digits) + ",";
    d += "\"suggested_tp1\":" + DoubleToString(tp1, digits) + ",";
    d += "\"suggested_tp2\":" + DoubleToString(tp2, digits) + ",";
@@ -1376,11 +1424,28 @@ string SnapshotRiskJson(string sym, string tradeType, double entry, double sl, d
    d += "\"dollar_profit_tp1\":" + DoubleToString(tp1Pips * pipValue * lots, 2) + ",";
    d += "\"dollar_profit_tp2\":" + DoubleToString(tp2Pips * pipValue * lots, 2) + ",";
    d += "\"atr_based_sl\":" + DoubleToString(SnapshotBufferValue(iATR(sym, PERIOD_H1, 14), 0, 1), digits) + ",";
-   d += "\"margin_required\":0.00,";
+   d += "\"margin_required\":" + DoubleToString(marginRequired, 2) + ",";
    d += "\"daily_loss_limit_dollar\":" + DoubleToString(dailyLimit, 2) + ",";
    d += "\"daily_loss_remaining\":" + DoubleToString(dailyLimit > 0 ? dailyLimit + SnapshotTodayPnl() : 0.0, 2);
    d += "}";
    return d;
+}
+
+bool SnapshotIsSell(string tradeType)
+{
+   return StringCompare(tradeType, "SELL", false) == 0;
+}
+
+double SnapshotMarginRequired(string sym, string tradeType, double lots, double price)
+{
+   if(lots <= 0.0 || price <= 0.0) return 0.0;
+
+   double margin = 0.0;
+   ENUM_ORDER_TYPE orderType = SnapshotIsSell(tradeType) ? ORDER_TYPE_SELL : ORDER_TYPE_BUY;
+   if(OrderCalcMargin(orderType, sym, lots, price, margin))
+      return margin;
+
+   return 0.0;
 }
 
 string SnapshotHistoryJson()
@@ -1486,12 +1551,15 @@ string SnapshotLastTradesJson(int maxItems)
          double profit = HistoryDealGetDouble(ticket, DEAL_PROFIT)
                        + HistoryDealGetDouble(ticket, DEAL_SWAP)
                        + HistoryDealGetDouble(ticket, DEAL_COMMISSION);
+         string symbol = HistoryDealGetString(ticket, DEAL_SYMBOL);
+         string direction = "";
+         double pips = SnapshotClosedDealPips(ticket, symbol, direction);
          if(added > 0) arr += ",";
          arr += "{";
-         arr += "\"pair\":\"" + Esc(HistoryDealGetString(ticket, DEAL_SYMBOL)) + "\",";
-         arr += "\"direction\":\"" + (HistoryDealGetInteger(ticket, DEAL_TYPE) == DEAL_TYPE_BUY ? "BUY" : "SELL") + "\",";
+         arr += "\"pair\":\"" + Esc(symbol) + "\",";
+         arr += "\"direction\":\"" + direction + "\",";
          arr += "\"result\":\"" + (profit >= 0 ? "WIN" : "LOSS") + "\",";
-         arr += "\"pips\":0.0,";
+         arr += "\"pips\":" + DoubleToString(pips, 1) + ",";
          arr += "\"pnl\":" + DoubleToString(profit, 2);
          arr += "}";
          added++;
@@ -1499,6 +1567,36 @@ string SnapshotLastTradesJson(int maxItems)
    }
    arr += "]";
    return arr;
+}
+
+double SnapshotClosedDealPips(ulong exitTicket, string sym, string &direction)
+{
+   direction = "UNKNOWN";
+   double pip = SnapshotPipSize(sym);
+   if(pip <= 0.0) return 0.0;
+
+   long positionId = HistoryDealGetInteger(exitTicket, DEAL_POSITION_ID);
+   double exitPrice = HistoryDealGetDouble(exitTicket, DEAL_PRICE);
+   for(int i = HistoryDealsTotal() - 1; i >= 0; i--)
+   {
+      ulong ticket = HistoryDealGetTicket(i);
+      if(ticket == 0 || ticket == exitTicket) continue;
+      if(HistoryDealGetInteger(ticket, DEAL_POSITION_ID) != positionId) continue;
+
+      long entry = HistoryDealGetInteger(ticket, DEAL_ENTRY);
+      if(entry != DEAL_ENTRY_IN && entry != DEAL_ENTRY_INOUT) continue;
+
+      long type = HistoryDealGetInteger(ticket, DEAL_TYPE);
+      double entryPrice = HistoryDealGetDouble(ticket, DEAL_PRICE);
+      direction = type == DEAL_TYPE_BUY ? "BUY" : "SELL";
+      return type == DEAL_TYPE_BUY
+         ? (exitPrice - entryPrice) / pip
+         : (entryPrice - exitPrice) / pip;
+   }
+
+   long exitType = HistoryDealGetInteger(exitTicket, DEAL_TYPE);
+   direction = exitType == DEAL_TYPE_BUY ? "SELL" : "BUY";
+   return 0.0;
 }
 
 string SnapshotExecutionMode(string sym)
