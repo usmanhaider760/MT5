@@ -378,6 +378,27 @@ namespace MT5TradingBot.Services
 
                 if (_tradeDb != null)
                     _ = _tradeDb.UpdateCloseAsync(pos.Ticket, profitUsd, DateTime.UtcNow);
+                _ = RecordLifecycleAuditAsync(new TradeLifecycleAuditRecord
+                {
+                    CreatedAtUtc = DateTime.UtcNow,
+                    EventType = "PAPER_CLOSE",
+                    Ticket = pos.Ticket,
+                    PositionId = pos.Ticket,
+                    Pair = pos.Symbol,
+                    Direction = pos.Type.ToString(),
+                    Actor = "PaperSimulator",
+                    Reason = $"Paper trade closed at {reason}.",
+                    Price = closePrice,
+                    ProfitUsd = profitUsd,
+                    DetailsJson = JsonConvert.SerializeObject(new
+                    {
+                        pos.OpenPrice,
+                        pos.StopLoss,
+                        pos.TakeProfit,
+                        pos.EstimatedCommission,
+                        pos.EstimatedSlippageCost
+                    }, Formatting.None)
+                });
 
                 _ = _telegram.SendTradeClosedAsync(pos.Symbol, profitUsd, pos.Ticket)
                               .ConfigureAwait(false);
@@ -1239,6 +1260,29 @@ namespace MT5TradingBot.Services
                                 $" — closing #{result.Ticket}");
 
                             bool closed = await _bridge.CloseTradeAsync(result.Ticket).ConfigureAwait(false);
+                            _ = RecordLifecycleAuditAsync(new TradeLifecycleAuditRecord
+                            {
+                                CreatedAtUtc = DateTime.UtcNow,
+                                EventType = closed ? "CLOSE_REQUESTED" : "CLOSE_FAILED",
+                                RequestId = request.Id,
+                                Ticket = result.Ticket,
+                                PositionId = result.Ticket,
+                                Pair = request.Pair,
+                                Direction = request.TradeType.ToString(),
+                                Actor = "AutoBotService",
+                                Reason = closed
+                                    ? "Closed due to extreme slippage after broker fill."
+                                    : "Extreme slippage close request failed.",
+                                Price = result.ExecutedPrice,
+                                SpreadPips = slippagePips,
+                                DetailsJson = JsonConvert.SerializeObject(new
+                                {
+                                    livePrice,
+                                    result.ExecutedPrice,
+                                    slippagePips,
+                                    maxSlippagePips
+                                }, Formatting.None)
+                            });
 
                             Log(closed
                                 ? $"[RISK] Position #{result.Ticket} closed due to extreme slippage."
@@ -1524,6 +1568,27 @@ namespace MT5TradingBot.Services
 
                     if (_tradeDb != null)
                         _ = _tradeDb.UpdateCloseAsync(closed.Ticket, closed.Profit, DateTime.UtcNow);
+                    _ = RecordLifecycleAuditAsync(new TradeLifecycleAuditRecord
+                    {
+                        CreatedAtUtc = DateTime.UtcNow,
+                        EventType = "CLOSE_DETECTED",
+                        Ticket = closed.Ticket,
+                        PositionId = closed.Ticket,
+                        Pair = closed.Symbol,
+                        Direction = closed.Type.ToString(),
+                        Actor = "MT5",
+                        Reason = "Position disappeared from open positions; close detected by heartbeat.",
+                        Price = closed.CurrentPrice,
+                        ProfitUsd = closed.Profit,
+                        DetailsJson = JsonConvert.SerializeObject(new
+                        {
+                            closed.OpenPrice,
+                            closed.StopLoss,
+                            closed.TakeProfit,
+                            closed.ProfitPips,
+                            closed.Comment
+                        }, Formatting.None)
+                    });
 
                     if (_edgeMonitor != null)
                     {
@@ -1574,6 +1639,13 @@ namespace MT5TradingBot.Services
                 File.AppendAllText(LogFile, line + Environment.NewLine);
             }
             catch (Exception ex) { Log($"LogClose error: {ex.Message}"); }
+        }
+
+        private async Task RecordLifecycleAuditAsync(TradeLifecycleAuditRecord record)
+        {
+            if (_tradeDb == null) return;
+            await _tradeDb.InsertLifecycleAuditAsync(record).ConfigureAwait(false);
+            Log($"[TRADE_LIFECYCLE] {record.EventType} #{record.Ticket} {record.Pair} | Actor={record.Actor} | Reason={record.Reason}");
         }
 
         // ══════════════════════════════════════════════════════════
@@ -1633,6 +1705,26 @@ namespace MT5TradingBot.Services
                         anyCloseFailed = true;
                         Log($"[SAFETY] Emergency close failed #{pos.Ticket} {pos.Symbol}");
                     }
+                    _ = RecordLifecycleAuditAsync(new TradeLifecycleAuditRecord
+                    {
+                        CreatedAtUtc = DateTime.UtcNow,
+                        EventType = closed ? "CLOSE_REQUESTED" : "CLOSE_FAILED",
+                        Ticket = pos.Ticket,
+                        PositionId = pos.Ticket,
+                        Pair = pos.Symbol,
+                        Direction = pos.Type.ToString(),
+                        Actor = "KillSwitch",
+                        Reason = reason,
+                        Price = pos.CurrentPrice,
+                        ProfitUsd = pos.Profit,
+                        DetailsJson = JsonConvert.SerializeObject(new
+                        {
+                            drawdownPct,
+                            _cfg.EmergencyCloseDrawdownPct,
+                            account.Equity,
+                            account.Balance
+                        }, Formatting.None)
+                    });
                 }
 
                 Log("[SAFETY] Emergency close-all attempts completed. Kill switch remains active until explicit clear.");

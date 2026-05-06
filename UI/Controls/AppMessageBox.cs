@@ -14,14 +14,29 @@ namespace MT5TradingBot.UI
             return owner == null ? form.ShowDialog() : form.ShowDialog(owner);
         }
 
+        public static void ShowModeless(
+            IWin32Window? owner,
+            string message,
+            string title = "MT5 Trading Bot",
+            MessageBoxIcon icon = MessageBoxIcon.Information,
+            MessageBoxButtons buttons = MessageBoxButtons.OK)
+        {
+            var form = new AppMessageBoxForm(title, message, icon, buttons);
+            form.StartPosition = owner == null ? FormStartPosition.CenterScreen : FormStartPosition.CenterParent;
+            if (owner == null)
+                form.Show();
+            else
+                form.Show(owner);
+        }
+
         public static bool Confirm(IWin32Window? owner, string message, string title = "Confirm") =>
             Show(owner, message, title, MessageBoxIcon.Warning, MessageBoxButtons.YesNo) == DialogResult.Yes;
 
         public static void Warning(IWin32Window? owner, string message, string title = "Warning") =>
-            Show(owner, message, title, MessageBoxIcon.Warning, MessageBoxButtons.OK);
+            ShowModeless(owner, message, title, MessageBoxIcon.Warning, MessageBoxButtons.OK);
 
         public static void Error(IWin32Window? owner, string message, string title = "Error") =>
-            Show(owner, message, title, MessageBoxIcon.Error, MessageBoxButtons.OK);
+            ShowModeless(owner, message, title, MessageBoxIcon.Error, MessageBoxButtons.OK);
 
         public static void Error(
             IWin32Window? owner,
@@ -29,10 +44,10 @@ namespace MT5TradingBot.UI
             string title,
             MessageBoxButtons buttons,
             MessageBoxIcon icon) =>
-            Show(owner, message, title, icon, buttons);
+            ShowModeless(owner, message, title, icon, buttons);
 
         public static void Info(IWin32Window? owner, string message, string title = "Information") =>
-            Show(owner, message, title, MessageBoxIcon.Information, MessageBoxButtons.OK);
+            ShowModeless(owner, message, title, MessageBoxIcon.Information, MessageBoxButtons.OK);
 
         private sealed class AppMessageBoxForm : Form
         {
@@ -142,6 +157,7 @@ namespace MT5TradingBot.UI
                 Controls.Add(body);
                 Controls.Add(footer);
                 Controls.Add(header);
+                CopyablePopupText.Enable(this);
             }
 
             private Panel BuildFooter(MessageBoxButtons buttons, Color accent)
@@ -193,6 +209,14 @@ namespace MT5TradingBot.UI
                 };
                 button.FlatAppearance.BorderColor = secondary ? C_BORDER : button.BackColor;
                 button.FlatAppearance.BorderSize = secondary ? 1 : 0;
+                button.Click += (_, _) =>
+                {
+                    if (button.FindForm() is Form form)
+                    {
+                        form.DialogResult = result;
+                        form.Close();
+                    }
+                };
                 return button;
             }
 

@@ -21,6 +21,7 @@ using System.Diagnostics;
 using System.Globalization;
 using System.Reflection;
 using System.Security.Cryptography;
+using System.Text;
 
 namespace MT5TradingBot.UI
 {
@@ -55,6 +56,9 @@ namespace MT5TradingBot.UI
         private const int MaxScreenLogChars = 180;
         private readonly List<string> _screenLogFullMessages = [];
         private int _lastLogContextLineIndex = -1;
+        private readonly Dictionary<string, IReadOnlyList<TradeRuleAuditSnapshot>> _tradeRuleAuditsByRequestId = new(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<long, IReadOnlyList<TradeRuleAuditSnapshot>> _tradeRuleAuditsByTicket = [];
+        private readonly Dictionary<long, IReadOnlyList<TradeLifecycleAuditRecord>> _tradeLifecycleAuditsByTicket = [];
 
         // -- Pair analysis feed ------------------------------------
         private readonly Dictionary<string, Panel> _pairAnalysisCards = new(StringComparer.OrdinalIgnoreCase);
@@ -100,6 +104,11 @@ namespace MT5TradingBot.UI
             bool NormalTradingEnabled = false,
             NormalTradingSettings? NormalTradingSettings = null,
             CommonTradingSettings? CommonTradingSettings = null);
+
+        private sealed record TradeHistoryDetail(
+            Mt5TradeHistoryItem Trade,
+            IReadOnlyList<TradeRuleAuditSnapshot> RuleAudit,
+            IReadOnlyList<TradeLifecycleAuditRecord> LifecycleAudit);
 
         // ==========================================================
         // Keep for WinForms designer compatibility
@@ -186,6 +195,7 @@ namespace MT5TradingBot.UI
             bot.OnLog += msg => Log(msg);
             bot.OnTradeExecuted += r =>
             {
+                CaptureExecutionRuleAudit(null, r);
                 Log(r.IsSuccess
                         ? $"[BOT] Trade | Rule=EXEC-TRADE-ACCEPTED Trade Accepted | {r}"
                         : $"[BOT] Rejected | MainRule={ResolveRejectedRuleForLog(r.ErrorCode, r.ErrorMessage)} | Reason={r.ErrorMessage}",
@@ -244,9 +254,7 @@ namespace MT5TradingBot.UI
                 bridge,
                 _cfg.Claude,
                 _cfg.Bot,
-                req => _bot != null
-                    ? _bot.ExecuteTradeWithValidationAsync(req)
-                    : Task.FromResult(RejectWithoutExecutionGate(req, "AI execution gate is not ready.")),
+                ExecuteClaudeTradeWithAuditAsync,
                 contextManager: _services.GetRequiredService<IAiContextManager>());
 
             svc.OnLog += msg => Log($"[AI] {msg}");
@@ -258,6 +266,16 @@ namespace MT5TradingBot.UI
             svc.OnStatusChanged += on => UpdateClaudeBadge(on);
 
             return svc;
+        }
+
+        private async Task<TradeResult> ExecuteClaudeTradeWithAuditAsync(TradeRequest req)
+        {
+            if (_bot == null)
+                return RejectWithoutExecutionGate(req, "AI execution gate is not ready.");
+
+            TradeResult result = await _bot.ExecuteTradeWithValidationAsync(req).ConfigureAwait(false);
+            CaptureExecutionRuleAudit(req, result);
+            return result;
         }
 
         // ==========================================================
@@ -284,6 +302,7 @@ namespace MT5TradingBot.UI
 
             _btnImportHistory.Click += BtnImportHistory_Click;
             _btnClearHistory.Click  += BtnClearHistory_Click;
+            _gridHistory.CellDoubleClick += GridHistory_CellDoubleClick;
 
             _cmbAllowedPair.SelectedIndexChanged += CmbAllowedPair_SelectedIndexChanged;
 
@@ -478,7 +497,9 @@ namespace MT5TradingBot.UI
             _bot.UpdateConfig(_cfg.Bot);
             _bot.UpdateApiConfig(_cfg.ApiIntegrations);
 
-            return await _bot.ExecuteTradeWithValidationAsync(req);
+            TradeResult result = await _bot.ExecuteTradeWithValidationAsync(req);
+            CaptureExecutionRuleAudit(req, result);
+            return result;
         }
 
         private static TradeResult RejectWithoutExecutionGate(TradeRequest req, string reason) => new()
@@ -1367,7 +1388,17 @@ SAFETY RULES:
         private async Task RefreshPositionsAsync()
         {
             if (_bridge?.IsConnected != true) return;
-            var positions = await _bridge.GetPositionsAsync();
+            List<LivePosition> positions;
+            try
+            {
+                positions = await _bridge.GetPositionsAsync().ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                Log($"[POSITIONS] Live MT5 position sync failed: {ex.Message}", C_RED);
+                return;
+            }
+
             UIThread(() =>
             {
                 _gridPos.Rows.Clear();
@@ -1393,6 +1424,16 @@ SAFETY RULES:
             if (Confirm($"Close ticket #{t}?"))
             {
                 bool ok = await _bridge.CloseTradeAsync(t);
+                _ = PersistLifecycleAuditAsync(new TradeLifecycleAuditRecord
+                {
+                    CreatedAtUtc = DateTime.UtcNow,
+                    EventType = ok ? "CLOSE_REQUESTED" : "CLOSE_FAILED",
+                    Ticket = t,
+                    PositionId = t,
+                    Actor = "User",
+                    Reason = ok ? "User closed selected position from Positions tab." : "User close selected position failed.",
+                    DetailsJson = JsonConvert.SerializeObject(new { source = "PositionsTab.CloseSelected" }, Formatting.None)
+                });
                 Log(ok ? $"[OK] Closed #{t}" : $"[ERROR] Failed to close #{t}", ok ? C_GREEN : C_RED);
                 await RefreshPositionsAsync();
             }
@@ -1405,7 +1446,24 @@ SAFETY RULES:
             var positions = await _bridge.GetPositionsAsync();
             int count = 0;
             foreach (var p in positions)
-                if (await _bridge.CloseTradeAsync(p.Ticket)) count++;
+            {
+                bool ok = await _bridge.CloseTradeAsync(p.Ticket);
+                if (ok) count++;
+                _ = PersistLifecycleAuditAsync(new TradeLifecycleAuditRecord
+                {
+                    CreatedAtUtc = DateTime.UtcNow,
+                    EventType = ok ? "CLOSE_REQUESTED" : "CLOSE_FAILED",
+                    Ticket = p.Ticket,
+                    PositionId = p.Ticket,
+                    Pair = p.Symbol,
+                    Direction = p.Type.ToString(),
+                    Actor = "User",
+                    Reason = ok ? "User requested close-all from Positions tab." : "User close-all failed for this position.",
+                    Price = p.CurrentPrice,
+                    ProfitUsd = p.Profit,
+                    DetailsJson = JsonConvert.SerializeObject(new { source = "PositionsTab.CloseAll" }, Formatting.None)
+                });
+            }
             Log($"Closed {count}/{positions.Count} positions.", C_YELLOW);
             await RefreshPositionsAsync();
         }
@@ -1504,6 +1562,12 @@ SAFETY RULES:
                 _lblConnStatus.ForeColor = connected ? C_GREEN : C_RED;
                 _btnDisconnect.Enabled   = connected;
                 if (!connected) _refreshTimer.Stop();
+                else
+                {
+                    if (!_refreshTimer.Enabled)
+                        _refreshTimer.Start();
+                    _ = RefreshPositionsAsync();
+                }
                 UpdateEaDeploymentStatusBadge(force: true);
                 if (connected)
                     _ = RefreshEaStatusButtonAsync(logResult: false);
@@ -1820,13 +1884,376 @@ SAFETY RULES:
         private void AddHistoryRow(TradeRequest req, TradeResult result)
         {
             UIThread(() =>
+            {
                 _gridHistory.Rows.Insert(0,
                     DateTime.Now.ToString("HH:mm:ss"), req.Id, req.Pair,
                     req.TradeType.ToString(), $"{req.LotSize:F2}",
                     $"{req.EntryPrice:F5}", $"{req.StopLoss:F5}", $"{req.TakeProfit:F5}",
                     result.Ticket, result.Status, $"{result.ExecutedPrice:F5}",
-                    result.ErrorMessage));
+                    result.ErrorMessage);
+                _gridHistory.Rows[0].Tag = new TradeHistoryDetail(
+                    new Mt5TradeHistoryItem
+                    {
+                        DealTicket = result.Ticket,
+                        OrderTicket = result.Ticket,
+                        PositionId = result.Ticket,
+                        TimeUtc = DateTime.UtcNow,
+                        EntryTimeUtc = DateTime.UtcNow,
+                        Symbol = req.Pair,
+                        Direction = req.TradeType.ToString(),
+                        EntryType = result.IsSuccess ? "IN" : "REJECTED",
+                        Lots = req.LotSize,
+                        Price = result.ExecutedPrice > 0 ? result.ExecutedPrice : req.EntryPrice,
+                        EntryPrice = result.ExecutedPrice > 0 ? result.ExecutedPrice : req.EntryPrice,
+                        StopLoss = req.StopLoss,
+                        TakeProfit = req.TakeProfit,
+                        MagicNumber = req.MagicNumber,
+                        Comment = string.IsNullOrWhiteSpace(req.Comment) ? result.ErrorMessage : req.Comment
+                    },
+                    FindRuleAuditForRequest(req.Id, result),
+                    result.Ticket > 0 && _tradeLifecycleAuditsByTicket.TryGetValue(result.Ticket, out var lifecycle) ? lifecycle : []);
+            });
         }
+
+        private void CaptureExecutionRuleAudit(TradeRequest? request, TradeResult result)
+        {
+            var audit = AutoBotService.LastExecutionAuditSnapshot
+                .Where(a =>
+                    (request != null && string.Equals(a.RequestId, request.Id, StringComparison.OrdinalIgnoreCase)) ||
+                    (!string.IsNullOrWhiteSpace(result.RequestId) && string.Equals(a.RequestId, result.RequestId, StringComparison.OrdinalIgnoreCase)) ||
+                    (request != null && string.Equals(a.Pair, request.Pair, StringComparison.OrdinalIgnoreCase)))
+                .OrderBy(a => a.Order)
+                .ToList();
+
+            if (audit.Count == 0)
+                return;
+
+            string requestId = request?.Id ?? result.RequestId;
+            if (!string.IsNullOrWhiteSpace(requestId))
+                _tradeRuleAuditsByRequestId[requestId] = audit;
+            if (result.Ticket > 0)
+                _tradeRuleAuditsByTicket[result.Ticket] = audit;
+
+            _ = PersistLifecycleAuditAsync(new TradeLifecycleAuditRecord
+            {
+                CreatedAtUtc = DateTime.UtcNow,
+                EventType = result.IsSuccess ? "EXEC_RULES_PASS" : "EXEC_RULES_REJECT",
+                RequestId = requestId,
+                Ticket = result.Ticket,
+                PositionId = result.Ticket,
+                Pair = request?.Pair ?? audit.FirstOrDefault()?.Pair ?? "",
+                Direction = request?.TradeType.ToString() ?? "",
+                Actor = "DesktopApp",
+                Reason = result.IsSuccess ? "Execution rules passed before broker send." : result.ErrorMessage,
+                Price = result.ExecutedPrice,
+                ProfitUsd = 0,
+                DetailsJson = JsonConvert.SerializeObject(audit, Formatting.None)
+            });
+
+            if (result.IsSuccess && request != null)
+            {
+                _ = PersistLifecycleAuditAsync(new TradeLifecycleAuditRecord
+                {
+                    CreatedAtUtc = result.ExecutedAt == default ? DateTime.UtcNow : result.ExecutedAt,
+                    EventType = "OPEN_ACCEPTED",
+                    RequestId = request.Id,
+                    Ticket = result.Ticket,
+                    PositionId = result.Ticket,
+                    Pair = request.Pair,
+                    Direction = request.TradeType.ToString(),
+                    Actor = "MT5",
+                    Reason = "Broker accepted order after desktop execution gate.",
+                    Price = result.ExecutedPrice,
+                    DetailsJson = JsonConvert.SerializeObject(new
+                    {
+                        request.OrderType,
+                        request.LotSize,
+                        request.StopLoss,
+                        request.TakeProfit,
+                        request.Comment,
+                        result.ExecutedLots,
+                        result.EstimatedSlippagePips,
+                        result.EstimatedCommission,
+                        result.BrokerRetcode,
+                        result.BrokerComment
+                    }, Formatting.None)
+                });
+            }
+        }
+
+        private async Task PersistLifecycleAuditAsync(TradeLifecycleAuditRecord record)
+        {
+            if (_tradeDb == null) return;
+            await _tradeDb.InsertLifecycleAuditAsync(record).ConfigureAwait(false);
+            IndexLifecycleAudits([record]);
+        }
+
+        private void IndexLifecycleAudits(IReadOnlyList<TradeLifecycleAuditRecord> records)
+        {
+            foreach (var group in records
+                         .SelectMany(r => LifecycleAuditKeys(r).Select(key => new { key, record = r }))
+                         .GroupBy(x => x.key))
+            {
+                var existing = _tradeLifecycleAuditsByTicket.TryGetValue(group.Key, out var current)
+                    ? current
+                    : [];
+                _tradeLifecycleAuditsByTicket[group.Key] = existing
+                    .Concat(group.Select(x => x.record))
+                    .GroupBy(r => $"{r.EventType}|{r.CreatedAtUtc:O}|{r.Reason}", StringComparer.OrdinalIgnoreCase)
+                    .Select(g => g.First())
+                    .OrderBy(r => r.CreatedAtUtc)
+                    .ToList();
+            }
+        }
+
+        private static IEnumerable<long> LifecycleAuditKeys(TradeLifecycleAuditRecord record)
+        {
+            foreach (long key in new[] { record.Ticket, record.PositionId, record.OrderTicket, record.DealTicket })
+                if (key > 0) yield return key;
+        }
+
+        private IReadOnlyList<TradeRuleAuditSnapshot> FindRuleAuditForRequest(string requestId, TradeResult result)
+        {
+            if (!string.IsNullOrWhiteSpace(requestId) && _tradeRuleAuditsByRequestId.TryGetValue(requestId, out var byRequest))
+                return byRequest;
+            if (!string.IsNullOrWhiteSpace(result.RequestId) && _tradeRuleAuditsByRequestId.TryGetValue(result.RequestId, out byRequest))
+                return byRequest;
+            if (result.Ticket > 0 && _tradeRuleAuditsByTicket.TryGetValue(result.Ticket, out var byTicket))
+                return byTicket;
+            return [];
+        }
+
+        private IReadOnlyList<TradeLifecycleAuditRecord> FindLifecycleAuditForTrade(Mt5TradeHistoryItem trade)
+        {
+            return new[] { trade.PositionId, trade.EntryOrderTicket, trade.ExitOrderTicket, trade.EntryDealTicket, trade.ExitDealTicket, trade.DealTicket }
+                .Where(v => v > 0)
+                .SelectMany(key => _tradeLifecycleAuditsByTicket.TryGetValue(key, out var audits) ? audits : [])
+                .GroupBy(r => $"{r.EventType}|{r.CreatedAtUtc:O}|{r.Reason}", StringComparer.OrdinalIgnoreCase)
+                .Select(g => g.First())
+                .OrderBy(r => r.CreatedAtUtc)
+                .ToList();
+        }
+
+        private IReadOnlyList<TradeRuleAuditSnapshot> FindRuleAuditForTrade(Mt5TradeHistoryItem trade)
+        {
+            foreach (long key in new[] { trade.PositionId, trade.OrderTicket, trade.DealTicket }.Where(v => v > 0))
+            {
+                if (_tradeRuleAuditsByTicket.TryGetValue(key, out var audit))
+                    return audit;
+            }
+
+            foreach (var record in FindLifecycleAuditForTrade(trade)
+                         .Where(r => r.EventType.StartsWith("EXEC_RULES", StringComparison.OrdinalIgnoreCase)))
+            {
+                var audit = TryReadRuleAudit(record.DetailsJson);
+                if (audit.Count > 0)
+                    return audit;
+            }
+
+            return [];
+        }
+
+        private static IReadOnlyList<TradeRuleAuditSnapshot> TryReadRuleAudit(string json)
+        {
+            if (string.IsNullOrWhiteSpace(json)) return [];
+            try
+            {
+                return JsonConvert.DeserializeObject<List<TradeRuleAuditSnapshot>>(json) ?? [];
+            }
+            catch
+            {
+                return [];
+            }
+        }
+
+        private async Task RefreshHistoryFromMt5Async()
+        {
+            if (_bridge?.IsConnected != true)
+            {
+                Log("[HISTORY] MT5 is not connected. Connect first, then refresh history.", C_YELLOW);
+                return;
+            }
+
+            DateTime toUtc = DateTime.UtcNow;
+            DateTime fromUtc = toUtc.AddDays(-7);
+            var result = await _bridge.TryGetTradeHistoryAsync(fromUtc, toUtc, 200).ConfigureAwait(false);
+            if (!result.Success)
+            {
+                Log($"[HISTORY] MT5 history refresh failed: {result.Error}", C_RED);
+                return;
+            }
+
+            if (_tradeDb != null)
+            {
+                var lifecycle = await _tradeDb.GetLifecycleAuditsByDateRangeAsync(fromUtc.AddDays(-1), toUtc.AddDays(1)).ConfigureAwait(false);
+                IndexLifecycleAudits(lifecycle);
+            }
+
+            UIThread(() =>
+            {
+                _gridHistory.Rows.Clear();
+                foreach (var trade in BuildTradeHistoryRows(result.Trades))
+                {
+                    bool isClosed = IsClosedTradeHistoryRow(trade);
+                    string status = isClosed
+                            ? $"CLOSED P/L {trade.Profit:F2}"
+                            : "OPENED";
+
+                    int rowIndex = _gridHistory.Rows.Add(
+                        trade.TimeUtc.ToLocalTime().ToString("MM-dd HH:mm"),
+                        trade.DealTicket,
+                        trade.Symbol,
+                        trade.Direction,
+                        $"{trade.Lots:F2}",
+                        $"{(trade.EntryPrice > 0 ? trade.EntryPrice : trade.Price):F5}",
+                        trade.StopLoss > 0 ? $"{trade.StopLoss:F5}" : "",
+                        trade.TakeProfit > 0 ? $"{trade.TakeProfit:F5}" : "",
+                        trade.ExitOrderTicket > 0 ? trade.ExitOrderTicket : trade.EntryOrderTicket > 0 ? trade.EntryOrderTicket : trade.OrderTicket,
+                        status,
+                        trade.ExitPrice > 0 ? $"{trade.ExitPrice:F5}" : $"{trade.Price:F5}",
+                        trade.Comment);
+                    var row = _gridHistory.Rows[rowIndex];
+                    row.Tag = new TradeHistoryDetail(
+                        trade,
+                        FindRuleAuditForTrade(trade),
+                        FindLifecycleAuditForTrade(trade));
+                    if (isClosed)
+                        row.DefaultCellStyle.ForeColor = trade.Profit >= 0 ? C_GREEN : C_RED;
+                }
+            });
+
+            Log($"[HISTORY] Loaded {result.Trades.Count} MT5 history rows from the last 7 days.", C_GREEN);
+        }
+
+        private static IReadOnlyList<Mt5TradeHistoryItem> BuildTradeHistoryRows(IReadOnlyList<Mt5TradeHistoryItem> deals)
+        {
+            return deals
+                .GroupBy(d => d.PositionId > 0 ? d.PositionId : d.DealTicket)
+                .Select(BuildTradeHistoryRow)
+                .OrderByDescending(t => t.ExitTimeUtc ?? t.EntryTimeUtc ?? t.TimeUtc)
+                .ToList();
+        }
+
+        private static Mt5TradeHistoryItem BuildTradeHistoryRow(IGrouping<long, Mt5TradeHistoryItem> group)
+        {
+            var ordered = group
+                .OrderBy(d => d.TimeUtc)
+                .ThenBy(d => d.DealTicket)
+                .ToList();
+
+            var entry = ordered.FirstOrDefault(IsEntryDeal) ?? ordered.First();
+            var exit = ordered.LastOrDefault(IsExitDeal);
+            var detailSource = exit ?? entry;
+            double totalProfit = ordered
+                .Where(IsExitDeal)
+                .Sum(d => d.Profit);
+            if (exit == null)
+                totalProfit = ordered.Sum(d => d.Profit);
+            string direction = FirstNonBlank(entry.Direction, detailSource.Direction);
+            double entryPrice = entry.EntryPrice > 0 ? entry.EntryPrice : entry.Price;
+            double exitPrice = exit == null ? 0 : exit.ExitPrice > 0 ? exit.ExitPrice : exit.Price;
+            double closePips = exit?.ClosePips ?? 0;
+            double maxProfitPips = exit?.MaxProfitPips ?? 0;
+            double maxLossPips = exit?.MaxLossPips ?? 0;
+            double highestPrice = exit?.HighestPrice > 0 ? exit.HighestPrice : entry.HighestPrice;
+            double lowestPrice = exit?.LowestPrice > 0 ? exit.LowestPrice : entry.LowestPrice;
+            ApplyTradePriceFallbacks(direction, entryPrice, exitPrice, ref closePips, ref maxProfitPips, ref maxLossPips, ref highestPrice, ref lowestPrice);
+
+            return new Mt5TradeHistoryItem
+            {
+                DealTicket = detailSource.DealTicket,
+                EntryDealTicket = entry.DealTicket,
+                ExitDealTicket = exit?.DealTicket ?? 0,
+                OrderTicket = detailSource.OrderTicket,
+                EntryOrderTicket = entry.OrderTicket,
+                ExitOrderTicket = exit?.OrderTicket ?? 0,
+                PositionId = group.Key,
+                TimeUtc = detailSource.TimeUtc,
+                EntryTimeUtc = entry.EntryTimeUtc ?? entry.TimeUtc,
+                ExitTimeUtc = exit?.ExitTimeUtc ?? exit?.TimeUtc,
+                Symbol = FirstNonBlank(entry.Symbol, detailSource.Symbol),
+                Direction = direction,
+                EntryType = exit != null ? "TRADE_CLOSED" : "TRADE_OPEN",
+                Lots = entry.Lots > 0 ? entry.Lots : detailSource.Lots,
+                Price = detailSource.Price,
+                EntryPrice = entryPrice,
+                ExitPrice = exitPrice,
+                Profit = totalProfit,
+                ClosePips = closePips,
+                MaxProfitPips = maxProfitPips,
+                MaxLossPips = maxLossPips,
+                HighestPrice = highestPrice,
+                LowestPrice = lowestPrice,
+                DurationMinutes = exit?.DurationMinutes ?? 0,
+                StopLoss = entry.StopLoss > 0 ? entry.StopLoss : detailSource.StopLoss,
+                TakeProfit = entry.TakeProfit > 0 ? entry.TakeProfit : detailSource.TakeProfit,
+                MagicNumber = entry.MagicNumber != 0 ? entry.MagicNumber : detailSource.MagicNumber,
+                Comment = FirstNonBlank(entry.Comment, detailSource.Comment),
+                CloseReason = exit?.CloseReason ?? ""
+            };
+        }
+
+        private static void ApplyTradePriceFallbacks(
+            string direction,
+            double entryPrice,
+            double exitPrice,
+            ref double closePips,
+            ref double maxProfitPips,
+            ref double maxLossPips,
+            ref double highestPrice,
+            ref double lowestPrice)
+        {
+            if (entryPrice <= 0 || exitPrice <= 0)
+                return;
+
+            if (highestPrice <= 0) highestPrice = Math.Max(entryPrice, exitPrice);
+            if (lowestPrice <= 0) lowestPrice = Math.Min(entryPrice, exitPrice);
+
+            double pipSize = InferDisplayPipSize(entryPrice, exitPrice);
+            if (Math.Abs(closePips) < 0.000001)
+            {
+                closePips = string.Equals(direction, "SELL", StringComparison.OrdinalIgnoreCase)
+                    ? (entryPrice - exitPrice) / pipSize
+                    : (exitPrice - entryPrice) / pipSize;
+            }
+
+            if (maxProfitPips <= 0 && maxLossPips <= 0)
+            {
+                if (string.Equals(direction, "SELL", StringComparison.OrdinalIgnoreCase))
+                {
+                    maxProfitPips = Math.Max(0, (entryPrice - lowestPrice) / pipSize);
+                    maxLossPips = Math.Max(0, (highestPrice - entryPrice) / pipSize);
+                }
+                else
+                {
+                    maxProfitPips = Math.Max(0, (highestPrice - entryPrice) / pipSize);
+                    maxLossPips = Math.Max(0, (entryPrice - lowestPrice) / pipSize);
+                }
+            }
+        }
+
+        private static double InferDisplayPipSize(double entryPrice, double exitPrice)
+        {
+            double scale = Math.Max(Math.Abs(entryPrice), Math.Abs(exitPrice));
+            return scale >= 100 ? 0.01 : 0.0001;
+        }
+
+        private static bool IsEntryDeal(Mt5TradeHistoryItem deal) =>
+            string.Equals(deal.EntryType, "IN", StringComparison.OrdinalIgnoreCase);
+
+        private static bool IsExitDeal(Mt5TradeHistoryItem deal) =>
+            string.Equals(deal.EntryType, "OUT", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(deal.EntryType, "INOUT", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(deal.EntryType, "OUT_BY", StringComparison.OrdinalIgnoreCase);
+
+        private static bool IsClosedTradeHistoryRow(Mt5TradeHistoryItem trade) =>
+            trade.ExitDealTicket > 0 ||
+            trade.ExitTimeUtc.HasValue ||
+            trade.ExitPrice > 0 ||
+            IsExitDeal(trade);
+
+        private static string FirstNonBlank(params string[] values) =>
+            values.FirstOrDefault(v => !string.IsNullOrWhiteSpace(v)) ?? "";
 
         private void LoadHistoryFromCsv()
         {
@@ -1840,6 +2267,182 @@ SAFETY RULES:
                     _gridHistory.Rows.Add(p[0], p[1], p[2], p[3], p[4], p[5], p[6], p[7], p[8], p[9], p[10], p[11]);
             }
         }
+
+        private void GridHistory_CellDoubleClick(object? sender, DataGridViewCellEventArgs e)
+        {
+            if (e.RowIndex < 0 || e.RowIndex >= _gridHistory.Rows.Count) return;
+            if (_gridHistory.Rows[e.RowIndex].Tag is not TradeHistoryDetail detail)
+            {
+                AppMessageBox.Info(this, "This row does not have MT5 detail data. Click Refresh MT5, then double-click the row again.");
+                return;
+            }
+
+            AppLogDetailBox.Show(this, BuildTradeHistoryPostmortem(detail.Trade, detail.RuleAudit, detail.LifecycleAudit));
+        }
+
+        private AppLogDetail BuildTradeHistoryPostmortem(
+            Mt5TradeHistoryItem trade,
+            IReadOnlyList<TradeRuleAuditSnapshot> ruleAudit,
+            IReadOnlyList<TradeLifecycleAuditRecord> lifecycleAudit)
+        {
+            bool isClosed = IsClosedTradeHistoryRow(trade);
+            bool isProfit = trade.Profit >= 0;
+            string result = isClosed
+                ? isProfit ? "PROFIT" : "LOSS"
+                : "OPENED";
+
+            string original = BuildTradeSummaryText(trade, result);
+            string meaning = isClosed
+                ? $"This MT5 history row is a closed {trade.Direction} trade on {trade.Symbol}. It closed with {FormatMoney(trade.Profit)} and {trade.ClosePips:F1} pips."
+                : $"This MT5 history row is an opening deal for {trade.Direction} {trade.Symbol}. Close/max runup values are available after MT5 records the closing deal.";
+
+            string values = BuildTradeValuesText(trade, ruleAudit, lifecycleAudit);
+            string formula = BuildTradeFormulaText(trade);
+            string outcome = isClosed
+                ? $"Status: {result}. Close reason: {BlankIfMissing(trade.CloseReason)}. The row is shown {(isProfit ? "green" : "red")} in the history grid."
+                : "Status: opened. No final profit/loss is available on this row yet.";
+            string expectedPl = BuildTradeExpectedPlText(trade);
+            string next = isClosed
+                ? "Postmortem: compare max profit pips, max adverse pips, SL/TP placement, close reason, and duration. If max profit was strong but final P/L was weak, review exit management and trailing/breakeven behavior."
+                : "Wait for the close row, then double-click that row for a complete profit/loss postmortem.";
+
+            return new AppLogDetail(
+                original,
+                meaning,
+                values,
+                formula,
+                outcome,
+                expectedPl,
+                next,
+                "Trade Postmortem",
+                "Copyable MT5 deal evidence: entry, exit, max favorable/adverse move, SL/TP, result, and close reason.",
+                "MT5 BOT TRADE POSTMORTEM",
+                "Trade time");
+        }
+
+        private static string BuildTradeSummaryText(Mt5TradeHistoryItem trade, string result)
+        {
+            var sb = new StringBuilder();
+            sb.AppendLine($"[{FormatLocalTime(trade.ExitTimeUtc ?? trade.EntryTimeUtc ?? trade.TimeUtc)}] {result}: {trade.Direction} {trade.Symbol} lot {trade.Lots:F2}");
+            sb.AppendLine($"Position: {trade.PositionId}");
+            sb.AppendLine($"Entry deal/order: {trade.EntryDealTicket}/{trade.EntryOrderTicket}");
+            if (trade.ExitDealTicket > 0 || trade.ExitOrderTicket > 0)
+                sb.AppendLine($"Exit deal/order: {trade.ExitDealTicket}/{trade.ExitOrderTicket}");
+            sb.AppendLine($"Entry: {FormatLocalTime(trade.EntryTimeUtc ?? trade.TimeUtc)} @ {FormatPrice(trade.EntryPrice > 0 ? trade.EntryPrice : trade.Price)}");
+            if (IsClosedTradeHistoryRow(trade))
+                sb.AppendLine($"Exit: {FormatLocalTime(trade.ExitTimeUtc ?? trade.TimeUtc)} @ {FormatPrice(trade.ExitPrice > 0 ? trade.ExitPrice : trade.Price)}");
+            sb.AppendLine($"P/L: {FormatMoney(trade.Profit)} | Close pips: {trade.ClosePips:F1}");
+            return sb.ToString();
+        }
+
+        private static string BuildTradeValuesText(
+            Mt5TradeHistoryItem trade,
+            IReadOnlyList<TradeRuleAuditSnapshot> ruleAudit,
+            IReadOnlyList<TradeLifecycleAuditRecord> lifecycleAudit)
+        {
+            var sb = new StringBuilder();
+            sb.AppendLine($"Symbol: {trade.Symbol}");
+            sb.AppendLine($"Direction: {trade.Direction}");
+            sb.AppendLine($"Status type: {trade.EntryType}");
+            sb.AppendLine($"Position id: {trade.PositionId}");
+            sb.AppendLine($"Entry deal/order: {trade.EntryDealTicket}/{trade.EntryOrderTicket}");
+            sb.AppendLine($"Exit deal/order: {(trade.ExitDealTicket > 0 ? trade.ExitDealTicket.ToString(CultureInfo.InvariantCulture) : "not closed")}/{(trade.ExitOrderTicket > 0 ? trade.ExitOrderTicket.ToString(CultureInfo.InvariantCulture) : "not closed")}");
+            sb.AppendLine($"Lot size: {trade.Lots:F2}");
+            sb.AppendLine($"Entry price: {FormatPrice(trade.EntryPrice > 0 ? trade.EntryPrice : trade.Price)}");
+            sb.AppendLine($"Exit price: {(trade.ExitPrice > 0 ? FormatPrice(trade.ExitPrice) : "not closed")}");
+            sb.AppendLine($"Stop loss: {(trade.StopLoss > 0 ? FormatPrice(trade.StopLoss) : "not available")}");
+            sb.AppendLine($"Take profit: {(trade.TakeProfit > 0 ? FormatPrice(trade.TakeProfit) : "not available")}");
+            sb.AppendLine($"Highest price during trade: {(trade.HighestPrice > 0 ? FormatPrice(trade.HighestPrice) : "not available")}");
+            sb.AppendLine($"Lowest price during trade: {(trade.LowestPrice > 0 ? FormatPrice(trade.LowestPrice) : "not available")}");
+            sb.AppendLine($"Max favorable move: {trade.MaxProfitPips:F1} pips");
+            sb.AppendLine($"Max adverse move: {trade.MaxLossPips:F1} pips");
+            sb.AppendLine($"Final move: {trade.ClosePips:F1} pips");
+            sb.AppendLine($"Duration: {trade.DurationMinutes} minutes");
+            sb.AppendLine($"Close reason: {BlankIfMissing(trade.CloseReason)}");
+            sb.AppendLine($"Magic number: {trade.MagicNumber}");
+            sb.AppendLine($"Comment: {BlankIfMissing(trade.Comment)}");
+            sb.AppendLine();
+            sb.AppendLine(BuildRuleAuditText(ruleAudit));
+            sb.AppendLine();
+            sb.AppendLine(BuildLifecycleAuditText(lifecycleAudit));
+            return sb.ToString();
+        }
+
+        private static string BuildLifecycleAuditText(IReadOnlyList<TradeLifecycleAuditRecord> lifecycleAudit)
+        {
+            if (lifecycleAudit.Count == 0)
+                return "TRADE LIFECYCLE AUDIT\nNo persisted lifecycle events were found for this position/ticket yet.";
+
+            var sb = new StringBuilder();
+            sb.AppendLine("TRADE LIFECYCLE AUDIT");
+            foreach (var record in lifecycleAudit.OrderBy(r => r.CreatedAtUtc))
+            {
+                sb.AppendLine($"{FormatLocalTime(record.CreatedAtUtc)} | {record.EventType} | {record.Actor} | {record.Reason}");
+                if (record.Price > 0 || Math.Abs(record.SpreadPips) > 0.000001 || Math.Abs(record.ProfitUsd) > 0.000001)
+                    sb.AppendLine($"  price={FormatPrice(record.Price)} spread={record.SpreadPips:0.0} pips pnl={FormatMoney(record.ProfitUsd)}");
+            }
+
+            return sb.ToString();
+        }
+
+        private static string BuildRuleAuditText(IReadOnlyList<TradeRuleAuditSnapshot> ruleAudit)
+        {
+            if (ruleAudit.Count == 0)
+                return "RULES PASSED AT EXECUTION\nNot available for this row. This usually means the trade was placed directly in MT5, the app was restarted after execution, or this history deal could not be matched to the app execution ticket.";
+
+            var passed = ruleAudit
+                .Where(r => string.Equals(r.Result, TradeRuleResults.Pass, StringComparison.OrdinalIgnoreCase))
+                .OrderBy(r => r.Order)
+                .ToList();
+            var blocked = ruleAudit
+                .Where(r => string.Equals(r.Result, TradeRuleResults.Block, StringComparison.OrdinalIgnoreCase))
+                .OrderBy(r => r.Order)
+                .ToList();
+
+            var sb = new StringBuilder();
+            sb.AppendLine("RULES PASSED AT EXECUTION");
+            sb.AppendLine($"Passed: {passed.Count}/{ruleAudit.Count}");
+            foreach (var rule in passed)
+                sb.AppendLine($"PASS {rule.RuleCode} {rule.RuleName} - {rule.Reason}");
+
+            if (blocked.Count > 0)
+            {
+                sb.AppendLine();
+                sb.AppendLine("RULES BLOCKED/WARNED AT EXECUTION");
+                foreach (var rule in blocked)
+                    sb.AppendLine($"{rule.Result} {rule.RuleCode} {rule.RuleName} - {rule.Reason}");
+            }
+
+            return sb.ToString();
+        }
+
+        private static string BuildTradeFormulaText(Mt5TradeHistoryItem trade)
+        {
+            string closeFormula = string.Equals(trade.Direction, "BUY", StringComparison.OrdinalIgnoreCase)
+                ? "BUY close pips = (exit price - entry price) / pip size."
+                : "SELL close pips = (entry price - exit price) / pip size.";
+            string mfeFormula = string.Equals(trade.Direction, "BUY", StringComparison.OrdinalIgnoreCase)
+                ? "BUY max favorable = highest price during trade - entry. Max adverse = entry - lowest price."
+                : "SELL max favorable = entry - lowest price during trade. Max adverse = highest price - entry.";
+
+            return $"{closeFormula}{Environment.NewLine}{mfeFormula}{Environment.NewLine}Profit is broker deal profit + swap + commission reported by MT5.";
+        }
+
+        private static string BuildTradeExpectedPlText(Mt5TradeHistoryItem trade)
+        {
+            var sb = new StringBuilder();
+            sb.AppendLine($"Actual broker P/L: {FormatMoney(trade.Profit)}");
+            sb.AppendLine($"Actual pips: {trade.ClosePips:F1}");
+            sb.AppendLine($"Best available runup: +{trade.MaxProfitPips:F1} pips");
+            sb.AppendLine($"Worst adverse move: -{trade.MaxLossPips:F1} pips");
+            sb.AppendLine("Dollar SL/TP expectation is not reconstructed here unless MT5 provides the original pip-value snapshot; use max pips plus broker P/L for postmortem.");
+            return sb.ToString();
+        }
+
+        private static string FormatPrice(double value) => value > 0 ? value.ToString("F5", CultureInfo.InvariantCulture) : "not available";
+        private static string FormatMoney(double value) => value.ToString("$0.00;-$0.00;$0.00", CultureInfo.InvariantCulture);
+        private static string FormatLocalTime(DateTime value) => value.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss");
+        private static string BlankIfMissing(string value) => string.IsNullOrWhiteSpace(value) ? "not available" : value;
 
         private void ApplySettingsToUI()
         {
@@ -2657,6 +3260,10 @@ SAFETY RULES:
         {
             if (_tabControl.SelectedTab == _tabPerformance)
                 _ = RefreshPerformanceAsync();
+            else if (_tabControl.SelectedTab == _tabPositions)
+                _ = RefreshPositionsAsync();
+            else if (_tabControl.SelectedTab == _tabHistory)
+                _ = RefreshHistoryFromMt5Async();
         }
 
         private void CmbPair_SelectedIndexChanged(object? sender, EventArgs e)      => RecalcRR();
@@ -2688,7 +3295,7 @@ SAFETY RULES:
         private async void BtnCloseAllPos_Click(object? sender, EventArgs e) => await CloseAllAsync();
         private async void BtnRefreshPos_Click(object? sender, EventArgs e)  => await RefreshPositionsAsync();
 
-        private void BtnImportHistory_Click(object? sender, EventArgs e) => LoadHistoryFromCsv();
+        private async void BtnImportHistory_Click(object? sender, EventArgs e) => await RefreshHistoryFromMt5Async();
         private void BtnClearHistory_Click(object? sender, EventArgs e)  => _gridHistory.Rows.Clear();
 
         private async void BtnStartBot_Click(object? sender, EventArgs e) => await StartBotAsync();
@@ -3480,6 +4087,29 @@ SAFETY RULES:
                 {
                     Log($"[BOT] Auto close target reached on #{position.Ticket}: ${position.Profit:F2}, {position.ProfitPips:F1} pips.", C_GREEN);
                     bool ok = await _bridge.CloseTradeAsync(position.Ticket).ConfigureAwait(false);
+                    _ = PersistLifecycleAuditAsync(new TradeLifecycleAuditRecord
+                    {
+                        CreatedAtUtc = DateTime.UtcNow,
+                        EventType = ok ? "CLOSE_REQUESTED" : "CLOSE_FAILED",
+                        Ticket = position.Ticket,
+                        PositionId = position.Ticket,
+                        Pair = position.Symbol,
+                        Direction = position.Type.ToString(),
+                        Actor = "DesktopAutoClose",
+                        Reason = ok
+                            ? "Auto-close target reached."
+                            : "Auto-close target reached but close request failed.",
+                        Price = position.CurrentPrice,
+                        ProfitUsd = position.Profit,
+                        DetailsJson = JsonConvert.SerializeObject(new
+                        {
+                            position.ProfitPips,
+                            position.Profit,
+                            target.TargetPips,
+                            target.TargetMoney,
+                            trigger = target.TargetMoney > 0 ? "money" : target.TargetPips > 0 ? "pips" : "any_profit"
+                        }, Formatting.None)
+                    });
                     Log(ok
                             ? $"[OK] Auto closed #{position.Ticket} at profit ${position.Profit:F2}."
                             : $"[ERROR] Auto close failed for #{position.Ticket}.",
@@ -3579,9 +4209,23 @@ SAFETY RULES:
             string snapshot = reviewSnapshot.ToString(Formatting.Indented);
 
             if (InvokeRequired)
-                return (TradeReviewDecision)Invoke(() => ShowTradeReviewDialog(request, info, snapshot, symbol, account, positions))!;
+            {
+                var completion = new TaskCompletionSource<TradeReviewDecision>();
+                BeginInvoke(async () =>
+                {
+                    try
+                    {
+                        completion.SetResult(await ShowTradeReviewDialog(request, info, snapshot, symbol, account, positions));
+                    }
+                    catch (Exception ex)
+                    {
+                        completion.SetException(ex);
+                    }
+                });
+                return await completion.Task.ConfigureAwait(false);
+            }
 
-            return ShowTradeReviewDialog(request, info, snapshot, symbol, account, positions);
+            return await ShowTradeReviewDialog(request, info, snapshot, symbol, account, positions);
 
             async Task<T?> AwaitOrDefaultAsync<T>(Task<T> task, string label, int timeoutMs = 0)
             {
@@ -3599,7 +4243,7 @@ SAFETY RULES:
             }
         }
 
-        private TradeReviewDecision ShowTradeReviewDialog(
+        private async Task<TradeReviewDecision> ShowTradeReviewDialog(
             TradeRequest request,
             SignalCardInfo info,
             string snapshotJson,
@@ -3608,7 +4252,9 @@ SAFETY RULES:
             IReadOnlyCollection<LivePosition>? reviewPositions = null)
         {
             TradeRequest activeRequest = request;
-            using var form = new Form
+            var completion = new TaskCompletionSource<TradeReviewDecision>();
+            var decisionCompleted = false;
+            var form = new Form
             {
                 Text = $"Trade Window - {request.TradeType} {request.Pair}",
                 Size = new Size(1280, 900),
@@ -4005,6 +4651,86 @@ SAFETY RULES:
                 e.Graphics.DrawLine(accentPen, 0, 0, panel.Width - 1, 0);
             }
 
+            const int StrategyRowWidth = 408;
+            const int StrategyLabelWidth = 84;
+            const int StrategyInputWidth = 104;
+            const int StrategyFieldWidth = 198;
+
+            Label MakeCompactLabel(string text, int width = StrategyLabelWidth) => new()
+            {
+                Text = text,
+                AutoSize = false,
+                Size = new Size(width, 28),
+                ForeColor = Color.FromArgb(190, 195, 210),
+                TextAlign = ContentAlignment.MiddleLeft,
+                Margin = new Padding(0, 2, 6, 0)
+            };
+
+            FlowLayoutPanel MakeSettingField(
+                string label,
+                Control control,
+                int labelWidth = StrategyLabelWidth,
+                int fieldWidth = StrategyFieldWidth,
+                int inputWidth = StrategyInputWidth)
+            {
+                control.Width = inputWidth;
+                control.Margin = new Padding(0, 2, 0, 0);
+                var field = new FlowLayoutPanel
+                {
+                    AutoSize = false,
+                    Size = new Size(fieldWidth, 32),
+                    FlowDirection = FlowDirection.LeftToRight,
+                    WrapContents = false,
+                    Margin = new Padding(0, 0, 8, 2),
+                    BackColor = Color.Transparent
+                };
+                field.Controls.Add(MakeCompactLabel(label, labelWidth));
+                field.Controls.Add(control);
+                return field;
+            }
+
+            FlowLayoutPanel MakeSettingRow(params Control[] controls)
+            {
+                var row = new FlowLayoutPanel
+                {
+                    AutoSize = false,
+                    Size = new Size(StrategyRowWidth, 36),
+                    FlowDirection = FlowDirection.LeftToRight,
+                    WrapContents = false,
+                    Margin = new Padding(0, 0, 0, 3),
+                    BackColor = Color.Transparent
+                };
+                row.Controls.AddRange(controls);
+                return row;
+            }
+
+            FlowLayoutPanel MakeSettingGroup(params Control[] rows)
+            {
+                var group = new FlowLayoutPanel
+                {
+                    AutoSize = false,
+                    Size = new Size(StrategyRowWidth, rows.Length * 36 + 2),
+                    FlowDirection = FlowDirection.TopDown,
+                    WrapContents = false,
+                    Margin = new Padding(0, 2, 0, 5),
+                    Padding = new Padding(0),
+                    BackColor = Color.FromArgb(22, 24, 34)
+                };
+                group.Controls.AddRange(rows);
+                return group;
+            }
+
+            Label MakeStrategyTitle(string text, Color color) => new()
+            {
+                Text = text,
+                AutoSize = false,
+                Size = new Size(StrategyFieldWidth, 30),
+                ForeColor = color,
+                Font = new Font("Segoe UI Semibold", 9F, FontStyle.Bold),
+                TextAlign = ContentAlignment.MiddleLeft,
+                Margin = new Padding(0, 0, 8, 3)
+            };
+
             // â"€â"€ Row 2a: Lot size + Leverage â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
             lotPanel = new FlowLayoutPanel
             {
@@ -4160,8 +4886,8 @@ SAFETY RULES:
 
             scalpPanel = new FlowLayoutPanel
             {
-                Dock = DockStyle.Fill, FlowDirection = FlowDirection.LeftToRight,
-                WrapContents = true, Padding = new Padding(10),
+                Dock = DockStyle.Fill, FlowDirection = FlowDirection.TopDown,
+                WrapContents = false, Padding = new Padding(10),
                 BackColor = Color.FromArgb(24, 20, 12),
                 Margin = new Padding(4)
             };
@@ -4224,12 +4950,12 @@ SAFETY RULES:
             btnStartScalping.ForeColor = Color.FromArgb(255, 220, 140);
             var lblScalpActualRr = new Label
             {
-                Text = "Actual R:R -",
+                Text = "-",
                 ForeColor = Color.FromArgb(170, 220, 170),
                 AutoSize = false,
-                Size = new Size(112, 28),
+                Size = new Size(StrategyInputWidth, 28),
                 TextAlign = ContentAlignment.MiddleLeft,
-                Margin = new Padding(4, 4, 8, 0)
+                Margin = new Padding(0, 2, 0, 0)
             };
             var lblScalpingStatus = new Label
             {
@@ -4296,36 +5022,35 @@ SAFETY RULES:
                     C_ACCENT);
             }
 
-            scalpPanel.Controls.Add(MakeInlineLabel("Scalping Strategy"));
-            scalpPanel.Controls.Add(chkAutoScalp);
-            scalpPanel.Controls.Add(MakeInlineLabel("Mode"));
-            scalpPanel.Controls.Add(cmbScalpMode);
-            scalpPanel.Controls.Add(MakeInlineLabel("Max trades"));
-            scalpPanel.Controls.Add(nudScalpTrades);
-            scalpPanel.Controls.Add(MakeInlineLabel("Trade Duration Minutes"));
-            scalpPanel.Controls.Add(nudScalpMinutes);
-            scalpPanel.Controls.Add(MakeInlineLabel("SL pips"));
-            scalpPanel.Controls.Add(nudScalpSl);
-            scalpPanel.Controls.Add(MakeInlineLabel("SL $"));
-            scalpPanel.Controls.Add(nudScalpSlMoney);
-            scalpPanel.Controls.Add(MakeInlineLabel("TP pips"));
-            scalpPanel.Controls.Add(nudScalpTp);
-            scalpPanel.Controls.Add(MakeInlineLabel("TP $"));
-            scalpPanel.Controls.Add(nudScalpTpMoney);
-            scalpPanel.Controls.Add(MakeInlineLabel("Min R:R"));
-            scalpPanel.Controls.Add(nudScalpRr);
-            scalpPanel.Controls.Add(lblScalpActualRr);
-            scalpPanel.Controls.Add(MakeInlineLabel("Max spread pips"));
-            scalpPanel.Controls.Add(nudScalpSpread);
-            scalpPanel.Controls.Add(btnScalpReset);
-            scalpPanel.Controls.Add(btnStartScalping);
-            scalpPanel.Controls.Add(lblScalpingStatus);
+            chkAutoScalp.Margin = new Padding(0, 1, 8, 3);
+            btnScalpReset.Margin = new Padding(0, 2, 8, 0);
+            btnStartScalping.Margin = new Padding(0, 0, 10, 0);
+            lblScalpingStatus.Margin = new Padding(0, 3, 0, 0);
+            scalpPanel.Controls.Add(MakeSettingRow(MakeStrategyTitle("Scalping Strategy", Color.Gold), chkAutoScalp));
+            scalpPanel.Controls.Add(MakeSettingRow(
+                MakeSettingField("Mode", cmbScalpMode),
+                MakeSettingField("Max trades", nudScalpTrades)));
+            scalpPanel.Controls.Add(MakeSettingRow(
+                MakeSettingField("Duration", nudScalpMinutes)));
+            scalpPanel.Controls.Add(MakeSettingRow(
+                MakeSettingField("TP pips", nudScalpTp),
+                MakeSettingField("TP $", nudScalpTpMoney)));
+            scalpPanel.Controls.Add(MakeSettingRow(
+                MakeSettingField("SL pips", nudScalpSl),
+                MakeSettingField("SL $", nudScalpSlMoney)));
+            scalpPanel.Controls.Add(MakeSettingGroup(
+                MakeSettingRow(
+                    MakeSettingField("Spread", nudScalpSpread),
+                    MakeSettingField("Min R:R", nudScalpRr)),
+                MakeSettingRow(MakeSettingField("Actual R:R", lblScalpActualRr))));
+            scalpPanel.Controls.Add(MakeSettingRow(lblScalpingStatus));
+            scalpPanel.Controls.Add(MakeSettingRow(btnStartScalping, btnScalpReset));
 
             normalPanel = new FlowLayoutPanel
             {
                 Dock = DockStyle.Fill,
-                FlowDirection = FlowDirection.LeftToRight,
-                WrapContents = true,
+                FlowDirection = FlowDirection.TopDown,
+                WrapContents = false,
                 Padding = new Padding(10),
                 BackColor = Color.FromArgb(13, 17, 26),
                 Margin = new Padding(4)
@@ -4353,12 +5078,12 @@ SAFETY RULES:
             var nudNormalRr = MakeReviewNumber(0.1M, 20, 0.1M, 1, 58);
             var lblNormalActualRr = new Label
             {
-                Text = "Actual R:R -",
+                Text = "-",
                 ForeColor = Color.FromArgb(170, 220, 170),
                 AutoSize = false,
-                Size = new Size(112, 28),
+                Size = new Size(StrategyInputWidth, 28),
                 TextAlign = ContentAlignment.MiddleLeft,
-                Margin = new Padding(4, 4, 8, 0)
+                Margin = new Padding(0, 2, 0, 0)
             };
             var btnStartNormal = MakeDialogButton(_normalTradeManager.IsRunning ? "Stop Normal Trading" : "Start Normal Trading", Color.FromArgb(24, 82, 150));
             btnStartNormal.ForeColor = Color.FromArgb(170, 215, 255);
@@ -4384,27 +5109,26 @@ SAFETY RULES:
             }
 
             ApplyNormalTradingSettingsToControls(GetSavedNormalTradingSettingsForPair(request.Pair) ?? CloneNormalTradingSettings(_cfg.Bot.NormalTrading));
-            normalPanel.Controls.Add(MakeInlineLabel("Normal Trading Strategy"));
-            normalPanel.Controls.Add(chkNormalTrading);
-            normalPanel.Controls.Add(MakeInlineLabel("Max trades"));
-            normalPanel.Controls.Add(nudNormalTrades);
-            normalPanel.Controls.Add(MakeInlineLabel("Trade Expiry Minutes"));
-            normalPanel.Controls.Add(nudNormalExpiry);
-            normalPanel.Controls.Add(MakeInlineLabel("SL pips"));
-            normalPanel.Controls.Add(nudNormalSl);
-            normalPanel.Controls.Add(MakeInlineLabel("SL $"));
-            normalPanel.Controls.Add(nudNormalSlMoney);
-            normalPanel.Controls.Add(MakeInlineLabel("TP pips"));
-            normalPanel.Controls.Add(nudNormalTp);
-            normalPanel.Controls.Add(MakeInlineLabel("TP $"));
-            normalPanel.Controls.Add(nudNormalTpMoney);
-            normalPanel.Controls.Add(MakeInlineLabel("Max spread pips"));
-            normalPanel.Controls.Add(nudNormalSpread);
-            normalPanel.Controls.Add(MakeInlineLabel("Min R:R"));
-            normalPanel.Controls.Add(nudNormalRr);
-            normalPanel.Controls.Add(lblNormalActualRr);
-            normalPanel.Controls.Add(btnStartNormal);
-            normalPanel.Controls.Add(lblNormalStatus);
+            chkNormalTrading.Margin = new Padding(0, 1, 8, 3);
+            btnStartNormal.Margin = new Padding(0, 0, 10, 0);
+            lblNormalStatus.Margin = new Padding(0, 3, 0, 0);
+            normalPanel.Controls.Add(MakeSettingRow(MakeStrategyTitle("Normal Trading Strategy", Color.FromArgb(135, 190, 255)), chkNormalTrading));
+            normalPanel.Controls.Add(MakeSettingRow(
+                MakeSettingField("Max trades", nudNormalTrades),
+                MakeSettingField("Expiry", nudNormalExpiry)));
+            normalPanel.Controls.Add(MakeSettingRow(
+                MakeSettingField("TP pips", nudNormalTp),
+                MakeSettingField("TP $", nudNormalTpMoney)));
+            normalPanel.Controls.Add(MakeSettingRow(
+                MakeSettingField("SL pips", nudNormalSl),
+                MakeSettingField("SL $", nudNormalSlMoney)));
+            normalPanel.Controls.Add(MakeSettingGroup(
+                MakeSettingRow(
+                    MakeSettingField("Spread", nudNormalSpread),
+                    MakeSettingField("Min R:R", nudNormalRr)),
+                MakeSettingRow(MakeSettingField("Actual R:R", lblNormalActualRr))));
+            normalPanel.Controls.Add(MakeSettingRow(btnStartNormal));
+            normalPanel.Controls.Add(MakeSettingRow(lblNormalStatus));
             contentStack.Controls.Add(dataExpander);
 
             bool syncing = false;
@@ -4450,7 +5174,7 @@ SAFETY RULES:
             void UpdateScalpActualRrLabel()
             {
                 decimal actual = nudScalpSl.Value > 0 ? nudScalpTp.Value / nudScalpSl.Value : 0;
-                lblScalpActualRr.Text = $"Actual R:R {actual:0.00}";
+                lblScalpActualRr.Text = $"{actual:0.00}";
                 lblScalpActualRr.ForeColor = actual >= nudScalpRr.Value * 1.15M
                     ? Color.FromArgb(144, 238, 170)
                     : actual >= nudScalpRr.Value
@@ -4461,7 +5185,7 @@ SAFETY RULES:
             void UpdateNormalActualRrLabel()
             {
                 decimal actual = nudNormalSl.Value > 0 ? nudNormalTp.Value / nudNormalSl.Value : 0;
-                lblNormalActualRr.Text = $"Actual R:R {actual:0.00}";
+                lblNormalActualRr.Text = $"{actual:0.00}";
                 lblNormalActualRr.ForeColor = actual >= nudNormalRr.Value * 1.15M
                     ? Color.FromArgb(144, 238, 170)
                     : actual >= nudNormalRr.Value
@@ -5101,8 +5825,8 @@ SAFETY RULES:
                     GetSelectedReviewLeverage());
                 if (warningItems.Count > 0)
                 {
-                    using var warningForm = new TradeWarningForm(warningItems);
-                    if (warningForm.ShowDialog(form) != DialogResult.OK)
+                    var warningForm = new TradeWarningForm(warningItems);
+                    if (await warningForm.ShowModelessAsync(form).ConfigureAwait(true) != DialogResult.OK)
                     {
                         SetPlayStatus("Trade cancelled after warning review.", C_YELLOW);
                         Log("[BOT] Trade cancelled after review warnings.", C_YELLOW);
@@ -5208,6 +5932,8 @@ SAFETY RULES:
                     !chkAutoScalp.Checked && chkNormalTrading.Checked,
                     normalTradingSettings,
                     commonTradingSettings);
+                decisionCompleted = true;
+                completion.TrySetResult(decision);
                 form.DialogResult = DialogResult.OK;
                 form.Close();
             };
@@ -5215,6 +5941,8 @@ SAFETY RULES:
             btnCancel.Click += (_, _) =>
             {
                 decision = new TradeReviewDecision(false, false, 0, 0);
+                decisionCompleted = true;
+                completion.TrySetResult(decision);
                 form.DialogResult = DialogResult.Cancel;
                 form.Close();
             };
@@ -5268,13 +5996,19 @@ SAFETY RULES:
             {
                 _reviewSignalPush = null;
                 sigFileWatcher?.Dispose();
+                if (!decisionCompleted)
+                {
+                    decision = new TradeReviewDecision(false, false, 0, 0);
+                    completion.TrySetResult(decision);
+                }
             };
 
             EnableReviewDoubleBuffering(form);
             ResizeReviewContent();
             form.ResumeLayout(true);
-            form.ShowDialog(this);
-            return decision;
+            CopyablePopupText.Enable(form);
+            form.Show(this);
+            return await completion.Task.ConfigureAwait(true);
         }
 
         private Control BuildReviewDashboard(
@@ -7799,7 +8533,7 @@ SAFETY RULES:
                 review.LotSize > 0 ? review.LotSize : req.LotSize,
                 _cfg.Bot.MagicNumber,
                 review.ScalpingConfig,
-                r => _bot.ExecuteTradeWithValidationAsync(r),
+                ExecuteScalpingTradeFromReviewAsync,
                 async fromUtc =>
                 {
                     if (_tradeDb == null) return 0;
@@ -7832,6 +8566,37 @@ SAFETY RULES:
             await _settings.SaveAsync(_cfg).ConfigureAwait(false);
             Log($"[SCALP] Auto scalping session armed for {req.Pair}.", C_GREEN);
             return true;
+        }
+
+        private async Task<TradeResult> ExecuteScalpingTradeFromReviewAsync(TradeRequest req)
+        {
+            _bot ??= CreateBot();
+            TradeResult result = await _bot.ExecuteTradeWithValidationAsync(req).ConfigureAwait(false);
+            CaptureExecutionRuleAudit(req, result);
+
+            AddHistoryRow(req, result);
+
+            if (result.IsSuccess)
+            {
+                await Task.Delay(500).ConfigureAwait(false);
+                await RefreshPositionsAsync().ConfigureAwait(false);
+
+                if (_bridge?.IsConnected == true)
+                {
+                    var positions = await _bridge.GetPositionsAsync().ConfigureAwait(false);
+                    bool found = result.Ticket > 0 && positions.Any(p => p.Ticket == result.Ticket);
+                    Log(found
+                            ? $"[SCALP] Confirmed open position #{result.Ticket} in MT5 positions."
+                            : $"[SCALP] MT5 accepted ticket #{result.Ticket}, but it was not found in the refreshed open-position list. It may have closed immediately, or MT5 returned an order/deal ticket instead of the live position ticket.",
+                        found ? C_GREEN : C_YELLOW);
+                }
+            }
+            else
+            {
+                await RefreshPositionsAsync().ConfigureAwait(false);
+            }
+
+            return result;
         }
 
         private async Task ExecuteSignalFromCardSafeAsync(Panel card)
@@ -7935,6 +8700,7 @@ SAFETY RULES:
 
                 Log($"[BOT] Sending signal {req.Id} to MT5: {req.TradeType} {req.Pair} {req.LotSize:F2} lot(s).", C_ACCENT);
                 var result = await _bot.ExecuteTradeWithValidationAsync(req).ConfigureAwait(false);
+                CaptureExecutionRuleAudit(req, result);
 
                 string archivedPath = ArchiveExecutedSignalFile(signalPath, result.IsSuccess);
                 _bot.SignalFileArchived(signalPath);
@@ -8053,6 +8819,18 @@ SAFETY RULES:
             try
             {
                 bool ok = await _bridge.CloseTradeAsync(info.Ticket).ConfigureAwait(false);
+                _ = PersistLifecycleAuditAsync(new TradeLifecycleAuditRecord
+                {
+                    CreatedAtUtc = DateTime.UtcNow,
+                    EventType = ok ? "CLOSE_REQUESTED" : "CLOSE_FAILED",
+                    Ticket = info.Ticket,
+                    PositionId = info.Ticket,
+                    Pair = info.Pair,
+                    Direction = info.TradeType.ToString(),
+                    Actor = "User",
+                    Reason = ok ? "User closed position from signal card." : "User signal-card close failed.",
+                    DetailsJson = JsonConvert.SerializeObject(new { source = "SignalCard.CloseButton", info.FileName, info.SignalId }, Formatting.None)
+                });
                 Log(ok ? $"[OK] Closed #{info.Ticket}" : $"[ERROR] Failed to close #{info.Ticket}",
                     ok ? C_GREEN : C_RED);
 
@@ -8847,6 +9625,7 @@ SAFETY RULES:
                 _bot.UpdateApiConfig(_cfg.ApiIntegrations);
 
                 var result = await _bot.ExecuteTradeWithValidationAsync(req).ConfigureAwait(false);
+                CaptureExecutionRuleAudit(req, result);
                 _normalTradeManager.Stop();
 
                 info.Status = result.IsSuccess ? "Executed" : "Rejected";

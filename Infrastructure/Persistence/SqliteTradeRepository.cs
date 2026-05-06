@@ -188,6 +188,101 @@ namespace MT5TradingBot.Data
             return await ReadRowsAsync(cmd, ct).ConfigureAwait(false);
         }
 
+        public async Task InsertLifecycleAuditAsync(
+            TradeLifecycleAuditRecord record,
+            CancellationToken ct = default)
+        {
+            try
+            {
+                await _lock.WaitAsync(ct).ConfigureAwait(false);
+                try
+                {
+                    await EnsureInitializedAsync(ct).ConfigureAwait(false);
+                    using var conn = new SqliteConnection(_connectionString);
+                    await conn.OpenAsync(ct).ConfigureAwait(false);
+
+                    using var cmd = conn.CreateCommand();
+                    cmd.CommandText = @"
+                        INSERT INTO trade_lifecycle_audit
+                            (created_at_utc, event_type, request_id, ticket, position_id,
+                             order_ticket, deal_ticket, pair, direction, actor, reason,
+                             price, spread_pips, profit_usd, details_json)
+                        VALUES
+                            ($created, $event, $request, $ticket, $position,
+                             $order, $deal, $pair, $direction, $actor, $reason,
+                             $price, $spread, $profit, $details)";
+                    cmd.Parameters.AddWithValue("$created", record.CreatedAtUtc.ToString("o"));
+                    cmd.Parameters.AddWithValue("$event", record.EventType);
+                    cmd.Parameters.AddWithValue("$request", record.RequestId);
+                    cmd.Parameters.AddWithValue("$ticket", record.Ticket);
+                    cmd.Parameters.AddWithValue("$position", record.PositionId);
+                    cmd.Parameters.AddWithValue("$order", record.OrderTicket);
+                    cmd.Parameters.AddWithValue("$deal", record.DealTicket);
+                    cmd.Parameters.AddWithValue("$pair", record.Pair);
+                    cmd.Parameters.AddWithValue("$direction", record.Direction);
+                    cmd.Parameters.AddWithValue("$actor", record.Actor);
+                    cmd.Parameters.AddWithValue("$reason", record.Reason);
+                    cmd.Parameters.AddWithValue("$price", record.Price);
+                    cmd.Parameters.AddWithValue("$spread", record.SpreadPips);
+                    cmd.Parameters.AddWithValue("$profit", record.ProfitUsd);
+                    cmd.Parameters.AddWithValue("$details", record.DetailsJson);
+
+                    await cmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+                }
+                finally { _lock.Release(); }
+            }
+            catch (Exception ex)
+            {
+                Log.Warning(ex, "[TradeDB] Lifecycle audit insert failed for ticket {Ticket}", record.Ticket);
+            }
+        }
+
+        public async Task<IReadOnlyList<TradeLifecycleAuditRecord>> GetLifecycleAuditsByDateRangeAsync(
+            DateTime fromUtc,
+            DateTime toUtc,
+            CancellationToken ct = default)
+        {
+            await EnsureInitializedAsync(ct).ConfigureAwait(false);
+            using var conn = new SqliteConnection(_connectionString);
+            await conn.OpenAsync(ct).ConfigureAwait(false);
+
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = @"
+                SELECT * FROM trade_lifecycle_audit
+                WHERE created_at_utc >= $from
+                  AND created_at_utc <  $to
+                ORDER BY created_at_utc DESC, id DESC";
+            cmd.Parameters.AddWithValue("$from", fromUtc.ToString("o"));
+            cmd.Parameters.AddWithValue("$to", toUtc.ToString("o"));
+
+            var list = new List<TradeLifecycleAuditRecord>();
+            using var reader = await cmd.ExecuteReaderAsync(ct).ConfigureAwait(false);
+            while (await reader.ReadAsync(ct).ConfigureAwait(false))
+            {
+                list.Add(new TradeLifecycleAuditRecord
+                {
+                    Id = reader.GetInt64(reader.GetOrdinal("id")),
+                    CreatedAtUtc = DateTime.Parse(reader.GetString(reader.GetOrdinal("created_at_utc"))),
+                    EventType = reader.GetString(reader.GetOrdinal("event_type")),
+                    RequestId = reader.GetString(reader.GetOrdinal("request_id")),
+                    Ticket = reader.GetInt64(reader.GetOrdinal("ticket")),
+                    PositionId = reader.GetInt64(reader.GetOrdinal("position_id")),
+                    OrderTicket = reader.GetInt64(reader.GetOrdinal("order_ticket")),
+                    DealTicket = reader.GetInt64(reader.GetOrdinal("deal_ticket")),
+                    Pair = reader.GetString(reader.GetOrdinal("pair")),
+                    Direction = reader.GetString(reader.GetOrdinal("direction")),
+                    Actor = reader.GetString(reader.GetOrdinal("actor")),
+                    Reason = reader.GetString(reader.GetOrdinal("reason")),
+                    Price = reader.GetDouble(reader.GetOrdinal("price")),
+                    SpreadPips = reader.GetDouble(reader.GetOrdinal("spread_pips")),
+                    ProfitUsd = reader.GetDouble(reader.GetOrdinal("profit_usd")),
+                    DetailsJson = reader.GetString(reader.GetOrdinal("details_json"))
+                });
+            }
+
+            return list;
+        }
+
         public void Dispose() => _lock.Dispose();
 
         // -- internals --------------------------------------------
@@ -234,6 +329,31 @@ namespace MT5TradingBot.Data
                     ON trades(pair);";
 
             await cmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+            await RunAsync(@"
+                CREATE TABLE IF NOT EXISTS trade_lifecycle_audit (
+                    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+                    created_at_utc TEXT    NOT NULL,
+                    event_type     TEXT    NOT NULL,
+                    request_id     TEXT    NOT NULL DEFAULT '',
+                    ticket         INTEGER NOT NULL DEFAULT 0,
+                    position_id    INTEGER NOT NULL DEFAULT 0,
+                    order_ticket   INTEGER NOT NULL DEFAULT 0,
+                    deal_ticket    INTEGER NOT NULL DEFAULT 0,
+                    pair           TEXT    NOT NULL DEFAULT '',
+                    direction      TEXT    NOT NULL DEFAULT '',
+                    actor          TEXT    NOT NULL DEFAULT '',
+                    reason         TEXT    NOT NULL DEFAULT '',
+                    price          REAL    NOT NULL DEFAULT 0,
+                    spread_pips    REAL    NOT NULL DEFAULT 0,
+                    profit_usd     REAL    NOT NULL DEFAULT 0,
+                    details_json   TEXT    NOT NULL DEFAULT ''
+                )", ct).ConfigureAwait(false);
+            await RunAsync(
+                "CREATE INDEX IF NOT EXISTS idx_trade_audit_created_at ON trade_lifecycle_audit(created_at_utc DESC)",
+                ct).ConfigureAwait(false);
+            await RunAsync(
+                "CREATE INDEX IF NOT EXISTS idx_trade_audit_ticket ON trade_lifecycle_audit(ticket, position_id, order_ticket, deal_ticket)",
+                ct).ConfigureAwait(false);
             try { await RunAsync("ALTER TABLE trades ADD COLUMN profit_usd REAL DEFAULT 0", ct).ConfigureAwait(false); }
             catch { /* column already exists */ }
             try { await RunAsync("ALTER TABLE trades ADD COLUMN closed_at TEXT DEFAULT NULL", ct).ConfigureAwait(false); }

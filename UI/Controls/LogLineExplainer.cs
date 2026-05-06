@@ -42,6 +42,9 @@ namespace MT5TradingBot.UI
                 if (Contains(message, "broker stop/freeze-level data is unavailable") || Contains(message, "BROKER_STOP_LEVEL_DATA_UNAVAILABLE"))
                     return ExplainBrokerStopData(line, message, summary);
 
+                if (Contains(message, "BROKER_ORDERCHECK_REJECTED") || Contains(message, "Broker OrderCheck rejected"))
+                    return ExplainOrderCheckRejected(line, message, summary);
+
                 if (Contains(message, "Trade was not opened"))
                     return ExplainTradeNotOpened(line, message, summary);
 
@@ -162,6 +165,46 @@ namespace MT5TradingBot.UI
                 "No trade was opened. Blocking is correct because sending an order without broker limits can cause rejection, missing SL/TP, or uncontrolled execution behavior.",
                 BuildExpectedPl(summary),
                 "Reload or re-attach the MT5 EA, confirm the exact broker symbol name in Market Watch, and verify the EA returns StopLevelPoints and FreezeLevelPoints.");
+        }
+
+        private static AppLogDetail ExplainOrderCheckRejected(string original, string message, PriceSummary? summary)
+        {
+            double? retcode = ReadDouble(message, $@"retcode=(?<v>{NumberPattern})");
+            string? comment = ReadText(message, @"comment=(?<v>[^,()]+)");
+            double? margin = ReadDouble(message, $@"margin=(?<v>{NumberPattern})");
+            double? marginFree = ReadDouble(message, $@"margin_free=(?<v>{NumberPattern})");
+            double? marginLevel = ReadDouble(message, $@"margin_level=(?<v>{NumberPattern})");
+            double? volume = ReadDouble(message, $@"volume=(?<v>{NumberPattern})");
+            double? price = ReadDouble(message, $@"price=(?<v>{NumberPattern})");
+            double? sl = ReadDouble(message, $@"sl=(?<v>{NumberPattern})");
+            double? tp = ReadDouble(message, $@"tp=(?<v>{NumberPattern})");
+
+            var values = new StringBuilder();
+            AppendValue(values, "Broker retcode", retcode, "");
+            AppendText(values, "Broker comment", comment);
+            AppendValue(values, "Margin required", margin, "USD");
+            AppendValue(values, "Free margin after check", marginFree, "USD");
+            AppendValue(values, "Margin level after check", marginLevel, "%");
+            AppendValue(values, "Checked volume", volume, "lots");
+            AppendValue(values, "Checked price", price, "");
+            AppendValue(values, "Broker echoed SL", sl, "");
+            AppendValue(values, "Broker echoed TP", tp, "");
+            if (sl == 0 || tp == 0)
+                AppendText(values, "SL/TP warning", "Broker echoed zero SL or TP. For a scalping trade with configured SL/TP pips this is not aligned with the trade-page values.");
+            AppendSummary(values, summary);
+
+            string meaning = sl == 0 || tp == 0
+                ? "The broker pre-check did not accept the trade, and the echoed OrderCheck values show SL or TP as zero. For scalping this is suspicious because the trade panel generates SL/TP prices from the configured pip distances before execution."
+                : "The broker pre-check did not accept the trade. This happens before the final order send and is treated as a hard execution block.";
+
+            return Detail(
+                original,
+                meaning,
+                values.ToString().Trim(),
+                BuildFormula(summary, "Execution rule: the bot builds the final request, validates risk, then sends MT5 OrderCheck with symbol, side, lot, price, SL, and TP. The trade may only be sent when OrderCheck is accepted."),
+                "No order was opened. The bot stopped before OPEN_TRADE because broker OrderCheck was not accepted.",
+                BuildExpectedPl(summary),
+                "Compare this line with the nearby '[TradeExecution] Broker OrderCheck request' log. The request log should show the SL/TP calculated from the current trade-page pip settings; the broker echo should match those values closely.");
         }
 
         private static AppLogDetail ExplainScalpNoTrade(string original, string message, PriceSummary? summary)

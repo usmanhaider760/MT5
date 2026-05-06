@@ -24,12 +24,12 @@ namespace MT5TradingBot.UI
 
         public static void Show(IWin32Window? owner, string title, AppHelpContent content)
         {
-            using var form = new AppHelpBoxForm(title, content);
+            var form = new AppHelpBoxForm(title, content);
             form.StartPosition = owner == null ? FormStartPosition.CenterScreen : FormStartPosition.CenterParent;
             if (owner == null)
-                form.ShowDialog();
+                form.Show();
             else
-                form.ShowDialog(owner);
+                form.Show(owner);
         }
 
         private sealed class AppHelpBoxForm : Form
@@ -148,6 +148,7 @@ namespace MT5TradingBot.UI
                     ForeColor = Color.FromArgb(10, 10, 20)
                 };
                 ok.FlatAppearance.BorderSize = 0;
+                ok.Click += (_, _) => Close();
                 footer.Controls.Add(ok);
                 AcceptButton = ok;
                 CancelButton = ok;
@@ -155,6 +156,7 @@ namespace MT5TradingBot.UI
                 Controls.Add(body);
                 Controls.Add(footer);
                 Controls.Add(header);
+                CopyablePopupText.Enable(this);
             }
 
             private static void AddIntro(FlowLayoutPanel layout)

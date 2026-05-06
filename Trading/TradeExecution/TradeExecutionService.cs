@@ -50,6 +50,15 @@ namespace MT5TradingBot.Modules.TradeExecution
                 (bool Success, OrderCheckResult? Result, string Error) orderCheck;
                 try
                 {
+                    Log.Information(
+                        "[TradeExecution] Broker OrderCheck request {RequestId}: {Pair} {Type} lots={Lots:F2} price={Price:F5} sl={StopLoss:F5} tp={TakeProfit:F5}",
+                        request.Id,
+                        request.Pair,
+                        request.TradeType,
+                        request.LotSize,
+                        orderCheckPrice,
+                        request.StopLoss,
+                        request.TakeProfit);
                     orderCheck = await _bridge.TryCheckOrderAsync(request, orderCheckPrice).ConfigureAwait(false);
                 }
                 catch (Exception ex)

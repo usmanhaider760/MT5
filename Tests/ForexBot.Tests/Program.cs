@@ -8129,6 +8129,17 @@ internal static class Program
                 .OrderByDescending(r => r.ClosedAt)
                 .ToList());
 
+        public Task InsertLifecycleAuditAsync(
+            TradeLifecycleAuditRecord record,
+            CancellationToken ct = default) =>
+            Task.CompletedTask;
+
+        public Task<IReadOnlyList<TradeLifecycleAuditRecord>> GetLifecycleAuditsByDateRangeAsync(
+            DateTime fromUtc,
+            DateTime toUtc,
+            CancellationToken ct = default) =>
+            Task.FromResult<IReadOnlyList<TradeLifecycleAuditRecord>>([]);
+
         private IReadOnlyList<TradeRecord> FilterByExecutedAt(DateTime fromUtc, DateTime toUtc) =>
             _records
                 .Where(r => r.ExecutedAt >= fromUtc && r.ExecutedAt < toUtc)

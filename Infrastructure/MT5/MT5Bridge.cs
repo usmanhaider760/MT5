@@ -170,27 +170,43 @@ namespace MT5TradingBot.Modules.BrokerIntegration
             TradeRequest request,
             double price)
         {
-            var r = await SendAsync(
-                "CHECK_ORDER",
-                new
-                {
-                    symbol = request.Pair,
-                    trade_type = request.TradeType.ToString(),
-                    order_type = request.OrderType.ToString(),
-                    lots = request.LotSize,
-                    price,
-                    stop_loss = request.StopLoss,
-                    take_profit = request.TakeProfit,
-                    magic_number = request.MagicNumber
-                }).ConfigureAwait(false);
+            var payload = JsonConvert.SerializeObject(new
+            {
+                symbol = request.Pair,
+                trade_type = request.TradeType.ToString(),
+                order_type = request.OrderType.ToString(),
+                lots = request.LotSize,
+                price,
+                stop_loss = request.StopLoss,
+                take_profit = request.TakeProfit,
+                magic_number = request.MagicNumber
+            }, Formatting.None);
+
+            var r = await SendAsync("CHECK_ORDER", payload).ConfigureAwait(false);
 
             if (r?.Success != true)
                 return (false, null, r?.Error ?? "No OrderCheck response from MT5");
 
             var result = Deserialize<OrderCheckResult>(r.Data);
+            NormalizeOrderCheckAcceptance(result);
             return result != null
                 ? (true, result, "")
                 : (false, null, "Invalid OrderCheck response from MT5");
+        }
+
+        private static void NormalizeOrderCheckAcceptance(OrderCheckResult? result)
+        {
+            if (result == null || result.IsAccepted)
+                return;
+
+            bool brokerSaysDone = result.Retcode == 0 &&
+                                  result.Comment.Equals("Done", StringComparison.OrdinalIgnoreCase);
+            bool requestEchoLooksValid = result.Volume > 0 &&
+                                         result.Price > 0 &&
+                                         result.StopLoss > 0 &&
+                                         result.TakeProfit > 0;
+            if (brokerSaysDone && requestEchoLooksValid)
+                result.IsAccepted = true;
         }
 
         public async Task<JObject?> GetMarketSnapshotAsync(TradeRequest req, BotConfig bot)
@@ -270,6 +286,31 @@ namespace MT5TradingBot.Modules.BrokerIntegration
             return candles != null
                 ? (true, candles, "")
                 : (false, [], "Invalid historical OHLC response from MT5");
+        }
+
+        public async Task<(bool Success, IReadOnlyList<Mt5TradeHistoryItem> Trades, string Error)> TryGetTradeHistoryAsync(
+            DateTime fromUtc,
+            DateTime toUtc,
+            int maxRows)
+        {
+            Log($"GET_TRADE_HISTORY {fromUtc:O} -> {toUtc:O} maxRows:{Math.Max(1, maxRows)}");
+            var r = await SendAsync(
+                "GET_TRADE_HISTORY",
+                new
+                {
+                    from_unix_ms = ToUnixMilliseconds(fromUtc),
+                    to_unix_ms = ToUnixMilliseconds(toUtc),
+                    max_rows = Math.Max(1, maxRows)
+                }).ConfigureAwait(false);
+
+            if (r?.Success != true)
+                return (false, [], r?.Error ?? "No trade history response from MT5");
+
+            var trades = Deserialize<List<Mt5TradeHistoryItem>>(r.Data);
+            Log($"GET_TRADE_HISTORY parsed rows:{trades?.Count ?? 0}");
+            return trades != null
+                ? (true, trades, "")
+                : (false, [], "Invalid trade history response from MT5");
         }
 
         public void StartReconnectLoop() =>

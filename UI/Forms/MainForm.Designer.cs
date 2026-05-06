@@ -1201,7 +1201,7 @@ namespace MT5TradingBot.UI
             _btnImportHistory.Name = "_btnImportHistory";
             _btnImportHistory.Size = new Size(150, 30);
             _btnImportHistory.TabIndex = 1;
-            _btnImportHistory.Text = "📂 Load CSV Log";
+            _btnImportHistory.Text = "Refresh MT5";
             _btnImportHistory.UseVisualStyleBackColor = false;
             // 
             // _btnClearHistory

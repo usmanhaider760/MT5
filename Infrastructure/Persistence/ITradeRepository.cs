@@ -27,6 +27,26 @@ namespace MT5TradingBot.Data
         public DateTime? ClosedAt      { get; init; }          // null until closed
     }
 
+    public sealed class TradeLifecycleAuditRecord
+    {
+        public long Id { get; init; }
+        public DateTime CreatedAtUtc { get; init; } = DateTime.UtcNow;
+        public string EventType { get; init; } = "";
+        public string RequestId { get; init; } = "";
+        public long Ticket { get; init; }
+        public long PositionId { get; init; }
+        public long OrderTicket { get; init; }
+        public long DealTicket { get; init; }
+        public string Pair { get; init; } = "";
+        public string Direction { get; init; } = "";
+        public string Actor { get; init; } = "";
+        public string Reason { get; init; } = "";
+        public double Price { get; init; }
+        public double SpreadPips { get; init; }
+        public double ProfitUsd { get; init; }
+        public string DetailsJson { get; init; } = "";
+    }
+
     public interface ITradeRepository
     {
         // Persist one completed trade (fire-and-forget safe; never throws to caller).
@@ -60,6 +80,15 @@ namespace MT5TradingBot.Data
 
         // Closed trades whose ClosedAt falls within [from, to) UTC, newest first.
         Task<IReadOnlyList<TradeRecord>> GetClosedByCloseDateRangeAsync(
+            DateTime fromUtc,
+            DateTime toUtc,
+            CancellationToken ct = default);
+
+        Task InsertLifecycleAuditAsync(
+            TradeLifecycleAuditRecord record,
+            CancellationToken ct = default);
+
+        Task<IReadOnlyList<TradeLifecycleAuditRecord>> GetLifecycleAuditsByDateRangeAsync(
             DateTime fromUtc,
             DateTime toUtc,
             CancellationToken ct = default);

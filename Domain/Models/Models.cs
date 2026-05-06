@@ -205,7 +205,7 @@ namespace MT5TradingBot.Models
                 Type,
                 OpenPrice,
                 CurrentPrice,
-                Symbol.Contains("JPY") ? 0.01 : 0.0001);
+                PipCalculator.GetPipSize(Symbol));
     }
 
     // ══════════════════════════════════════════════════════════════
@@ -1318,5 +1318,38 @@ namespace MT5TradingBot.Models
         public string Status { get; set; } = "";
         public string Error { get; set; } = "";
         public string Source { get; set; } = "Manual"; // Manual / Signal / Bot
+    }
+
+    public sealed class Mt5TradeHistoryItem
+    {
+        public long DealTicket { get; set; }
+        public long EntryDealTicket { get; set; }
+        public long ExitDealTicket { get; set; }
+        public long OrderTicket { get; set; }
+        public long EntryOrderTicket { get; set; }
+        public long ExitOrderTicket { get; set; }
+        public long PositionId { get; set; }
+        public DateTime TimeUtc { get; set; }
+        public DateTime? EntryTimeUtc { get; set; }
+        public DateTime? ExitTimeUtc { get; set; }
+        public string Symbol { get; set; } = "";
+        public string Direction { get; set; } = "";
+        public string EntryType { get; set; } = "";
+        public double Lots { get; set; }
+        public double Price { get; set; }
+        public double EntryPrice { get; set; }
+        public double ExitPrice { get; set; }
+        public double Profit { get; set; }
+        public double ClosePips { get; set; }
+        public double MaxProfitPips { get; set; }
+        public double MaxLossPips { get; set; }
+        public double HighestPrice { get; set; }
+        public double LowestPrice { get; set; }
+        public int DurationMinutes { get; set; }
+        public double StopLoss { get; set; }
+        public double TakeProfit { get; set; }
+        public int MagicNumber { get; set; }
+        public string Comment { get; set; } = "";
+        public string CloseReason { get; set; } = "";
     }
 }

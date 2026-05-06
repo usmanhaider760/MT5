@@ -192,6 +192,7 @@ string ProcessRequest(string json)
    if(cmd == "GET_EA_HEALTH")  return CmdGetEaHealth(reqId);
    if(cmd == "GET_ACCOUNT")    return CmdGetAccount(reqId);
    if(cmd == "GET_POSITIONS")  return CmdGetPositions(reqId);
+   if(cmd == "GET_TRADE_HISTORY")return CmdGetTradeHistory(reqId, json);
    if(cmd == "OPEN_TRADE")     return CmdOpenTrade(reqId, json);
    if(cmd == "CHECK_ORDER")    return CmdCheckOrder(reqId, json);
    if(cmd == "CLOSE_TRADE")    return CmdCloseTrade(reqId, json);
@@ -219,7 +220,10 @@ datetime UnixMsToTime(long unixMs)
 
 string TimeToIsoUtc(datetime t)
 {
-   return TimeToString(t, TIME_DATE | TIME_SECONDS);
+   MqlDateTime dt;
+   TimeToStruct(t, dt);
+   return StringFormat("%04d-%02d-%02dT%02d:%02d:%02dZ",
+                       dt.year, dt.mon, dt.day, dt.hour, dt.min, dt.sec);
 }
 
 string CmdGetTicks(string reqId, string json)
@@ -470,10 +474,212 @@ string CmdGetPositions(string reqId)
       arr += "\"Profit\":"       + DoubleToString(PosInfo.Profit(),           2) + ",";
       arr += "\"MagicNumber\":"  + IntegerToString(PosInfo.Magic())              + ",";
       arr += "\"Comment\":\""    + Esc(PosInfo.Comment())                      + "\",";
-      arr += "\"OpenTime\":\""   + TimeToString(PosInfo.Time(), TIME_DATE|TIME_MINUTES) + "\",";
+      arr += "\"OpenTime\":\""   + TimeToIsoUtc(PosInfo.Time()) + "\",";
       arr += "\"SlMovedToBreakeven\":false";
       arr += "}";
    }
+   arr += "]";
+   return Ok(reqId, arr);
+}
+
+string DealEntryName(long entry)
+{
+   if(entry == DEAL_ENTRY_IN) return "IN";
+   if(entry == DEAL_ENTRY_OUT) return "OUT";
+   if(entry == DEAL_ENTRY_INOUT) return "INOUT";
+   if(entry == DEAL_ENTRY_OUT_BY) return "OUT_BY";
+   return "UNKNOWN";
+}
+
+string DealDirectionName(ulong dealTicket)
+{
+   long type = HistoryDealGetInteger(dealTicket, DEAL_TYPE);
+   long entry = HistoryDealGetInteger(dealTicket, DEAL_ENTRY);
+
+   if(entry == DEAL_ENTRY_OUT || entry == DEAL_ENTRY_OUT_BY)
+      return type == DEAL_TYPE_BUY ? "SELL" : "BUY";
+
+   if(type == DEAL_TYPE_BUY) return "BUY";
+   if(type == DEAL_TYPE_SELL) return "SELL";
+   return "UNKNOWN";
+}
+
+string DealReasonName(long reason)
+{
+   if(reason == DEAL_REASON_CLIENT) return "CLIENT";
+   if(reason == DEAL_REASON_MOBILE) return "MOBILE";
+   if(reason == DEAL_REASON_WEB) return "WEB";
+   if(reason == DEAL_REASON_EXPERT) return "EXPERT";
+   if(reason == DEAL_REASON_SL) return "STOP_LOSS";
+   if(reason == DEAL_REASON_TP) return "TAKE_PROFIT";
+   if(reason == DEAL_REASON_SO) return "STOP_OUT";
+   return "UNKNOWN";
+}
+
+ulong FindEntryDealForPosition(ulong exitTicket)
+{
+   long positionId = HistoryDealGetInteger(exitTicket, DEAL_POSITION_ID);
+   datetime exitTime = (datetime)HistoryDealGetInteger(exitTicket, DEAL_TIME);
+   ulong best = 0;
+   datetime bestTime = 0;
+
+   for(int i = 0; i < HistoryDealsTotal(); i++)
+   {
+      ulong ticket = HistoryDealGetTicket(i);
+      if(ticket == 0 || ticket == exitTicket) continue;
+      if(HistoryDealGetInteger(ticket, DEAL_POSITION_ID) != positionId) continue;
+
+      long entry = HistoryDealGetInteger(ticket, DEAL_ENTRY);
+      if(entry != DEAL_ENTRY_IN && entry != DEAL_ENTRY_INOUT) continue;
+
+      datetime entryTime = (datetime)HistoryDealGetInteger(ticket, DEAL_TIME);
+      if(entryTime <= exitTime && entryTime >= bestTime)
+      {
+         best = ticket;
+         bestTime = entryTime;
+      }
+   }
+
+   return best;
+}
+
+void GetTradeExtremes(string symbol, datetime fromTime, datetime toTime, double entryPrice, double exitPrice, double &highest, double &lowest)
+{
+   highest = MathMax(entryPrice, exitPrice);
+   lowest = MathMin(entryPrice, exitPrice);
+   if(fromTime <= 0 || toTime <= fromTime) return;
+
+   MqlRates rates[];
+   ArraySetAsSeries(rates, false);
+   int copied = CopyRates(symbol, PERIOD_M1, fromTime, toTime, rates);
+   for(int i = 0; i < copied; i++)
+   {
+      if(rates[i].high > highest) highest = rates[i].high;
+      if(rates[i].low < lowest) lowest = rates[i].low;
+   }
+}
+
+string CmdGetTradeHistory(string reqId, string json)
+{
+   string data = JsonStr(json, "data");
+   if(StringLen(data) == 0 || JsonLong(data, "from_unix_ms") <= 0 || JsonLong(data, "to_unix_ms") <= 0)
+      data = json;
+
+   long fromMs = JsonLong(data, "from_unix_ms");
+   long toMs   = JsonLong(data, "to_unix_ms");
+   int maxRows = (int)JsonDbl(data, "max_rows");
+
+   if(maxRows <= 0) maxRows = 200;
+   if(maxRows > 1000) maxRows = 1000;
+
+   datetime fromTime = UnixMsToTime(fromMs);
+   datetime toTime   = UnixMsToTime(toMs);
+
+   if(fromTime <= 0 || toTime <= 0 || fromTime >= toTime)
+      return Err(reqId, "INVALID_RANGE", "Invalid trade history date range");
+
+   if(!HistorySelect(fromTime, toTime))
+      return Ok(reqId, "[]");
+
+   string arr = "[";
+   int added = 0;
+
+   for(int i = HistoryDealsTotal() - 1; i >= 0 && added < maxRows; i--)
+   {
+      ulong dealTicket = HistoryDealGetTicket(i);
+      if(dealTicket == 0) continue;
+
+      long dealType = HistoryDealGetInteger(dealTicket, DEAL_TYPE);
+      if(dealType != DEAL_TYPE_BUY && dealType != DEAL_TYPE_SELL) continue;
+
+      ulong orderTicket = (ulong)HistoryDealGetInteger(dealTicket, DEAL_ORDER);
+      double sl = 0.0;
+      double tp = 0.0;
+      if(orderTicket > 0 && HistoryOrderSelect(orderTicket))
+      {
+         sl = HistoryOrderGetDouble(orderTicket, ORDER_SL);
+         tp = HistoryOrderGetDouble(orderTicket, ORDER_TP);
+      }
+
+      double profit = HistoryDealGetDouble(dealTicket, DEAL_PROFIT)
+                    + HistoryDealGetDouble(dealTicket, DEAL_SWAP)
+                    + HistoryDealGetDouble(dealTicket, DEAL_COMMISSION);
+      string symbol = HistoryDealGetString(dealTicket, DEAL_SYMBOL);
+      int digits = (int)SymbolInfoInteger(symbol, SYMBOL_DIGITS);
+      if(digits <= 0) digits = 5;
+      double pip = SnapshotPipSize(symbol);
+      if(pip <= 0.0) pip = SymbolInfoDouble(symbol, SYMBOL_POINT);
+
+      long entryType = HistoryDealGetInteger(dealTicket, DEAL_ENTRY);
+      ulong entryTicket = (entryType == DEAL_ENTRY_OUT || entryType == DEAL_ENTRY_OUT_BY)
+         ? FindEntryDealForPosition(dealTicket)
+         : dealTicket;
+
+      datetime entryTime = entryTicket > 0
+         ? (datetime)HistoryDealGetInteger(entryTicket, DEAL_TIME)
+         : (datetime)HistoryDealGetInteger(dealTicket, DEAL_TIME);
+      datetime exitTime = (entryType == DEAL_ENTRY_OUT || entryType == DEAL_ENTRY_INOUT || entryType == DEAL_ENTRY_OUT_BY)
+         ? (datetime)HistoryDealGetInteger(dealTicket, DEAL_TIME)
+         : 0;
+      double entryPrice = entryTicket > 0 ? HistoryDealGetDouble(entryTicket, DEAL_PRICE) : HistoryDealGetDouble(dealTicket, DEAL_PRICE);
+      double exitPrice = exitTime > 0 ? HistoryDealGetDouble(dealTicket, DEAL_PRICE) : 0.0;
+      string direction = DealDirectionName(entryTicket > 0 ? entryTicket : dealTicket);
+      double highest = entryPrice;
+      double lowest = entryPrice;
+      double closePips = 0.0;
+      double maxProfitPips = 0.0;
+      double maxLossPips = 0.0;
+      int durationMinutes = 0;
+
+      if(exitTime > 0)
+      {
+         GetTradeExtremes(symbol, entryTime, exitTime, entryPrice, exitPrice, highest, lowest);
+         durationMinutes = (int)MathMax(0, (exitTime - entryTime) / 60);
+         if(direction == "BUY")
+         {
+            closePips = (exitPrice - entryPrice) / pip;
+            maxProfitPips = MathMax(0.0, (highest - entryPrice) / pip);
+            maxLossPips = MathMax(0.0, (entryPrice - lowest) / pip);
+         }
+         else if(direction == "SELL")
+         {
+            closePips = (entryPrice - exitPrice) / pip;
+            maxProfitPips = MathMax(0.0, (entryPrice - lowest) / pip);
+            maxLossPips = MathMax(0.0, (highest - entryPrice) / pip);
+         }
+      }
+
+      if(added > 0) arr += ",";
+      arr += "{";
+      arr += "\"DealTicket\":" + IntegerToString((long)dealTicket) + ",";
+      arr += "\"OrderTicket\":" + IntegerToString((long)orderTicket) + ",";
+      arr += "\"PositionId\":" + IntegerToString(HistoryDealGetInteger(dealTicket, DEAL_POSITION_ID)) + ",";
+      arr += "\"TimeUtc\":\"" + TimeToIsoUtc((datetime)HistoryDealGetInteger(dealTicket, DEAL_TIME)) + "\",";
+      arr += "\"EntryTimeUtc\":" + (entryTime > 0 ? "\"" + TimeToIsoUtc(entryTime) + "\"" : "null") + ",";
+      arr += "\"ExitTimeUtc\":" + (exitTime > 0 ? "\"" + TimeToIsoUtc(exitTime) + "\"" : "null") + ",";
+      arr += "\"Symbol\":\"" + Esc(symbol) + "\",";
+      arr += "\"Direction\":\"" + direction + "\",";
+      arr += "\"EntryType\":\"" + DealEntryName(HistoryDealGetInteger(dealTicket, DEAL_ENTRY)) + "\",";
+      arr += "\"Lots\":" + DoubleToString(HistoryDealGetDouble(dealTicket, DEAL_VOLUME), 2) + ",";
+      arr += "\"Price\":" + DoubleToString(HistoryDealGetDouble(dealTicket, DEAL_PRICE), digits) + ",";
+      arr += "\"EntryPrice\":" + DoubleToString(entryPrice, digits) + ",";
+      arr += "\"ExitPrice\":" + DoubleToString(exitPrice, digits) + ",";
+      arr += "\"Profit\":" + DoubleToString(profit, 2) + ",";
+      arr += "\"ClosePips\":" + DoubleToString(closePips, 1) + ",";
+      arr += "\"MaxProfitPips\":" + DoubleToString(maxProfitPips, 1) + ",";
+      arr += "\"MaxLossPips\":" + DoubleToString(maxLossPips, 1) + ",";
+      arr += "\"HighestPrice\":" + DoubleToString(highest, digits) + ",";
+      arr += "\"LowestPrice\":" + DoubleToString(lowest, digits) + ",";
+      arr += "\"DurationMinutes\":" + IntegerToString(durationMinutes) + ",";
+      arr += "\"StopLoss\":" + DoubleToString(sl, digits) + ",";
+      arr += "\"TakeProfit\":" + DoubleToString(tp, digits) + ",";
+      arr += "\"MagicNumber\":" + IntegerToString((int)HistoryDealGetInteger(dealTicket, DEAL_MAGIC)) + ",";
+      arr += "\"Comment\":\"" + Esc(HistoryDealGetString(dealTicket, DEAL_COMMENT)) + "\",";
+      arr += "\"CloseReason\":\"" + DealReasonName(HistoryDealGetInteger(dealTicket, DEAL_REASON)) + "\"";
+      arr += "}";
+      added++;
+   }
+
    arr += "]";
    return Ok(reqId, arr);
 }
@@ -559,12 +765,29 @@ string CmdOpenTrade(string reqId, string json)
 
    if(success)
    {
-      EA_Log(StringFormat("Opened %s #%d %s @ %.5f lots %.2f", typeStr, ticket, symbol, execPrice, lots));
+      ulong positionTicket = ticket;
+      for(int i = PositionsTotal() - 1; i >= 0; i--)
+      {
+         if(!PosInfo.SelectByIndex(i)) continue;
+         if(PosInfo.Symbol() != symbol) continue;
+         if(PosInfo.Magic() != magic) continue;
+         if(isBuy && PosInfo.PositionType() != POSITION_TYPE_BUY) continue;
+         if(!isBuy && PosInfo.PositionType() != POSITION_TYPE_SELL) continue;
+         if(MathAbs(PosInfo.Volume() - lots) > 0.0000001) continue;
+
+         positionTicket = PosInfo.Ticket();
+         execPrice = PosInfo.PriceOpen();
+         break;
+      }
+
+      EA_Log(StringFormat("Opened %s position #%d order #%d %s @ %.5f lots %.2f", typeStr, positionTicket, ticket, symbol, execPrice, lots));
       string d = "{";
-      d += "\"Ticket\":"        + IntegerToString((int)ticket) + ",";
+      d += "\"Ticket\":"        + IntegerToString((long)positionTicket) + ",";
       d += "\"Status\":\"Filled\",";
       d += "\"ExecutedPrice\":" + DoubleToString(execPrice, 5) + ",";
-      d += "\"ExecutedLots\":"  + DoubleToString(lots,      2);
+      d += "\"ExecutedLots\":"  + DoubleToString(lots,      2) + ",";
+      d += "\"OrderTicket\":"   + IntegerToString((long)ticket) + ",";
+      d += "\"DealTicket\":"    + IntegerToString((long)Trade.ResultDeal());
       d += "}";
       return Ok(reqId, d);
    }
@@ -658,8 +881,10 @@ string CmdCheckOrder(string reqId, string json)
    if(StringLen(comment) == 0)
       comment = ok ? "OrderCheck accepted" : "OrderCheck rejected";
 
+   bool accepted = ok && (check.retcode == 0 || check.retcode == TRADE_RETCODE_DONE || check.retcode == TRADE_RETCODE_PLACED);
+
    string d = "{";
-   d += "\"IsAccepted\":" + BoolJson(ok && (check.retcode == TRADE_RETCODE_DONE || check.retcode == TRADE_RETCODE_PLACED)) + ",";
+   d += "\"IsAccepted\":" + BoolJson(accepted) + ",";
    d += "\"Retcode\":" + IntegerToString((int)check.retcode) + ",";
    d += "\"Comment\":\"" + Esc(comment) + "\",";
    d += "\"Margin\":" + DoubleToString(check.margin, 2) + ",";

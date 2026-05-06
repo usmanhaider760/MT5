@@ -15,7 +15,12 @@
       "Bash(powershell -Command \"Select-String -Path 'Data\\\\Config\\\\settings.json' -Pattern '^\\\\s+\\\\]' | Select-Object -First 3\")",
       "Bash(powershell -Command ' *)",
       "Bash(n '\\\\`\"USD\\\\`\",`n' '\\\\`\"GBP\\\\`\",`n' '\\\\`\"EUR\\\\`\",`n' '\\\\`\"JPY\\\\`\",`n' '\\\\`\"CHF\\\\`\"`n' '] *)",
-      "Bash(powershell -Command \"\\(Get-Content 'Tests\\\\ForexBot.Tests\\\\Program.cs'\\) -replace 'config\\\\.PaperTrading = true;', 'config.CommonTrading.TradingMode = TradingControlMode.PaperTrading;' | Set-Content 'Tests\\\\ForexBot.Tests\\\\Program.cs' -Encoding utf8\")"
+      "Bash(powershell -Command \"\\(Get-Content 'Tests\\\\ForexBot.Tests\\\\Program.cs'\\) -replace 'config\\\\.PaperTrading = true;', 'config.CommonTrading.TradingMode = TradingControlMode.PaperTrading;' | Set-Content 'Tests\\\\ForexBot.Tests\\\\Program.cs' -Encoding utf8\")",
+      "Bash(Get-ChildItem -Path \"d:\\\\Projects\\\\MT5\" -Recurse -Force)",
+      "Bash(Select-Object FullName, PSIsContainer)",
+      "Bash(Sort-Object FullName)",
+      "Bash(Format-Table -AutoSize -Wrap)",
+      "PowerShell(\\(Get-Content \"d:\\\\Projects\\\\MT5\\\\Data\\\\Config\\\\settings.json\" | Measure-Object -Line\\).Lines)"
     ]
   }
 }

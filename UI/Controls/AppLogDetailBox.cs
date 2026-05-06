@@ -10,7 +10,11 @@ namespace MT5TradingBot.UI
         string Formula,
         string Outcome,
         string ExpectedPl,
-        string NextAction);
+        string NextAction,
+        string WindowTitle = "Log Decision Audit",
+        string Subtitle = "Copyable decision evidence: reason, checked values, formulas, outcome, and projected P/L.",
+        string AuditHeader = "MT5 BOT LOG DECISION AUDIT",
+        string TimeLabel = "Log time");
 
     internal static class AppLogDetailBox
     {
@@ -29,12 +33,12 @@ namespace MT5TradingBot.UI
 
         public static void Show(IWin32Window? owner, AppLogDetail detail)
         {
-            using var form = new AppLogDetailForm(detail);
+            var form = new AppLogDetailForm(detail);
             form.StartPosition = owner == null ? FormStartPosition.CenterScreen : FormStartPosition.CenterParent;
             if (owner == null)
-                form.ShowDialog();
+                form.Show();
             else
-                form.ShowDialog(owner);
+                form.Show(owner);
         }
 
         private sealed class AppLogDetailForm : Form
@@ -44,7 +48,7 @@ namespace MT5TradingBot.UI
                 string logTimestamp = ExtractLogTimestamp(detail.OriginalMessage);
                 string auditText = BuildAuditText(detail, logTimestamp);
 
-                Text = "Log Decision Audit";
+                Text = detail.WindowTitle;
                 FormBorderStyle = FormBorderStyle.Sizable;
                 MaximizeBox = true;
                 MinimizeBox = false;
@@ -75,7 +79,7 @@ namespace MT5TradingBot.UI
 
                 var title = new Label
                 {
-                    Text = "Log Decision Audit",
+                    Text = detail.WindowTitle,
                     Location = new Point(82, 18),
                     Size = new Size(670, 26),
                     ForeColor = C_TEXT,
@@ -86,7 +90,7 @@ namespace MT5TradingBot.UI
 
                 var subtitle = new Label
                 {
-                    Text = "Copyable decision evidence: reason, checked values, formulas, outcome, and projected P/L.",
+                    Text = detail.Subtitle,
                     Location = new Point(84, 48),
                     Size = new Size(690, 22),
                     ForeColor = C_MUTED,
@@ -96,7 +100,7 @@ namespace MT5TradingBot.UI
 
                 var timestamp = new TextBox
                 {
-                    Text = $"Log time: {logTimestamp}",
+                    Text = $"{detail.TimeLabel}: {logTimestamp}",
                     Location = new Point(84, 76),
                     Size = new Size(690, 24),
                     ReadOnly = true,
@@ -201,6 +205,7 @@ namespace MT5TradingBot.UI
                     ForeColor = Color.FromArgb(10, 10, 20)
                 };
                 ok.FlatAppearance.BorderSize = 0;
+                ok.Click += (_, _) => Close();
                 footer.Controls.Add(copyAll);
                 footer.Controls.Add(ok);
                 AcceptButton = ok;
@@ -209,6 +214,7 @@ namespace MT5TradingBot.UI
                 Controls.Add(body);
                 Controls.Add(footer);
                 Controls.Add(header);
+                CopyablePopupText.Enable(this);
 
                 void ResizeSections()
                 {
@@ -322,8 +328,8 @@ namespace MT5TradingBot.UI
             private static string BuildAuditText(AppLogDetail detail, string logTimestamp)
             {
                 var audit = new StringBuilder();
-                audit.AppendLine("MT5 BOT LOG DECISION AUDIT");
-                audit.AppendLine($"Log time: {logTimestamp}");
+                audit.AppendLine(detail.AuditHeader);
+                audit.AppendLine($"{detail.TimeLabel}: {logTimestamp}");
                 audit.AppendLine($"Audit copied at local time: {DateTime.Now:yyyy-MM-dd HH:mm:ss}");
                 audit.AppendLine();
                 audit.AppendLine("ORIGINAL LOG");
