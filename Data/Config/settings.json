@@ -162,6 +162,7 @@
     "update_market_data_on_startup": false,
     "market_data_sync_interval_minutes": 30,
     "market_data_symbols": [
+      "EURUSD",
       "EURUSD"
     ],
     "market_data_directory": ".\\data",
@@ -182,7 +183,7 @@
       "sl_pips": 200.0,
       "tp_pips": 260.0,
       "risk_reward_ratio": 1.2,
-      "max_spread_pips": 28.0,
+      "max_spread_pips": 31.0,
       "max_spread_percent_of_tp": 20.0,
       "dynamic_values_enabled": true,
       "poll_interval_ms": 2000,
@@ -221,7 +222,7 @@
         "sl_pips": 200.0,
         "tp_pips": 260.0,
         "risk_reward_ratio": 1.2,
-        "max_spread_pips": 28.0,
+        "max_spread_pips": 31.0,
         "max_spread_percent_of_tp": 20.0,
         "dynamic_values_enabled": true,
         "poll_interval_ms": 2000,
@@ -3865,6 +3866,18 @@
       "GBP",
       "EUR",
       "JPY",
+      "USD",
+      "GBP",
+      "EUR",
+      "JPY",
+      "USD",
+      "GBP",
+      "EUR",
+      "JPY",
+      "USD",
+      "GBP",
+      "EUR",
+      "JPY",
       "CHF"
     ],
     "news_impact_filter": "High only",
@@ -3882,5 +3895,5 @@
   },
   "Theme": "Dark",
   "AutoConnectOnLaunch": true,
-  "LastSaved": "2026-05-06T12:24:14.660155Z"
+  "LastSaved": "2026-05-06T12:25:20.3586119Z"
 }
