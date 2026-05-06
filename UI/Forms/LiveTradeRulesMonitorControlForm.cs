@@ -86,13 +86,14 @@ namespace MT5TradingBot.UI
             {
                 Dock = DockStyle.Fill,
                 ColumnCount = 1,
-                RowCount = 5,
+                RowCount = 6,
                 Padding = new Padding(12),
                 BackColor = BackColor
             };
-            root.RowStyles.Add(new RowStyle(SizeType.Absolute, 82));
-            root.RowStyles.Add(new RowStyle(SizeType.Absolute, 64));
-            root.RowStyles.Add(new RowStyle(SizeType.Absolute, 78));
+            root.RowStyles.Add(new RowStyle(SizeType.Absolute, 124));
+            root.RowStyles.Add(new RowStyle(SizeType.Absolute, 52));
+            root.RowStyles.Add(new RowStyle(SizeType.Absolute, 48));
+            root.RowStyles.Add(new RowStyle(SizeType.Absolute, 50));
             root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
             root.RowStyles.Add(new RowStyle(SizeType.Absolute, 48));
 
@@ -107,15 +108,18 @@ namespace MT5TradingBot.UI
             _lblSummary.Padding = new Padding(8);
             _lblSummary.BackColor = Color.FromArgb(18, 24, 34);
 
-            var searchRow = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 2 };
-            searchRow.RowStyles.Add(new RowStyle(SizeType.Absolute, 36));
-            searchRow.RowStyles.Add(new RowStyle(SizeType.Absolute, 36));
+            var searchRow = new TableLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                ColumnCount = 3,
+                RowCount = 1,
+                Padding = new Padding(0, 6, 0, 6)
+            };
+            searchRow.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 92));
+            searchRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+            searchRow.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 150));
 
-            var searchLine = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 3 };
-            searchLine.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 80));
-            searchLine.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-            searchLine.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 150));
-            searchLine.Controls.Add(new Label
+            searchRow.Controls.Add(new Label
             {
                 Text = "Search",
                 Dock = DockStyle.Fill,
@@ -123,17 +127,20 @@ namespace MT5TradingBot.UI
                 ForeColor = ForeColor
             }, 0, 0);
             _txtSearch.Dock = DockStyle.Fill;
+            _txtSearch.Margin = new Padding(0, 0, 10, 0);
             _txtSearch.BackColor = Color.FromArgb(20, 24, 34);
             _txtSearch.ForeColor = ForeColor;
             _txtSearch.BorderStyle = BorderStyle.FixedSingle;
             _txtSearch.TextChanged += (_, _) => BindRules();
-            searchLine.Controls.Add(_txtSearch, 1, 0);
+            searchRow.Controls.Add(_txtSearch, 1, 0);
             _btnExport.Text = "Export";
+            _btnExport.Dock = DockStyle.Fill;
             StyleButton(_btnExport, Color.FromArgb(99, 179, 237));
             _btnExport.Click += (_, _) => ExportSnapshot();
-            searchLine.Controls.Add(_btnExport, 2, 0);
+            searchRow.Controls.Add(_btnExport, 2, 0);
 
             var filterLine = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 5 };
+            filterLine.Padding = new Padding(0, 6, 0, 6);
             filterLine.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 80));
             filterLine.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 240));
             filterLine.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 150));
@@ -184,9 +191,6 @@ namespace MT5TradingBot.UI
             }
             filterLine.Controls.Add(_auditFilters, 4, 0);
 
-            searchRow.Controls.Add(searchLine, 0, 0);
-            searchRow.Controls.Add(filterLine, 0, 1);
-
             _bodySplit = new SplitContainer
             {
                 Dock = DockStyle.Fill,
@@ -198,6 +202,10 @@ namespace MT5TradingBot.UI
             var body = _bodySplit;
 
             _tabs.Dock = DockStyle.Fill;
+            _tabs.DrawMode = TabDrawMode.OwnerDrawFixed;
+            _tabs.ItemSize = new Size(170, 34);
+            _tabs.Padding = new Point(18, 6);
+            _tabs.DrawItem += DrawRulesTab;
             body.Panel1.Controls.Add(_tabs);
 
             _lowerSplit = new SplitContainer
@@ -276,9 +284,30 @@ namespace MT5TradingBot.UI
             root.Controls.Add(_lblHeader, 0, 0);
             root.Controls.Add(_lblSummary, 0, 1);
             root.Controls.Add(searchRow, 0, 2);
-            root.Controls.Add(body, 0, 3);
-            root.Controls.Add(buttons, 0, 4);
+            root.Controls.Add(filterLine, 0, 3);
+            root.Controls.Add(body, 0, 4);
+            root.Controls.Add(buttons, 0, 5);
             Controls.Add(root);
+        }
+
+        private void DrawRulesTab(object? sender, DrawItemEventArgs e)
+        {
+            if (e.Index < 0 || e.Index >= _tabs.TabPages.Count)
+                return;
+
+            bool selected = e.Index == _tabs.SelectedIndex;
+            Rectangle bounds = e.Bounds;
+            using var back = new SolidBrush(selected ? Color.FromArgb(34, 48, 70) : Color.FromArgb(22, 28, 40));
+            using var border = new Pen(selected ? Color.FromArgb(99, 179, 237) : Color.FromArgb(45, 52, 68));
+            e.Graphics.FillRectangle(back, bounds);
+            e.Graphics.DrawRectangle(border, bounds.X, bounds.Y, bounds.Width - 1, bounds.Height - 1);
+            TextRenderer.DrawText(
+                e.Graphics,
+                _tabs.TabPages[e.Index].Text,
+                new Font("Segoe UI Semibold", 9F, FontStyle.Bold),
+                new Rectangle(bounds.X + 10, bounds.Y + 4, bounds.Width - 20, bounds.Height - 8),
+                selected ? Color.White : Color.FromArgb(200, 210, 225),
+                TextFormatFlags.VerticalCenter | TextFormatFlags.Left | TextFormatFlags.EndEllipsis);
         }
 
         private void BuildTabs()
@@ -427,6 +456,9 @@ namespace MT5TradingBot.UI
             };
             grid.ColumnHeadersDefaultCellStyle.BackColor = Color.FromArgb(30, 38, 54);
             grid.ColumnHeadersDefaultCellStyle.ForeColor = Color.White;
+            grid.ColumnHeadersHeight = 36;
+            grid.ColumnHeadersHeightSizeMode = DataGridViewColumnHeadersHeightSizeMode.DisableResizing;
+            grid.RowTemplate.Height = 30;
             grid.DefaultCellStyle.BackColor = Color.FromArgb(18, 24, 34);
             grid.DefaultCellStyle.ForeColor = Color.FromArgb(230, 235, 245);
             grid.DefaultCellStyle.SelectionBackColor = Color.FromArgb(38, 58, 82);
@@ -462,6 +494,7 @@ namespace MT5TradingBot.UI
             try
             {
                 _latest = await _snapshotService.BuildAsync(_context).ConfigureAwait(true);
+                ApplyLogContextToSnapshot(_latest);
                 UpdateHeader();
                 UpdateGroupFilterItems();
                 TrackSnapshotHistory(_latest.Rules);
@@ -528,8 +561,11 @@ namespace MT5TradingBot.UI
             string positionText = position == null
                 ? $"Price {(symbol == null ? "-" : $"{symbol.Bid:F5}/{symbol.Ask:F5}")}"
                 : $"Entry {position.OpenPrice:F5} | Current {position.CurrentPrice:F5} | SL {position.StopLoss:F5} | TP {position.TakeProfit:F5} | Lot {position.Lots:F2} | P/L {position.Profit:F2} | Opened {position.OpenTime:g}";
+            string logText = string.IsNullOrWhiteSpace(_context.RawLogLine)
+                ? "Opened log: -"
+                : $"Opened log {FormatOpenedLogTimestamp()}: {TrimForHeader(_context.RawLogLine)}";
 
-            _lblHeader.Text = $"{accountText}{Environment.NewLine}{tradeText}{Environment.NewLine}{positionText}";
+            _lblHeader.Text = $"{accountText}{Environment.NewLine}{tradeText}{Environment.NewLine}{positionText}{Environment.NewLine}{logText}";
 
             var summary = _latest.Summary;
             _lblSummary.Text =
@@ -591,6 +627,13 @@ namespace MT5TradingBot.UI
                         grid.Rows[row].Cells["Feedback"].Style.BackColor = FeedbackColor(rule);
                         grid.Rows[row].Cells["Feedback"].Style.ForeColor = Color.White;
                         grid.Rows[row].Cells["Status"].Style.BackColor = StatusBackColor(rule);
+                        if (IsLogHighlightedBlockingRule(rule))
+                        {
+                            grid.Rows[row].DefaultCellStyle.BackColor = Color.FromArgb(72, 24, 30);
+                            grid.Rows[row].DefaultCellStyle.SelectionBackColor = Color.FromArgb(110, 35, 44);
+                            grid.Rows[row].Cells["Rule"].Style.ForeColor = Color.White;
+                            grid.Rows[row].Cells["Rule"].Style.BackColor = Color.FromArgb(118, 35, 44);
+                        }
                     }
                 }
             }
@@ -720,8 +763,110 @@ namespace MT5TradingBot.UI
                 Contains(r.FunctionName, search) ||
                 Contains(r.VariableName, search) ||
                 Contains(r.Result, search) ||
+                Contains(r.Reason, search) ||
                 Contains(r.SourceName, search) ||
                 Contains(r.Category, search));
+        }
+
+        private bool IsLogHighlightedBlockingRule(TradeRuleRuntimeSnapshot rule) =>
+            !string.IsNullOrWhiteSpace(_context.RawLogLine) &&
+            rule.Result == TradeRuleResults.Block &&
+            string.Equals(rule.RuleCode, ResolveBlockingRuleCodeFromLog(_context.RawLogLine), StringComparison.OrdinalIgnoreCase);
+
+        private void ApplyLogContextToSnapshot(TradeRulesRuntimeSnapshotResult snapshot)
+        {
+            if (string.IsNullOrWhiteSpace(_context.RawLogLine))
+                return;
+
+            string logRuleCode = ResolveBlockingRuleCodeFromLog(_context.RawLogLine);
+            if (string.IsNullOrWhiteSpace(logRuleCode))
+                return;
+
+            var rule = snapshot.Rules.FirstOrDefault(r => string.Equals(r.RuleCode, logRuleCode, StringComparison.OrdinalIgnoreCase))
+                ?? snapshot.Rules.FirstOrDefault(r => r.RuleCode == "EXEC-TRADE-REJECTED");
+            if (rule == null)
+                return;
+
+            rule.Result = TradeRuleResults.Block;
+            rule.WouldHaveResult = null;
+            rule.LiveValue = "Rejected from selected log";
+            rule.Reason = ExtractLogReason(_context.RawLogLine).DefaultIfBlank("Selected log row indicates this rule rejected or blocked the trade.");
+            rule.ActualEffect = "Highlighted from the log row used to open this monitor.";
+            snapshot.Summary = TradeRuleStatusEvaluator.BuildSummary(snapshot.Rules);
+            snapshot.Summary.CurrentDecision = "NO TRADE";
+            snapshot.Summary.MainBlockingRule = rule.RuleCode;
+            snapshot.Summary.RiskLevel = "High";
+        }
+
+        private static string ResolveBlockingRuleCodeFromLog(string line)
+        {
+            string explicitRule = ExtractTokenAfter(line, "MainRule=");
+            if (!string.IsNullOrWhiteSpace(explicitRule))
+                return explicitRule;
+
+            explicitRule = ExtractTokenAfter(line, "Rule=");
+            if (!string.IsNullOrWhiteSpace(explicitRule))
+                return explicitRule;
+
+            string text = line;
+            if (Contains(text, "NEWS")) return "SAFETY-NEWS-BLACKOUT";
+            if (Contains(text, "BROKER_STOP") || Contains(text, "stop-level")) return "BROKER-STOP-LEVEL";
+            if (Contains(text, "BROKER_FREEZE") || Contains(text, "freeze")) return "BROKER-FREEZE-LEVEL";
+            if (Contains(text, "BROKER_LOT") || Contains(text, "lot size")) return "BROKER-LOT-SIZE";
+            if (Contains(text, "ORDER_CHECK")) return "BROKER-ORDER-CHECK";
+            if (Contains(text, "live conditions require about") && Contains(text, "TP pips") && Contains(text, "Trade Page TP")) return "SCALP-TP-PIPS";
+            if (Contains(text, "DAILY")) return "ACCOUNT-DAILY-LOSS";
+            if (Contains(text, "WEEKLY")) return "ACCOUNT-WEEKLY-LOSS";
+            if (Contains(text, "MARGIN")) return "ACCOUNT-MARGIN";
+            if (Contains(text, "SYMBOL_EXPOSURE")) return "ACCOUNT-SYMBOL-EXPOSURE";
+            if (Contains(text, "NO_TRADE_WINDOW") || Contains(text, "ROLLOVER")) return "SAFETY-NO-TRADE-WINDOW";
+            if (Contains(text, "rejected") || Contains(text, "not opened") || Contains(text, "no trade")) return "EXEC-TRADE-REJECTED";
+            return "";
+        }
+
+        private static string ExtractLogReason(string line)
+        {
+            string reason = ExtractAfter(line, "Reason=");
+            if (!string.IsNullOrWhiteSpace(reason))
+                return reason;
+
+            reason = ExtractAfter(line, "MainRule=");
+            if (!string.IsNullOrWhiteSpace(reason))
+                return reason;
+
+            return TrimForHeader(line);
+        }
+
+        private static string ExtractTokenAfter(string text, string marker)
+        {
+            string value = ExtractAfter(text, marker);
+            if (string.IsNullOrWhiteSpace(value))
+                return "";
+
+            int firstSpace = value.IndexOf(' ');
+            int firstPipe = value.IndexOf('|');
+            int end = firstSpace < 0 ? firstPipe : firstPipe < 0 ? firstSpace : Math.Min(firstSpace, firstPipe);
+            return (end < 0 ? value : value[..end]).Trim();
+        }
+
+        private static string ExtractAfter(string text, string marker)
+        {
+            int index = text.IndexOf(marker, StringComparison.OrdinalIgnoreCase);
+            if (index < 0)
+                return "";
+
+            return text[(index + marker.Length)..].Trim().Trim('|').Trim();
+        }
+
+        private string FormatOpenedLogTimestamp() =>
+            string.IsNullOrWhiteSpace(_context.OpenedLogTimestamp)
+                ? ""
+                : $"[{_context.OpenedLogTimestamp}]";
+
+        private static string TrimForHeader(string? text)
+        {
+            string value = (text ?? "").Replace("\r", " ").Replace("\n", " ").Trim();
+            return value.Length > 240 ? value[..237] + "..." : value;
         }
 
         private void Grid_CellEndEdit(object? sender, DataGridViewCellEventArgs e)

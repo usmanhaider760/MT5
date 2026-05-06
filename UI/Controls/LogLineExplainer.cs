@@ -139,9 +139,12 @@ namespace MT5TradingBot.UI
             }
             AppendSummary(values, summary);
 
+            string tradePageText = tradePageTp.HasValue ? $"{tradePageTp.Value:0.#####}-pip TP" : "configured TP";
+            string requiredText = requiredTp.HasValue ? $"{requiredTp.Value:0.#####} TP pips" : "a larger TP";
+
             return Detail(
                 original,
-                "Technical meaning: the current TP is too small for the live spread and required R:R guardrails. Spread is acceptable by the max-spread input, but the take-profit distance still needs to be wide enough that spread cost and reward/risk remain healthy.\n\nNon-technical meaning: the trade is not blocked because spread is over 50 pips. It is blocked because a 120-pip TP is too tight for this live setup; the bot estimates it needs about 150 TP pips.",
+                $"Technical meaning: the current TP is too small for the live spread and required R:R guardrails. Spread is acceptable by the max-spread input, but the take-profit distance still needs to be wide enough that spread cost and reward/risk remain healthy.\n\nNon-technical meaning: the trade is not blocked only because spread is over the max-spread limit. It is blocked because the {tradePageText} is too tight for this live setup; the bot estimates it needs about {requiredText}.",
                 values.ToString(),
                 BuildFormula(summary, "Dynamic TP rule: required TP = max(SL pips * required R:R, spread pips / allowed spread-share-of-TP). Decision rule: if required TP > Trade Page TP, the bot must wait or use a larger TP. In this log, required TP was above the Trade Page TP, so the setup failed the TP/R:R safety check."),
                 "No trade was opened. This is a safety block: the bot refused a scalp where the configured TP was too small for the live spread/R:R requirements.",
@@ -168,17 +171,27 @@ namespace MT5TradingBot.UI
             AppendText(values, "Reason", ExtractScalpNoTradeReason(message));
             AppendConfirmation(values, message, "BUY");
             AppendConfirmation(values, message, "SELL");
+            AppendScalpScoreOutcome(values, message, "BUY");
+            AppendScalpScoreOutcome(values, message, "SELL");
+            AppendText(values, "Hard blocking rule", ExtractHardScalpRule(message));
             AppendText(values, "Rule Audit", FormatRuleAudit(message));
             AppendSummary(values, summary);
+            string hardRule = ExtractHardScalpRule(message);
 
             return Detail(
                 original,
-                "The auto-scalping check evaluated both BUY and SELL, but neither direction had enough confirmations to qualify. This is a wait/no-trade decision, not an execution attempt.",
+                string.IsNullOrWhiteSpace(hardRule)
+                    ? "The auto-scalping check evaluated both BUY and SELL, but neither direction had enough confirmations to qualify. This is a wait/no-trade decision, not an execution attempt."
+                    : $"The auto-scalping check evaluated both BUY and SELL. One side may have enough score, but execution was still blocked by a hard safety rule: {hardRule}. This is a wait/no-trade decision, not an execution attempt.",
                 values.ToString().Trim(),
                 BuildFormula(summary, "Scalping direction rule: evaluate BUY and SELL independently. Hard rules can block immediately; scored rules add confirmations. Continue only when one side reaches the configured confirmation count and no hard rule blocks. If neither side passes, the bot must wait."),
-                "No trade was opened. The setup was blocked because neither BUY nor SELL passed the confirmation checks.",
+                string.IsNullOrWhiteSpace(hardRule)
+                    ? "No trade was opened. The setup was blocked because neither BUY nor SELL passed the confirmation checks."
+                    : $"No trade was opened. The setup was blocked by hard rule: {hardRule}.",
                 BuildExpectedPl(summary),
-                "Wait for a later SCALP line where one side has enough confirmations, or inspect the market-check details to see which confirmation inputs are missing.");
+                string.IsNullOrWhiteSpace(hardRule)
+                    ? "Wait for a later SCALP line where one side has enough confirmations, or inspect the market-check details to see which confirmation inputs are missing."
+                    : $"Wait until the hard-rule condition clears, then review the next SCALP_DECISION line. For this log, focus on: {hardRule}.");
         }
 
         private static AppLogDetail ExplainTradeNotOpened(string original, string message, PriceSummary? summary)
@@ -362,6 +375,31 @@ namespace MT5TradingBot.UI
                 .Append('/')
                 .Append(match.Groups["total"].Value)
                 .AppendLine();
+        }
+
+        private static void AppendScalpScoreOutcome(StringBuilder values, string message, string side)
+        {
+            var match = Regex.Match(
+                message,
+                $@"{Regex.Escape(side)}\s+score\s+(?<status>passed|failed)\s+(?<got>[0-9]+(?:\.[0-9]+)?)\s*/\s*(?<required>[0-9]+(?:\.[0-9]+)?)",
+                RegexOptions.IgnoreCase);
+            if (!match.Success) return;
+
+            values.Append(side.ToUpperInvariant())
+                .Append(" score: ")
+                .Append(match.Groups["got"].Value)
+                .Append('/')
+                .Append(match.Groups["required"].Value)
+                .Append(" (")
+                .Append(match.Groups["status"].Value.ToLowerInvariant())
+                .Append(')')
+                .AppendLine();
+        }
+
+        private static string ExtractHardScalpRule(string message)
+        {
+            string? rule = ReadText(message, @"hard rule:\s*(?<v>[^.]+)");
+            return rule?.Trim() ?? "";
         }
 
         private static string? FormatRuleAudit(string message)

@@ -19,6 +19,7 @@ namespace MT5TradingBot.Modules.TradeRules
         public bool IsRunningTrade { get; set; }
         public string OpenedFrom { get; set; } = "";
         public string? RawLogLine { get; set; }
+        public string? OpenedLogTimestamp { get; set; }
     }
 
     public sealed class TradeRuleRuntimeSnapshot

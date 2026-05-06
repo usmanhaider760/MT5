@@ -4222,6 +4222,15 @@ SAFETY RULES:
             _cardTooltip.SetToolTip(btnScalpReset, "Reset scalping values to bot suggestions for this pair.");
             var btnStartScalping = MakeDialogButton(_scalping?.IsRunning == true ? "Stop Scalping" : "Start Scalping", Color.FromArgb(150, 88, 18));
             btnStartScalping.ForeColor = Color.FromArgb(255, 220, 140);
+            var lblScalpActualRr = new Label
+            {
+                Text = "Actual R:R -",
+                ForeColor = Color.FromArgb(170, 220, 170),
+                AutoSize = false,
+                Size = new Size(112, 28),
+                TextAlign = ContentAlignment.MiddleLeft,
+                Margin = new Padding(4, 4, 8, 0)
+            };
             var lblScalpingStatus = new Label
             {
                 Text = $"Scalping Status: {(_scalping?.IsRunning == true ? "Running" : "Stopped")}",
@@ -4303,8 +4312,9 @@ SAFETY RULES:
             scalpPanel.Controls.Add(nudScalpTp);
             scalpPanel.Controls.Add(MakeInlineLabel("TP $"));
             scalpPanel.Controls.Add(nudScalpTpMoney);
-            scalpPanel.Controls.Add(MakeInlineLabel("Risk Reward Ratio"));
+            scalpPanel.Controls.Add(MakeInlineLabel("Min R:R"));
             scalpPanel.Controls.Add(nudScalpRr);
+            scalpPanel.Controls.Add(lblScalpActualRr);
             scalpPanel.Controls.Add(MakeInlineLabel("Max spread pips"));
             scalpPanel.Controls.Add(nudScalpSpread);
             scalpPanel.Controls.Add(btnScalpReset);
@@ -4341,6 +4351,15 @@ SAFETY RULES:
             var nudNormalTpMoney = MakeReviewNumber(0, 100000, 0.10M, 2, 78);
             var nudNormalSpread = MakeReviewNumber(0.1M, 500, 0.1M, 1, 58);
             var nudNormalRr = MakeReviewNumber(0.1M, 20, 0.1M, 1, 58);
+            var lblNormalActualRr = new Label
+            {
+                Text = "Actual R:R -",
+                ForeColor = Color.FromArgb(170, 220, 170),
+                AutoSize = false,
+                Size = new Size(112, 28),
+                TextAlign = ContentAlignment.MiddleLeft,
+                Margin = new Padding(4, 4, 8, 0)
+            };
             var btnStartNormal = MakeDialogButton(_normalTradeManager.IsRunning ? "Stop Normal Trading" : "Start Normal Trading", Color.FromArgb(24, 82, 150));
             btnStartNormal.ForeColor = Color.FromArgb(170, 215, 255);
             var lblNormalStatus = new Label
@@ -4381,8 +4400,9 @@ SAFETY RULES:
             normalPanel.Controls.Add(nudNormalTpMoney);
             normalPanel.Controls.Add(MakeInlineLabel("Max spread pips"));
             normalPanel.Controls.Add(nudNormalSpread);
-            normalPanel.Controls.Add(MakeInlineLabel("Risk Reward Ratio"));
+            normalPanel.Controls.Add(MakeInlineLabel("Min R:R"));
             normalPanel.Controls.Add(nudNormalRr);
+            normalPanel.Controls.Add(lblNormalActualRr);
             normalPanel.Controls.Add(btnStartNormal);
             normalPanel.Controls.Add(lblNormalStatus);
             contentStack.Controls.Add(dataExpander);
@@ -4399,6 +4419,7 @@ SAFETY RULES:
                 decimal pipValue = (decimal)PipValue();
                 nudScalpSlMoney.Value = Math.Min(nudScalpSlMoney.Maximum, Math.Round(nudScalpSl.Value * pipValue, 2));
                 nudScalpTpMoney.Value = Math.Min(nudScalpTpMoney.Maximum, Math.Round(nudScalpTp.Value * pipValue, 2));
+                UpdateScalpActualRrLabel();
             }
 
             void SyncNormalMoneyFromPips()
@@ -4406,7 +4427,56 @@ SAFETY RULES:
                 decimal pipValue = (decimal)PipValue();
                 nudNormalSlMoney.Value = Math.Min(nudNormalSlMoney.Maximum, Math.Round(nudNormalSl.Value * pipValue, 2));
                 nudNormalTpMoney.Value = Math.Min(nudNormalTpMoney.Maximum, Math.Round(nudNormalTp.Value * pipValue, 2));
+                UpdateNormalActualRrLabel();
             }
+
+            decimal MinScalpTp() => Math.Min(nudScalpTp.Maximum, Math.Max(nudScalpTp.Minimum, Math.Round(nudScalpSl.Value * nudScalpRr.Value, 1)));
+            decimal MinNormalTp() => Math.Min(nudNormalTp.Maximum, Math.Max(nudNormalTp.Minimum, Math.Round(nudNormalSl.Value * nudNormalRr.Value, 1)));
+
+            void EnsureScalpTpAtMinimum()
+            {
+                decimal minTp = MinScalpTp();
+                if (nudScalpTp.Value < minTp)
+                    nudScalpTp.Value = minTp;
+            }
+
+            void EnsureNormalTpAtMinimum()
+            {
+                decimal minTp = MinNormalTp();
+                if (nudNormalTp.Value < minTp)
+                    nudNormalTp.Value = minTp;
+            }
+
+            void UpdateScalpActualRrLabel()
+            {
+                decimal actual = nudScalpSl.Value > 0 ? nudScalpTp.Value / nudScalpSl.Value : 0;
+                lblScalpActualRr.Text = $"Actual R:R {actual:0.00}";
+                lblScalpActualRr.ForeColor = actual >= nudScalpRr.Value * 1.15M
+                    ? Color.FromArgb(144, 238, 170)
+                    : actual >= nudScalpRr.Value
+                        ? Color.FromArgb(250, 199, 117)
+                        : Color.FromArgb(252, 95, 95);
+            }
+
+            void UpdateNormalActualRrLabel()
+            {
+                decimal actual = nudNormalSl.Value > 0 ? nudNormalTp.Value / nudNormalSl.Value : 0;
+                lblNormalActualRr.Text = $"Actual R:R {actual:0.00}";
+                lblNormalActualRr.ForeColor = actual >= nudNormalRr.Value * 1.15M
+                    ? Color.FromArgb(144, 238, 170)
+                    : actual >= nudNormalRr.Value
+                        ? Color.FromArgb(250, 199, 117)
+                        : Color.FromArgb(252, 95, 95);
+            }
+
+            scalpSyncing = true;
+            EnsureScalpTpAtMinimum();
+            SyncScalpMoneyFromPips();
+            scalpSyncing = false;
+            normalSyncing = true;
+            EnsureNormalTpAtMinimum();
+            SyncNormalMoneyFromPips();
+            normalSyncing = false;
 
             nudPips.ValueChanged += (_, _) =>
             {
@@ -4451,25 +4521,27 @@ SAFETY RULES:
                 if (scalpSyncing) return;
                 scalpSyncing = true;
                 nudScalpSlMoney.Value = Math.Min(nudScalpSlMoney.Maximum, Math.Round(nudScalpSl.Value * (decimal)PipValue(), 2));
-                nudScalpTp.Value = Math.Min(nudScalpTp.Maximum, Math.Max(nudScalpTp.Minimum, Math.Round(nudScalpSl.Value * nudScalpRr.Value, 1)));
+                EnsureScalpTpAtMinimum();
                 nudScalpTpMoney.Value = Math.Min(nudScalpTpMoney.Maximum, Math.Round(nudScalpTp.Value * (decimal)PipValue(), 2));
+                UpdateScalpActualRrLabel();
                 scalpSyncing = false;
             };
             nudScalpTp.ValueChanged += (_, _) =>
             {
                 if (scalpSyncing) return;
                 scalpSyncing = true;
+                EnsureScalpTpAtMinimum();
                 nudScalpTpMoney.Value = Math.Min(nudScalpTpMoney.Maximum, Math.Round(nudScalpTp.Value * (decimal)PipValue(), 2));
-                if (nudScalpSl.Value > 0)
-                    nudScalpRr.Value = Math.Min(nudScalpRr.Maximum, Math.Max(nudScalpRr.Minimum, Math.Round(nudScalpTp.Value / nudScalpSl.Value, 1)));
+                UpdateScalpActualRrLabel();
                 scalpSyncing = false;
             };
             nudScalpRr.ValueChanged += (_, _) =>
             {
                 if (scalpSyncing) return;
                 scalpSyncing = true;
-                nudScalpTp.Value = Math.Min(nudScalpTp.Maximum, Math.Max(nudScalpTp.Minimum, Math.Round(nudScalpSl.Value * nudScalpRr.Value, 1)));
+                EnsureScalpTpAtMinimum();
                 nudScalpTpMoney.Value = Math.Min(nudScalpTpMoney.Maximum, Math.Round(nudScalpTp.Value * (decimal)PipValue(), 2));
+                UpdateScalpActualRrLabel();
                 scalpSyncing = false;
             };
             nudScalpSlMoney.ValueChanged += (_, _) =>
@@ -4479,6 +4551,8 @@ SAFETY RULES:
                 decimal pipValue = (decimal)PipValue();
                 if (pipValue > 0)
                     nudScalpSl.Value = Math.Min(nudScalpSl.Maximum, Math.Max(nudScalpSl.Minimum, Math.Round(nudScalpSlMoney.Value / pipValue, 1)));
+                EnsureScalpTpAtMinimum();
+                UpdateScalpActualRrLabel();
                 scalpSyncing = false;
             };
             nudScalpTpMoney.ValueChanged += (_, _) =>
@@ -4488,6 +4562,9 @@ SAFETY RULES:
                 decimal pipValue = (decimal)PipValue();
                 if (pipValue > 0)
                     nudScalpTp.Value = Math.Min(nudScalpTp.Maximum, Math.Max(nudScalpTp.Minimum, Math.Round(nudScalpTpMoney.Value / pipValue, 1)));
+                EnsureScalpTpAtMinimum();
+                nudScalpTpMoney.Value = Math.Min(nudScalpTpMoney.Maximum, Math.Round(nudScalpTp.Value * pipValue, 2));
+                UpdateScalpActualRrLabel();
                 scalpSyncing = false;
             };
             nudNormalSl.ValueChanged += (_, _) =>
@@ -4495,25 +4572,27 @@ SAFETY RULES:
                 if (normalSyncing) return;
                 normalSyncing = true;
                 nudNormalSlMoney.Value = Math.Min(nudNormalSlMoney.Maximum, Math.Round(nudNormalSl.Value * (decimal)PipValue(), 2));
-                nudNormalTp.Value = Math.Min(nudNormalTp.Maximum, Math.Max(nudNormalTp.Minimum, Math.Round(nudNormalSl.Value * nudNormalRr.Value, 1)));
+                EnsureNormalTpAtMinimum();
                 nudNormalTpMoney.Value = Math.Min(nudNormalTpMoney.Maximum, Math.Round(nudNormalTp.Value * (decimal)PipValue(), 2));
+                UpdateNormalActualRrLabel();
                 normalSyncing = false;
             };
             nudNormalTp.ValueChanged += (_, _) =>
             {
                 if (normalSyncing) return;
                 normalSyncing = true;
+                EnsureNormalTpAtMinimum();
                 nudNormalTpMoney.Value = Math.Min(nudNormalTpMoney.Maximum, Math.Round(nudNormalTp.Value * (decimal)PipValue(), 2));
-                if (nudNormalSl.Value > 0)
-                    nudNormalRr.Value = Math.Min(nudNormalRr.Maximum, Math.Max(nudNormalRr.Minimum, Math.Round(nudNormalTp.Value / nudNormalSl.Value, 1)));
+                UpdateNormalActualRrLabel();
                 normalSyncing = false;
             };
             nudNormalRr.ValueChanged += (_, _) =>
             {
                 if (normalSyncing) return;
                 normalSyncing = true;
-                nudNormalTp.Value = Math.Min(nudNormalTp.Maximum, Math.Max(nudNormalTp.Minimum, Math.Round(nudNormalSl.Value * nudNormalRr.Value, 1)));
+                EnsureNormalTpAtMinimum();
                 nudNormalTpMoney.Value = Math.Min(nudNormalTpMoney.Maximum, Math.Round(nudNormalTp.Value * (decimal)PipValue(), 2));
+                UpdateNormalActualRrLabel();
                 normalSyncing = false;
             };
             nudNormalSlMoney.ValueChanged += (_, _) =>
@@ -4523,6 +4602,8 @@ SAFETY RULES:
                 decimal pipValue = (decimal)PipValue();
                 if (pipValue > 0)
                     nudNormalSl.Value = Math.Min(nudNormalSl.Maximum, Math.Max(nudNormalSl.Minimum, Math.Round(nudNormalSlMoney.Value / pipValue, 1)));
+                EnsureNormalTpAtMinimum();
+                UpdateNormalActualRrLabel();
                 normalSyncing = false;
             };
             nudNormalTpMoney.ValueChanged += (_, _) =>
@@ -4532,6 +4613,9 @@ SAFETY RULES:
                 decimal pipValue = (decimal)PipValue();
                 if (pipValue > 0)
                     nudNormalTp.Value = Math.Min(nudNormalTp.Maximum, Math.Max(nudNormalTp.Minimum, Math.Round(nudNormalTpMoney.Value / pipValue, 1)));
+                EnsureNormalTpAtMinimum();
+                nudNormalTpMoney.Value = Math.Min(nudNormalTpMoney.Maximum, Math.Round(nudNormalTp.Value * pipValue, 2));
+                UpdateNormalActualRrLabel();
                 normalSyncing = false;
             };
             btnScalpReset.Click += (_, _) =>
@@ -4539,6 +4623,7 @@ SAFETY RULES:
                 scalpSyncing = true;
                 var suggested = BuildSuggestedScalpingConfigForPair(activeRequest.Pair, symbol);
                 ApplyScalpingConfigToControls(suggested);
+                EnsureScalpTpAtMinimum();
                 scalpSyncing = false;
                 SyncScalpMoneyFromPips();
                 Log(
@@ -4556,6 +4641,7 @@ SAFETY RULES:
                 nudMoney.Value = 0;
                 var suggested = BuildSuggestedScalpingConfigForPair(activeRequest.Pair, symbol);
                 ApplyScalpingConfigToControls(suggested);
+                EnsureScalpTpAtMinimum();
                 SyncScalpMoneyFromPips();
                 ApplyNormalTradingSettingsToControls(new NormalTradingSettings
                 {
@@ -4565,9 +4651,12 @@ SAFETY RULES:
                     MaxSpreadPips = Math.Max(suggested.MaxSpreadPips, 30),
                     RiskRewardRatio = 2.0
                 });
+                EnsureNormalTpAtMinimum();
                 SyncNormalMoneyFromPips();
             };
+            EnsureScalpTpAtMinimum();
             SyncScalpMoneyFromPips();
+            EnsureNormalTpAtMinimum();
             SyncNormalMoneyFromPips();
 
             double GetSelectedReviewLotSize()
@@ -6562,9 +6651,9 @@ SAFETY RULES:
                         "Risk/reward is close to the required ratio",
                         "The reward compared with stop-loss risk is weak for this pair. A small spread or entry movement can reduce the effective R:R further.",
                         $"{rr:0.00} R:R",
-                        "Review Trade current TP pips / SL pips after applying visible inputs",
-                        $"{requiredRr:0.00} required R:R",
-                        $"{strategyName} trade page Risk Reward Ratio",
+                        "Actual TP pips / SL pips after applying visible inputs",
+                        $"{requiredRr:0.00} minimum R:R",
+                        $"{strategyName} trade page Min R:R setting",
                         Math.Abs(rr - requiredRr) < 0.005
                             ? "Current value exactly equals the required value, so there is no buffer for spread, slippage, or entry movement."
                             : "Current value passes, but is less than 15% above the required value."));
@@ -8173,8 +8262,19 @@ SAFETY RULES:
                     : null,
             IsRunningTrade = false,
             OpenedFrom = "LogScreen",
-            RawLogLine = line
+            RawLogLine = line,
+            OpenedLogTimestamp = ExtractLogTimestamp(line)
         };
+
+        private static string? ExtractLogTimestamp(string line)
+        {
+            string text = line.TrimStart();
+            if (text.Length < 10 || text[0] != '[')
+                return null;
+
+            int end = text.IndexOf(']');
+            return end > 1 ? text[1..end] : null;
+        }
 
         private static bool IsRulesMonitorEligibleLog(string line) =>
             !string.IsNullOrWhiteSpace(line) &&
@@ -9227,8 +9327,8 @@ SAFETY RULES:
             cfg.MaxTrades = Math.Clamp((int)trades.Value, 1, 6);
             cfg.MaxMinutes = Math.Clamp((int)minutes.Value, 1, 90);
             cfg.StopLossPips = (double)sl.Value;
-            cfg.TakeProfitPips = (double)tp.Value;
             cfg.RiskRewardRatio = Math.Max(0.1, (double)rr.Value);
+            cfg.TakeProfitPips = Math.Max((double)tp.Value, cfg.StopLossPips * cfg.RiskRewardRatio);
             cfg.MaxSpreadPips = (double)spread.Value;
             cfg.DynamicValuesEnabled = true;
             cfg.RequireSnapshotConfirmation = true;
@@ -9279,7 +9379,7 @@ SAFETY RULES:
                 MaxTrades = Math.Clamp((int)trades.Value, 1, 50),
                 ExpiryMinutes = Math.Clamp((int)expiry.Value, 1, 10080),
                 StopLossPips = (double)sl.Value,
-                TakeProfitPips = (double)tp.Value,
+                TakeProfitPips = Math.Max((double)tp.Value, (double)sl.Value * Math.Max(0.1, (double)rr.Value)),
                 MaxSpreadPips = (double)spread.Value,
                 RiskRewardRatio = Math.Max(0.1, (double)rr.Value)
             };
