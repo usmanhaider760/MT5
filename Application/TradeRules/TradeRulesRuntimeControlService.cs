@@ -14,15 +14,40 @@ namespace MT5TradingBot.Modules.TradeRules
             _settingsManager = settingsManager;
         }
 
-        public Task ApplyRuntimeAsync(
+        public Task<TradeRulesRuntimeApplyResult> ApplyRuntimeAsync(
             TradeRulesContext context,
             IReadOnlyList<TradeRuleRuntimeSnapshot> rules,
             CancellationToken cancellationToken = default)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            ApplyRuleStates(rules);
-            ApplyEditableValues(context, rules);
-            return Task.CompletedTask;
+            var runtimeRules = rules
+                .Where(rule => IsRuntimeControllableRule(rule.RuleCode, context.Strategy))
+                .ToList();
+
+            ApplyRuleStates(runtimeRules);
+            ApplyEditableValues(context, runtimeRules);
+            return Task.FromResult(new TradeRulesRuntimeApplyResult
+            {
+                AppliedCount = runtimeRules.Count,
+                SkippedMonitorOnlyCount = rules.Count - runtimeRules.Count,
+                FailedCount = 0
+            });
+        }
+
+        public static bool IsRuntimeControllableRule(string ruleCode, TradeRulesStrategy strategy)
+        {
+            if (ruleCode is
+                "COMMON-AI-CONFIRM" or "COMMON-AUTO-CLOSE" or "COMMON-PROFIT-PIPS" or "COMMON-PROFIT-USD" or
+                "COMMON-BREAKEVEN-TRIGGER" or "COMMON-MAX-SPREAD" or "COMMON-MAX-POSITIONS" or "COMMON-CORRELATION")
+                return true;
+
+            if (strategy == TradeRulesStrategy.Scalping && ruleCode.StartsWith("SCALP-", StringComparison.Ordinal))
+                return ruleCode is not ("SCALP-BUY-SCORE" or "SCALP-SELL-SCORE" or "SCALP-REQUEST-BUILD");
+
+            if (strategy == TradeRulesStrategy.Normal && ruleCode.StartsWith("NORMAL-", StringComparison.Ordinal))
+                return true;
+
+            return false;
         }
 
         public async Task SavePairDefaultsAsync(
@@ -110,6 +135,9 @@ namespace MT5TradingBot.Modules.TradeRules
                 object? value = rule.PreviewValue ?? rule.ConfiguredValue;
                 switch (rule.RuleCode)
                 {
+                    case "COMMON-TRADING-MODE":
+                        bot.CommonTrading.TradingMode = ToEnum(value, bot.CommonTrading.TradingMode);
+                        break;
                     case "COMMON-AI-CONFIRM":
                         bot.CommonTrading.UseAiConfirmation = ToBool(value, bot.CommonTrading.UseAiConfirmation);
                         break;
@@ -157,6 +185,7 @@ namespace MT5TradingBot.Modules.TradeRules
                     case "SCALP-DYNAMIC-VALUES": cfg.DynamicValuesEnabled = ToBool(value, cfg.DynamicValuesEnabled); break;
                     case "SCALP-POLL-INTERVAL": cfg.PollIntervalMs = ToInt(value, cfg.PollIntervalMs); break;
                     case "SCALP-COOLDOWN": cfg.CooldownSeconds = ToInt(value, cfg.CooldownSeconds); break;
+                    case "SCALP-DIRECTION-MODE": cfg.DirectionMode = ToEnum(value, cfg.DirectionMode); break;
                     case "SCALP-PYRAMIDING": cfg.AllowPyramiding = ToBool(value, cfg.AllowPyramiding); break;
                     case "SCALP-SNAPSHOT-CONFIRM": cfg.RequireSnapshotConfirmation = ToBool(value, cfg.RequireSnapshotConfirmation); break;
                     case "SCALP-MIN-SCORE": cfg.MinDecisionScore = ToInt(value, cfg.MinDecisionScore); break;
@@ -243,6 +272,15 @@ namespace MT5TradingBot.Modules.TradeRules
                 string s when bool.TryParse(s, out bool b) => b,
                 string s when s.Equals("yes", StringComparison.OrdinalIgnoreCase) => true,
                 string s when s.Equals("no", StringComparison.OrdinalIgnoreCase) => false,
+                _ => fallback
+            };
+
+        private static TEnum ToEnum<TEnum>(object? value, TEnum fallback)
+            where TEnum : struct, Enum =>
+            value switch
+            {
+                TEnum current => current,
+                string s when Enum.TryParse<TEnum>(s, ignoreCase: true, out var parsed) => parsed,
                 _ => fallback
             };
     }

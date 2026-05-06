@@ -54,6 +54,7 @@ namespace MT5TradingBot.UI
         private const int MaxScreenLogLines = 500;
         private const int MaxScreenLogChars = 180;
         private readonly List<string> _screenLogFullMessages = [];
+        private int _lastLogContextLineIndex = -1;
 
         // -- Pair analysis feed ------------------------------------
         private readonly Dictionary<string, Panel> _pairAnalysisCards = new(StringComparer.OrdinalIgnoreCase);
@@ -187,7 +188,7 @@ namespace MT5TradingBot.UI
             {
                 Log(r.IsSuccess
                         ? $"[BOT] Trade | Rule=EXEC-TRADE-ACCEPTED Trade Accepted | {r}"
-                        : $"[BOT] Rejected | Rule=EXEC-TRADE-REJECTED Trade Rejected | {r.ErrorMessage}",
+                        : $"[BOT] Rejected | MainRule={ResolveRejectedRuleForLog(r.ErrorCode, r.ErrorMessage)} | Reason={r.ErrorMessage}",
                     r.IsSuccess ? C_GREEN : C_RED);
                 _ = RefreshBotTradeStatusAsync(r);
             };
@@ -203,6 +204,37 @@ namespace MT5TradingBot.UI
             bot.OnSignalUpdate += info => AddOrUpdateSignalCard(info);
 
             return bot;
+        }
+
+        private static string ResolveRejectedRuleForLog(string? errorCode, string? reason)
+        {
+            string code = errorCode ?? "";
+            string text = $"{errorCode} {reason}";
+
+            if (text.Contains("NEWS", StringComparison.OrdinalIgnoreCase))
+                return "SAFETY-NEWS-BLACKOUT News Blackout Filter";
+            if (text.Contains("BROKER_STOP", StringComparison.OrdinalIgnoreCase) || text.Contains("stop-level", StringComparison.OrdinalIgnoreCase))
+                return "BROKER-STOP-LEVEL Broker Stop Level";
+            if (text.Contains("BROKER_FREEZE", StringComparison.OrdinalIgnoreCase) || text.Contains("freeze", StringComparison.OrdinalIgnoreCase))
+                return "BROKER-FREEZE-LEVEL Broker Freeze Level";
+            if (text.Contains("BROKER_LOT", StringComparison.OrdinalIgnoreCase) || text.Contains("lot", StringComparison.OrdinalIgnoreCase))
+                return "BROKER-LOT-SIZE Broker Lot Size";
+            if (text.Contains("ORDER_CHECK", StringComparison.OrdinalIgnoreCase))
+                return "BROKER-ORDER-CHECK Broker OrderCheck";
+            if (text.Contains("DAILY", StringComparison.OrdinalIgnoreCase))
+                return "ACCOUNT-DAILY-LOSS Daily Loss Limit";
+            if (text.Contains("WEEKLY", StringComparison.OrdinalIgnoreCase))
+                return "ACCOUNT-WEEKLY-LOSS Weekly Loss Limit";
+            if (text.Contains("MARGIN", StringComparison.OrdinalIgnoreCase))
+                return "ACCOUNT-MARGIN Projected Margin Validation";
+            if (text.Contains("SYMBOL_EXPOSURE", StringComparison.OrdinalIgnoreCase))
+                return "ACCOUNT-SYMBOL-EXPOSURE Same Symbol Exposure";
+            if (text.Contains("NO_TRADE_WINDOW", StringComparison.OrdinalIgnoreCase) || text.Contains("ROLLOVER", StringComparison.OrdinalIgnoreCase))
+                return "SAFETY-NO-TRADE-WINDOW No-Trade Window";
+
+            return string.IsNullOrWhiteSpace(code)
+                ? "EXEC-TRADE-REJECTED Trade Rejected"
+                : $"EXEC-TRADE-REJECTED Trade Rejected ({code})";
         }
 
         private ClaudeSignalService CreateClaude()
@@ -276,6 +308,7 @@ namespace MT5TradingBot.UI
             _btnOpenLogFile.Click += BtnOpenLogFile_Click;
             _btnOpenTradeLogFile.Click += BtnOpenTradeLogFile_Click;
             _btnDeleteLogs.Click += BtnDeleteLogs_Click;
+            _txtLog.MouseDown += TxtLog_MouseDown;
             _txtLog.DoubleClick += TxtLog_DoubleClick;
             ConfigureRulesMonitorContextMenus();
             _cardTooltip.SetToolTip(_btnLogDetails, "Select or double-click a log line to see why the bot traded, waited, or blocked it.");
@@ -298,6 +331,17 @@ namespace MT5TradingBot.UI
                 if (e.ColumnIndex >= 0)
                     _gridPos.CurrentCell = _gridPos.Rows[e.RowIndex].Cells[e.ColumnIndex];
             }
+        }
+
+        private void TxtLog_MouseDown(object? sender, MouseEventArgs e)
+        {
+            if (e.Button != MouseButtons.Right || _txtLog.TextLength == 0)
+                return;
+
+            int charIndex = _txtLog.GetCharIndexFromPosition(e.Location);
+            _txtLog.SelectionStart = Math.Clamp(charIndex, 0, _txtLog.TextLength);
+            _txtLog.SelectionLength = 0;
+            _lastLogContextLineIndex = ResolveNearestLogLineIndex(_txtLog.GetLineFromCharIndex(_txtLog.SelectionStart));
         }
 
         // ==========================================================
@@ -8046,7 +8090,9 @@ SAFETY RULES:
                 _bridge,
                 _pairSettings,
                 _scalping,
-                _normalTradeManager);
+                _normalTradeManager,
+                _newsCalendar,
+                _cfg.ApiIntegrations);
             var controlService = new TradeRulesRuntimeControlService(_cfg, _settings);
 
             Log($"[RULES_MONITOR] Opened | Source={context.OpenedFrom} | Pair={context.Pair} | Strategy={context.Strategy} | Ticket={context.Ticket?.ToString() ?? "-"}", C_ACCENT);
@@ -8133,6 +8179,7 @@ SAFETY RULES:
         private static bool IsRulesMonitorEligibleLog(string line) =>
             !string.IsNullOrWhiteSpace(line) &&
             (line.Contains("[SCALP]", StringComparison.OrdinalIgnoreCase) ||
+             line.Contains("[SCALP_DECISION]", StringComparison.OrdinalIgnoreCase) ||
              line.Contains("[TRADE_AUDIT_FULL]", StringComparison.OrdinalIgnoreCase) ||
              line.Contains("TRADE_AUDIT_FULL", StringComparison.OrdinalIgnoreCase) ||
              line.Contains("[EXEC_AUDIT]", StringComparison.OrdinalIgnoreCase) ||
@@ -8198,6 +8245,7 @@ SAFETY RULES:
 
         private string GetFullLogLineForDetails(int lineIndex)
         {
+            lineIndex = ResolveNearestLogLineIndex(lineIndex);
             if (lineIndex >= 0 && lineIndex < _screenLogFullMessages.Count)
                 return _screenLogFullMessages[lineIndex];
 
@@ -8210,7 +8258,7 @@ SAFETY RULES:
 
             int caret = Math.Clamp(_txtLog.SelectionStart, 0, Math.Max(0, _txtLog.TextLength - 1));
             int line = _txtLog.GetLineFromCharIndex(caret);
-            return line >= 0 && line < _txtLog.Lines.Length ? line : -1;
+            return ResolveNearestLogLineIndex(line);
         }
 
         private string GetSelectedLogLine()
@@ -8228,14 +8276,41 @@ SAFETY RULES:
                     return selectedLine;
             }
 
-            string text = _txtLog.Text;
-            int caret = Math.Clamp(_txtLog.SelectionStart, 0, Math.Max(0, text.Length - 1));
-            int start = text.LastIndexOf('\n', caret);
-            start = start < 0 ? 0 : start + 1;
-            int end = text.IndexOf('\n', caret);
-            if (end < 0) end = text.Length;
+            string[] lines = _txtLog.Lines;
+            if (lines.Length == 0)
+                return "";
 
-            return text[start..end].Trim();
+            int caret = Math.Clamp(_txtLog.SelectionStart, 0, Math.Max(0, _txtLog.TextLength - 1));
+            int lineIndex = ResolveNearestLogLineIndex(_txtLog.GetLineFromCharIndex(caret));
+            if (lineIndex < 0 || lineIndex >= lines.Length)
+                return "";
+
+            return lines[lineIndex].Trim();
+        }
+
+        private int ResolveNearestLogLineIndex(int lineIndex)
+        {
+            string[] lines = _txtLog.Lines;
+            if (lines.Length == 0)
+                return -1;
+
+            int start = Math.Clamp(lineIndex >= 0 ? lineIndex : _lastLogContextLineIndex, 0, lines.Length - 1);
+            if (!string.IsNullOrWhiteSpace(lines[start]))
+                return start;
+
+            for (int i = start - 1; i >= 0; i--)
+            {
+                if (!string.IsNullOrWhiteSpace(lines[i]))
+                    return i;
+            }
+
+            for (int i = start + 1; i < lines.Length; i++)
+            {
+                if (!string.IsNullOrWhiteSpace(lines[i]))
+                    return i;
+            }
+
+            return -1;
         }
 
         private void BtnOpenLogFile_Click(object? sender, EventArgs e)

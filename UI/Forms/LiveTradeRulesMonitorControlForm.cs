@@ -30,12 +30,17 @@ namespace MT5TradingBot.UI
         private readonly Button _btnDisableGroup = new();
         private readonly ListBox _lstHistory = new();
         private readonly Button _btnClearHistory = new();
+        private readonly Dictionary<string, Label> _overviewCardBodies = new(StringComparer.OrdinalIgnoreCase);
         private readonly List<string> _history = [];
         private readonly Dictionary<string, string> _lastRuleStates = new(StringComparer.OrdinalIgnoreCase);
+        private readonly HashSet<string> _collapsedGroups = new(StringComparer.OrdinalIgnoreCase);
         private string _statusFilter = "All";
         private string _groupFilter = "All";
         private TradeRulesRuntimeSnapshotResult? _latest;
         private bool _runtimeEditingEnabled;
+        private bool _bindingRules;
+        private SplitContainer? _bodySplit;
+        private SplitContainer? _lowerSplit;
 
         public LiveTradeRulesMonitorControlForm(
             TradeRulesContext context,
@@ -63,6 +68,7 @@ namespace MT5TradingBot.UI
             _refreshTimer.Tick += async (_, _) => await RefreshSnapshotAsync().ConfigureAwait(true);
             Shown += async (_, _) =>
             {
+                ApplySafeSplitterDistances();
                 await RefreshSnapshotAsync().ConfigureAwait(true);
                 _refreshTimer.Start();
             };
@@ -71,6 +77,7 @@ namespace MT5TradingBot.UI
                 _refreshTimer.Stop();
                 _refreshTimer.Dispose();
             };
+            Resize += (_, _) => ApplySafeSplitterDistances();
         }
 
         private void BuildLayout()
@@ -149,12 +156,15 @@ namespace MT5TradingBot.UI
                 ForeColor = ForeColor
             }, 0, 0);
             filterLine.Controls.Add(_cmbGroupFilter, 1, 0);
+            _cmbGroupFilter.Visible = false;
             _btnEnableGroup.Text = "Enable Group";
             _btnDisableGroup.Text = "Disable Group";
             _btnEnableGroup.Click += (_, _) => ToggleVisibleGroup(true);
             _btnDisableGroup.Click += (_, _) => ToggleVisibleGroup(false);
             StyleButton(_btnEnableGroup, Color.FromArgb(46, 160, 94));
             StyleButton(_btnDisableGroup, Color.FromArgb(165, 80, 60));
+            _btnEnableGroup.Visible = false;
+            _btnDisableGroup.Visible = false;
             filterLine.Controls.Add(_btnEnableGroup, 2, 0);
             filterLine.Controls.Add(_btnDisableGroup, 3, 0);
 
@@ -177,28 +187,28 @@ namespace MT5TradingBot.UI
             searchRow.Controls.Add(searchLine, 0, 0);
             searchRow.Controls.Add(filterLine, 0, 1);
 
-            var body = new SplitContainer
+            _bodySplit = new SplitContainer
             {
                 Dock = DockStyle.Fill,
                 Orientation = Orientation.Horizontal,
-                SplitterDistance = 430,
-                Panel1MinSize = 260,
-                Panel2MinSize = 90,
+                Panel1MinSize = 180,
+                Panel2MinSize = 70,
                 BackColor = BackColor
             };
+            var body = _bodySplit;
 
             _tabs.Dock = DockStyle.Fill;
             body.Panel1.Controls.Add(_tabs);
 
-            var lower = new SplitContainer
+            _lowerSplit = new SplitContainer
             {
                 Dock = DockStyle.Fill,
                 Orientation = Orientation.Vertical,
-                SplitterDistance = 620,
-                Panel1MinSize = 280,
-                Panel2MinSize = 220,
+                Panel1MinSize = 160,
+                Panel2MinSize = 140,
                 BackColor = BackColor
             };
+            var lower = _lowerSplit;
 
             _txtAdvancedDetails.Dock = DockStyle.Fill;
             _txtAdvancedDetails.Multiline = true;
@@ -299,10 +309,104 @@ namespace MT5TradingBot.UI
                 grid.SelectionChanged += (_, _) => ShowAdvancedDetails(grid);
                 grid.CellEndEdit += Grid_CellEndEdit;
                 grid.CellClick += Grid_CellClick;
-                page.Controls.Add(grid);
+                grid.CellDoubleClick += Grid_CellDoubleClick;
+                grid.CurrentCellDirtyStateChanged += Grid_CurrentCellDirtyStateChanged;
+                grid.CellValueChanged += Grid_CellValueChanged;
+                if (tabName == "Live Overview")
+                {
+                    var layout = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 2, ColumnCount = 1 };
+                    layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 148));
+                    layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+                    layout.Controls.Add(CreateOverviewCardsPanel(), 0, 0);
+                    layout.Controls.Add(grid, 0, 1);
+                    page.Controls.Add(layout);
+                }
+                else
+                {
+                    page.Controls.Add(grid);
+                }
                 _ruleGrids[tabName] = grid;
                 _tabs.TabPages.Add(page);
             }
+        }
+
+        private static void SetSafeSplitterDistance(SplitContainer split, int desired)
+        {
+            if (split.IsDisposed || !split.IsHandleCreated)
+                return;
+
+            int size = split.Orientation == Orientation.Vertical
+                ? split.Width
+                : split.Height;
+
+            int min = split.Panel1MinSize;
+            int max = size - split.Panel2MinSize;
+
+            if (size <= 0 || max <= min || split.SplitterDistance < 0)
+                return;
+
+            int distance = Math.Max(min, Math.Min(desired, max));
+            if (distance >= min && distance <= max)
+                split.SplitterDistance = distance;
+        }
+
+        private void ApplySafeSplitterDistances()
+        {
+            if (_bodySplit != null)
+                SetSafeSplitterDistance(_bodySplit, 430);
+
+            if (_lowerSplit != null)
+                SetSafeSplitterDistance(_lowerSplit, 620);
+        }
+
+        private Control CreateOverviewCardsPanel()
+        {
+            var panel = new FlowLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                AutoScroll = true,
+                WrapContents = false,
+                FlowDirection = FlowDirection.LeftToRight,
+                BackColor = BackColor,
+                Padding = new Padding(4)
+            };
+
+            foreach (string title in new[]
+            {
+                "Decision", "Spread", "BUY Score", "SELL Score", "ADX", "Session P/L",
+                "Cooldown", "News Risk", "Margin Level", "Daily/Weekly Loss", "Open Positions"
+            })
+            {
+                var card = new Panel
+                {
+                    Width = 170,
+                    Height = 118,
+                    Margin = new Padding(5),
+                    Padding = new Padding(8),
+                    BackColor = Color.FromArgb(18, 24, 34)
+                };
+                var titleLabel = new Label
+                {
+                    Text = title,
+                    Dock = DockStyle.Top,
+                    Height = 22,
+                    Font = new Font("Segoe UI Semibold", 9F, FontStyle.Bold),
+                    ForeColor = Color.White
+                };
+                var body = new Label
+                {
+                    Text = "NOT_CHECKED\nLive source not wired yet",
+                    Dock = DockStyle.Fill,
+                    Font = new Font("Segoe UI", 8.5F),
+                    ForeColor = Color.FromArgb(180, 190, 210)
+                };
+                card.Controls.Add(body);
+                card.Controls.Add(titleLabel);
+                panel.Controls.Add(card);
+                _overviewCardBodies[title] = body;
+            }
+
+            return panel;
         }
 
         private static DataGridView CreateRulesGrid()
@@ -327,7 +431,15 @@ namespace MT5TradingBot.UI
             grid.DefaultCellStyle.ForeColor = Color.FromArgb(230, 235, 245);
             grid.DefaultCellStyle.SelectionBackColor = Color.FromArgb(38, 58, 82);
             grid.DefaultCellStyle.SelectionForeColor = Color.White;
-            grid.Columns.Add("Enabled", "Enabled");
+            grid.Columns.Add(new DataGridViewCheckBoxColumn
+            {
+                Name = "Enabled",
+                HeaderText = "Enabled",
+                TrueValue = true,
+                FalseValue = false,
+                ThreeState = false,
+                FillWeight = 55
+            });
             grid.Columns.Add("Rule", "Rule");
             grid.Columns.Add("Source", "Source");
             grid.Columns.Add("Standard", "Standard");
@@ -335,11 +447,13 @@ namespace MT5TradingBot.UI
             grid.Columns.Add("Preview", "Preview");
             grid.Columns.Add("Live", "Live");
             grid.Columns.Add("Range", "Min / Max");
+            grid.Columns.Add("RuntimeMode", "Runtime Mode");
             grid.Columns.Add("Feedback", "Feedback");
             grid.Columns.Add("Status", "Status");
             grid.Columns.Add("WouldHave", "Would Have");
             grid.Columns.Add("Reason", "Reason");
             grid.Columns.Add("Reset", "Reset");
+            grid.Columns.Add("Details", "Details");
             return grid;
         }
 
@@ -408,9 +522,9 @@ namespace MT5TradingBot.UI
             SymbolInfo? symbol = _latest.Symbol;
             string accountText = account == null
                 ? "Account: unavailable"
-                : $"Account {account.AccountNumber} | Server {account.Server} | Balance {account.Balance:F2} | Equity {account.Equity:F2} | Free Margin {account.FreeMargin:F2} | Margin {account.MarginLevel:F1}% | Floating P/L {account.Profit:F2}";
+                : $"Account {account.AccountNumber} | Server {account.Server} | Broker {account.Name.DefaultIfBlank("-")} | Balance {account.Balance:F2} | Equity {account.Equity:F2} | Free Margin {account.FreeMargin:F2} | Margin {account.MarginLevel:F1}% | Floating P/L {account.Profit:F2}";
             string tradeText =
-                $"Pair {_context.Pair.DefaultIfBlank("-")} | Strategy {_context.Strategy} | Ticket {_context.Ticket?.ToString() ?? "-"} | Type {_context.TradeType?.ToString() ?? "-"} | Source {_context.OpenedFrom.DefaultIfBlank("-")}";
+                $"Pair {_context.Pair.DefaultIfBlank("-")} | Strategy {_context.Strategy} | Ticket {_context.Ticket?.ToString() ?? "-"} | Type {_context.TradeType?.ToString() ?? "-"} | RequestId {_context.RequestId.DefaultIfBlank("-")} | Source {_context.OpenedFrom.DefaultIfBlank("-")}";
             string positionText = position == null
                 ? $"Price {(symbol == null ? "-" : $"{symbol.Bid:F5}/{symbol.Ask:F5}")}"
                 : $"Entry {position.OpenPrice:F5} | Current {position.CurrentPrice:F5} | SL {position.StopLoss:F5} | TP {position.TakeProfit:F5} | Lot {position.Lots:F2} | P/L {position.Profit:F2} | Opened {position.OpenTime:g}";
@@ -432,33 +546,92 @@ namespace MT5TradingBot.UI
         {
             if (_latest == null) return;
             string search = _txtSearch.Text.Trim();
+            _bindingRules = true;
 
             foreach (var (tabName, grid) in _ruleGrids)
             {
                 grid.Rows.Clear();
-                foreach (var rule in FilterRulesForTab(tabName, _latest.Rules, search))
+                var visibleRules = FilterRulesForTab(tabName, _latest.Rules, search)
+                    .GroupBy(r => r.GroupName.DefaultIfBlank("Ungrouped"))
+                    .OrderBy(g => g.Key, StringComparer.OrdinalIgnoreCase);
+
+                foreach (var group in visibleRules)
                 {
-                    int row = grid.Rows.Add(
-                        rule.IsEnabled ? "Yes" : "No",
-                        $"{rule.RuleCode} - {rule.RuleName}",
-                        rule.SourceName,
-                        FormatValue(rule.StandardValue),
-                        FormatValue(rule.ConfiguredValue),
-                        FormatValue(rule.PreviewValue ?? rule.ConfiguredValue),
-                        FormatValue(rule.LiveValue),
-                        FormatRange(rule),
-                        FeedbackText(rule),
-                        rule.Result,
-                        rule.WouldHaveResult ?? "-",
-                        rule.Reason,
-                        "Reset");
-                    grid.Rows[row].Tag = rule;
-                    grid.Rows[row].DefaultCellStyle.ForeColor = StatusColor(rule);
-                    grid.Rows[row].Cells["Feedback"].Style.BackColor = FeedbackColor(rule);
-                    grid.Rows[row].Cells["Feedback"].Style.ForeColor = Color.White;
-                    grid.Rows[row].Cells["Status"].Style.BackColor = StatusBackColor(rule);
+                    string groupKey = $"{tabName}|{group.Key}";
+                    bool collapsed = _collapsedGroups.Contains(groupKey);
+                    int headerRow = grid.Rows.Add(false, $"{(collapsed ? ">" : "v")} {group.Key}", "", "", "", "Enable Group", "Disable Group", "", "", "", "", "", "", "Reset Group", "");
+                    grid.Rows[headerRow].Tag = new RuleGroupRow(tabName, group.Key);
+                    grid.Rows[headerRow].DefaultCellStyle.BackColor = Color.FromArgb(30, 38, 54);
+                    grid.Rows[headerRow].DefaultCellStyle.ForeColor = Color.White;
+                    grid.Rows[headerRow].ReadOnly = true;
+
+                    if (collapsed)
+                        continue;
+
+                    foreach (var rule in group)
+                    {
+                        int row = grid.Rows.Add(
+                            rule.IsEnabled,
+                            $"{rule.RuleCode} - {rule.RuleName}",
+                            rule.SourceName,
+                            FormatValue(rule.StandardValue),
+                            FormatValue(rule.ConfiguredValue),
+                            FormatValue(rule.PreviewValue ?? rule.ConfiguredValue),
+                            FormatValue(rule.LiveValue),
+                            FormatRange(rule),
+                            rule.RuntimeMode,
+                            "",
+                            rule.Result,
+                            rule.WouldHaveResult ?? "-",
+                            rule.Reason,
+                            "Reset",
+                            "+");
+                        grid.Rows[row].Tag = rule;
+                        grid.Rows[row].DefaultCellStyle.ForeColor = StatusColor(rule);
+                        grid.Rows[row].Cells["Feedback"].Style.BackColor = FeedbackColor(rule);
+                        grid.Rows[row].Cells["Feedback"].Style.ForeColor = Color.White;
+                        grid.Rows[row].Cells["Status"].Style.BackColor = StatusBackColor(rule);
+                    }
                 }
             }
+
+            _bindingRules = false;
+            UpdateOverviewCards();
+        }
+
+        private void UpdateOverviewCards()
+        {
+            if (_latest == null || _overviewCardBodies.Count == 0) return;
+
+            SetOverviewCard("Decision", _latest.Rules.FirstOrDefault(r => r.RuleCode == "EXEC-FINAL-GATE"), _latest.Summary.CurrentDecision);
+            SetOverviewCard("Spread", _latest.Rules.FirstOrDefault(r => r.RuleCode is "SCALP-SPREAD-LIMIT" or "NORMAL-SPREAD-LIMIT" or "COMMON-MAX-SPREAD"));
+            SetOverviewCard("BUY Score", _latest.Rules.FirstOrDefault(r => r.RuleCode == "SCALP-BUY-SCORE"));
+            SetOverviewCard("SELL Score", _latest.Rules.FirstOrDefault(r => r.RuleCode == "SCALP-SELL-SCORE"));
+            SetOverviewCard("ADX", _latest.Rules.FirstOrDefault(r => r.RuleCode == "SAFETY-ADX-RANGING"));
+            SetOverviewCard("Session P/L", _latest.Rules.FirstOrDefault(r => r.RuleCode == "SCALP-SESSION-LOSS"));
+            SetOverviewCard("Cooldown", _latest.Rules.FirstOrDefault(r => r.RuleCode == "SCALP-COOLDOWN"));
+            SetOverviewCard("News Risk", _latest.Rules.FirstOrDefault(r => r.RuleCode == "SAFETY-NEWS-BLACKOUT"));
+            SetOverviewCard("Margin Level", _latest.Rules.FirstOrDefault(r => r.RuleCode == "ACCOUNT-MARGIN"));
+            SetOverviewCard("Daily/Weekly Loss", _latest.Rules.FirstOrDefault(r => r.RuleCode == "ACCOUNT-DAILY-LOSS"), "Daily / Weekly");
+            SetOverviewCard("Open Positions", _latest.Rules.FirstOrDefault(r => r.RuleCode == "ACCOUNT-MAX-CONCURRENT"));
+        }
+
+        private void SetOverviewCard(string title, TradeRuleRuntimeSnapshot? rule, string? overrideValue = null)
+        {
+            if (!_overviewCardBodies.TryGetValue(title, out var label))
+                return;
+
+            if (rule == null)
+            {
+                label.Text = "NOT_CHECKED\nLive source not wired yet";
+                label.ForeColor = Color.FromArgb(180, 190, 210);
+                return;
+            }
+
+            string live = overrideValue ?? FormatValue(rule.LiveValue);
+            string configured = FormatValue(rule.ConfiguredValue);
+            label.Text = $"{live}\nLimit: {configured}\n{rule.Result} | {rule.RuleCode}\n{rule.Reason.DefaultIfBlank("Live source not wired yet")}";
+            label.ForeColor = StatusColor(rule);
         }
 
         private void UpdateGroupFilterItems()
@@ -503,6 +676,7 @@ namespace MT5TradingBot.UI
                 $"Result: {rule.Result}{Environment.NewLine}" +
                 $"Would Have Result: {rule.WouldHaveResult ?? "-"}{Environment.NewLine}" +
                 $"Actual Effect: {rule.ActualEffect}{Environment.NewLine}" +
+                $"Runtime Mode: {rule.RuntimeMode}{Environment.NewLine}" +
                 $"Reason: {rule.Reason}{Environment.NewLine}" +
                 $"Last Checked UTC: {rule.LastCheckedAtUtc:O}";
         }
@@ -558,17 +732,52 @@ namespace MT5TradingBot.UI
             string columnName = grid.Columns[e.ColumnIndex].Name;
             if (columnName == "Preview")
             {
-                rule.PreviewValue = ParsePreviewValue(rule, grid.Rows[e.RowIndex].Cells[e.ColumnIndex].Value?.ToString());
+                object? previous = rule.PreviewValue ?? rule.ConfiguredValue;
+                if (!TryParsePreviewValue(rule, grid.Rows[e.RowIndex].Cells[e.ColumnIndex].Value?.ToString(), out object? value, out string warning))
+                {
+                    MessageBox.Show(this, warning, "Invalid Rule Value", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    grid.Rows[e.RowIndex].Cells[e.ColumnIndex].Value = FormatValue(previous);
+                    return;
+                }
+
+                rule.PreviewValue = value;
+                grid.Rows[e.RowIndex].Cells[e.ColumnIndex].Value = FormatValue(value);
                 return;
             }
 
-            if (columnName != "Enabled")
+            if (columnName == "Enabled")
+                CommitEnabledChange(grid, e.RowIndex);
+        }
+
+        private void Grid_CurrentCellDirtyStateChanged(object? sender, EventArgs e)
+        {
+            if (sender is DataGridView grid &&
+                grid.IsCurrentCellDirty &&
+                grid.CurrentCell is DataGridViewCheckBoxCell &&
+                grid.Columns[grid.CurrentCell.ColumnIndex].Name == "Enabled")
+            {
+                grid.CommitEdit(DataGridViewDataErrorContexts.Commit);
+            }
+        }
+
+        private void Grid_CellValueChanged(object? sender, DataGridViewCellEventArgs e)
+        {
+            if (_bindingRules || sender is not DataGridView grid || e.RowIndex < 0 || e.ColumnIndex < 0)
                 return;
 
-            string text = grid.Rows[e.RowIndex].Cells[e.ColumnIndex].Value?.ToString() ?? "";
-            bool enabled = text.Equals("yes", StringComparison.OrdinalIgnoreCase) ||
-                           text.Equals("true", StringComparison.OrdinalIgnoreCase) ||
-                           text.Equals("enabled", StringComparison.OrdinalIgnoreCase);
+            if (grid.Columns[e.ColumnIndex].Name == "Enabled")
+                CommitEnabledChange(grid, e.RowIndex);
+        }
+
+        private void CommitEnabledChange(DataGridView grid, int rowIndex)
+        {
+            if (rowIndex < 0 || grid.Rows[rowIndex].Tag is not TradeRuleRuntimeSnapshot rule)
+                return;
+
+            bool enabled = Convert.ToBoolean(grid.Rows[rowIndex].Cells["Enabled"].Value ?? false);
+            if (enabled == rule.IsEnabled)
+                return;
+
             if (!enabled && rule.IsCritical && MessageBox.Show(
                     this,
                     $"You are disabling critical rule {rule.RuleCode} {rule.RuleName}. Continue?",
@@ -576,8 +785,8 @@ namespace MT5TradingBot.UI
                     MessageBoxButtons.YesNo,
                     MessageBoxIcon.Warning) != DialogResult.Yes)
             {
-                    grid.Rows[e.RowIndex].Cells[e.ColumnIndex].Value = "Yes";
-                    return;
+                grid.Rows[rowIndex].Cells["Enabled"].Value = true;
+                return;
             }
 
             rule.IsEnabled = enabled;
@@ -586,6 +795,7 @@ namespace MT5TradingBot.UI
             _auditLog?.Invoke($"[RULES_MONITOR] BypassChanged | Rule={rule.RuleCode} {rule.RuleName} | Enabled={enabled} | Pair={_context.Pair} | Strategy={_context.Strategy}");
             if (!enabled && rule.IsCritical)
                 _auditLog?.Invoke($"[RULES_MONITOR] CriticalRuleDisabled | Rule={rule.RuleCode} {rule.RuleName} | Pair={_context.Pair} | Strategy={_context.Strategy}");
+            RecalculateSummary();
             BindRules();
         }
 
@@ -594,13 +804,91 @@ namespace MT5TradingBot.UI
             if (sender is not DataGridView grid || e.RowIndex < 0 || grid.Rows[e.RowIndex].Tag is not TradeRuleRuntimeSnapshot rule)
                 return;
 
-            if (grid.Columns[e.ColumnIndex].Name != "Reset")
+            if (grid.Rows[e.RowIndex].Tag is RuleGroupRow groupRow)
+            {
+                HandleGroupRowClick(grid, groupRow, grid.Columns[e.ColumnIndex].Name);
                 return;
+            }
+
+            if (grid.Columns[e.ColumnIndex].Name != "Reset")
+            {
+                if (grid.Columns[e.ColumnIndex].Name == "Preview")
+                    ShowTypedPreviewEditor(grid, e.RowIndex);
+                return;
+            }
 
             _controlService.ResetRule(rule);
             AddHistory($"User reset {rule.RuleCode} {rule.RuleName}");
             _auditLog?.Invoke($"[RULES_MONITOR] ValueChanged | Rule={rule.RuleCode} {rule.RuleName} | Old={FormatValue(rule.ConfiguredValue)} | New={FormatValue(rule.PreviewValue)} | Pair={_context.Pair} | Strategy={_context.Strategy}");
             BindRules();
+        }
+
+        private void HandleGroupRowClick(DataGridView grid, RuleGroupRow groupRow, string columnName)
+        {
+            if (_latest == null)
+                return;
+
+            if (columnName == "Rule")
+            {
+                string key = $"{groupRow.TabName}|{groupRow.GroupName}";
+                if (!_collapsedGroups.Add(key))
+                    _collapsedGroups.Remove(key);
+                BindRules();
+                return;
+            }
+
+            var groupRules = _latest.Rules
+                .Where(r => string.Equals(r.GroupName.DefaultIfBlank("Ungrouped"), groupRow.GroupName, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+
+            if (columnName == "Preview")
+                SetGroupEnabled(groupRow.GroupName, groupRules, true);
+            else if (columnName == "Live")
+                SetGroupEnabled(groupRow.GroupName, groupRules, false);
+            else if (columnName == "Reset")
+            {
+                _controlService.ResetRules(groupRules);
+                AddHistory($"User reset group {groupRow.GroupName}");
+                _auditLog?.Invoke($"[RULES_MONITOR] ResetGroup | Group={groupRow.GroupName} | Count={groupRules.Count} | Pair={_context.Pair} | Strategy={_context.Strategy}");
+                BindRules();
+            }
+        }
+
+        private void SetGroupEnabled(string groupName, IReadOnlyList<TradeRuleRuntimeSnapshot> groupRules, bool enabled)
+        {
+            if (!enabled && MessageBox.Show(
+                    this,
+                    $"You are disabling {groupRules.Count} {groupName} rules. This may increase trading risk. Continue?",
+                    "Disable Rule Group",
+                    MessageBoxButtons.YesNo,
+                    MessageBoxIcon.Warning) != DialogResult.Yes)
+            {
+                return;
+            }
+
+            foreach (var rule in groupRules)
+            {
+                string wouldHave = rule.WouldHaveResult ?? rule.Result;
+                rule.IsEnabled = enabled;
+                TradeRuleStatusEvaluator.ApplyEnabledState(rule, wouldHave);
+            }
+
+            AddHistory($"User {(enabled ? "enabled" : "disabled")} group {groupName}");
+            _auditLog?.Invoke($"[RULES_MONITOR] GroupBypassChanged | Group={groupName} | Enabled={enabled} | Count={groupRules.Count} | Pair={_context.Pair} | Strategy={_context.Strategy}");
+            RecalculateSummary();
+            BindRules();
+        }
+
+        private void Grid_CellDoubleClick(object? sender, DataGridViewCellEventArgs e)
+        {
+            if (sender is not DataGridView grid || e.RowIndex < 0 || e.ColumnIndex < 0)
+                return;
+
+            string columnName = grid.Columns[e.ColumnIndex].Name;
+            if (columnName == "Preview")
+                ShowTypedPreviewEditor(grid, e.RowIndex);
+            else if (columnName == "Details")
+                ToggleAdvancedRowDetails(grid, e.RowIndex);
         }
 
         private void ToggleVisibleGroup(bool enabled)
@@ -626,9 +914,15 @@ namespace MT5TradingBot.UI
             }
 
             foreach (var rule in groupRules)
+            {
+                string wouldHave = rule.WouldHaveResult ?? rule.Result;
                 rule.IsEnabled = enabled;
+                TradeRuleStatusEvaluator.ApplyEnabledState(rule, wouldHave);
+            }
 
             AddHistory($"User {(enabled ? "enabled" : "disabled")} group {group}");
+            _auditLog?.Invoke($"[RULES_MONITOR] GroupBypassChanged | Group={group} | Enabled={enabled} | Count={groupRules.Count} | Pair={_context.Pair} | Strategy={_context.Strategy}");
+            RecalculateSummary();
             BindRules();
         }
 
@@ -636,10 +930,10 @@ namespace MT5TradingBot.UI
         {
             if (_latest == null) return;
             CaptureGridPreviewValues();
-            await _controlService.ApplyRuntimeAsync(_context, _latest.Rules).ConfigureAwait(true);
-            AddHistory("User applied runtime edits");
-            _auditLog?.Invoke($"[RULES_MONITOR] ApplyRuntime | Pair={_context.Pair} | Strategy={_context.Strategy} | Ticket={_context.Ticket?.ToString() ?? "-"}");
-            MessageBox.Show(this, "Runtime edits applied for the current context. Existing MT5 position SL/TP was not modified.", "Rules Monitor", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            var result = await _controlService.ApplyRuntimeAsync(_context, _latest.Rules).ConfigureAwait(true);
+            AddHistory($"User applied runtime edits. Applied={result.AppliedCount}, skipped monitor-only/save-only={result.SkippedMonitorOnlyCount}, failed={result.FailedCount}");
+            _auditLog?.Invoke($"[RULES_MONITOR] ApplyRuntime | Pair={_context.Pair} | Strategy={_context.Strategy} | Ticket={_context.Ticket?.ToString() ?? "-"} | Applied={result.AppliedCount} | Skipped={result.SkippedMonitorOnlyCount} | Failed={result.FailedCount}");
+            MessageBox.Show(this, $"Runtime edits applied for the current context.{Environment.NewLine}Applied: {result.AppliedCount}{Environment.NewLine}Skipped monitor-only/save-only: {result.SkippedMonitorOnlyCount}{Environment.NewLine}Failed: {result.FailedCount}{Environment.NewLine}Existing MT5 position SL/TP was not modified.", "Rules Monitor", MessageBoxButtons.OK, MessageBoxIcon.Information);
         }
 
         private async Task SavePairDefaultsAsync()
@@ -679,9 +973,10 @@ namespace MT5TradingBot.UI
                 foreach (DataGridViewRow row in grid.Rows)
                 {
                     if (row.Tag is not TradeRuleRuntimeSnapshot rule) continue;
-                    rule.IsEnabled = IsYes(row.Cells["Enabled"].Value?.ToString());
+                    rule.IsEnabled = Convert.ToBoolean(row.Cells["Enabled"].Value ?? false);
                     object? oldValue = rule.PreviewValue ?? rule.ConfiguredValue;
-                    rule.PreviewValue = ParsePreviewValue(rule, row.Cells["Preview"].Value?.ToString());
+                    if (TryParsePreviewValue(rule, row.Cells["Preview"].Value?.ToString(), out object? value, out _))
+                        rule.PreviewValue = value;
                     if (!Equals(oldValue, rule.PreviewValue))
                         AddHistory($"User changed {rule.RuleCode} {rule.RuleName}: {FormatValue(oldValue)} -> {FormatValue(rule.PreviewValue)}");
                 }
@@ -716,21 +1011,246 @@ namespace MT5TradingBot.UI
                 _lstHistory.TopIndex = _lstHistory.Items.Count - 1;
         }
 
-        private static object? ParsePreviewValue(TradeRuleRuntimeSnapshot rule, string? text)
+        private void RecalculateSummary()
         {
+            if (_latest == null) return;
+            _latest.Summary = TradeRuleStatusEvaluator.BuildSummary(_latest.Rules);
+            UpdateHeader();
+        }
+
+        private bool TryParsePreviewValue(TradeRuleRuntimeSnapshot rule, string? text, out object? value, out string warning)
+        {
+            warning = "";
             if (string.IsNullOrWhiteSpace(text) || text == "-")
-                return rule.PreviewValue ?? rule.ConfiguredValue;
+            {
+                value = rule.PreviewValue ?? rule.ConfiguredValue;
+                return true;
+            }
 
             if (rule.ConfiguredValue is bool && bool.TryParse(text, out bool b))
-                return b;
+            {
+                value = b;
+                return true;
+            }
+
+            if (rule.ValueType == TradeRuleValueTypes.Enum)
+            {
+                var options = GetEnumOptions(rule).ToList();
+                if (options.Any(option => string.Equals(option, text, StringComparison.OrdinalIgnoreCase)))
+                {
+                    value = options.First(option => string.Equals(option, text, StringComparison.OrdinalIgnoreCase));
+                    return true;
+                }
+
+                value = rule.PreviewValue ?? rule.ConfiguredValue;
+                warning = $"Select a valid value for {rule.RuleName}: {string.Join(", ", options)}.";
+                return false;
+            }
+
+            if (rule.ValueType == TradeRuleValueTypes.List)
+            {
+                value = SplitListValue(text);
+                return true;
+            }
 
             if (rule.ConfiguredValue is int && int.TryParse(text, out int i))
-                return i;
+            {
+                value = i;
+                return ValidateNumber(rule, i, out warning);
+            }
 
             if (double.TryParse(text, out double d))
-                return d;
+            {
+                value = d;
+                return ValidateNumber(rule, d, out warning);
+            }
 
-            return text;
+            if (rule.ValueType == TradeRuleValueTypes.Number)
+            {
+                value = rule.PreviewValue ?? rule.ConfiguredValue;
+                warning = $"{rule.RuleName} requires a numeric value{FormatEditorRange(rule)}.";
+                return false;
+            }
+
+            value = text;
+            return true;
+        }
+
+        private bool ValidateNumber(TradeRuleRuntimeSnapshot rule, double number, out string warning)
+        {
+            warning = "";
+            if (rule.MinValue.HasValue && number < rule.MinValue.Value)
+                warning = $"{rule.RuleName} must be at least {rule.MinValue.Value:0.#####} {rule.Unit}".TrimEnd();
+            else if (rule.MaxValue.HasValue && number > rule.MaxValue.Value)
+                warning = $"{rule.RuleName} must be no more than {rule.MaxValue.Value:0.#####} {rule.Unit}".TrimEnd();
+
+            return warning.Length == 0;
+        }
+
+        private void ShowTypedPreviewEditor(DataGridView grid, int rowIndex)
+        {
+            if (grid.Rows[rowIndex].Tag is not TradeRuleRuntimeSnapshot rule ||
+                rule.RuntimeMode == TradeRuleRuntimeModes.MonitorOnly ||
+                rule.RuntimeMode == TradeRuleRuntimeModes.NotAvailable)
+                return;
+
+            if (rule.ValueType == TradeRuleValueTypes.Enum)
+                ShowEnumEditor(grid, rowIndex, rule);
+            else if (rule.ValueType == TradeRuleValueTypes.List)
+                ShowListEditor(grid, rowIndex, rule);
+            else if (IsSimpleBoundedNumber(rule))
+                ShowSliderEditor(grid, rowIndex, rule);
+        }
+
+        private void ShowEnumEditor(DataGridView grid, int rowIndex, TradeRuleRuntimeSnapshot rule)
+        {
+            var options = GetEnumOptions(rule).ToArray();
+            if (options.Length == 0)
+                return;
+
+            using var form = CreateSmallDialog($"{rule.RuleName} Options", 360, 150);
+            var combo = new ComboBox { Dock = DockStyle.Top, DropDownStyle = ComboBoxStyle.DropDownList };
+            combo.Items.AddRange(options);
+            combo.SelectedItem = FormatValue(rule.PreviewValue ?? rule.ConfiguredValue);
+            var ok = new Button { Text = "Apply", Dock = DockStyle.Bottom };
+            StyleButton(ok, Color.FromArgb(46, 160, 94));
+            ok.Click += (_, _) => form.DialogResult = DialogResult.OK;
+            form.Controls.Add(ok);
+            form.Controls.Add(combo);
+            if (form.ShowDialog(this) == DialogResult.OK && combo.SelectedItem != null)
+                ApplyPreviewEditorValue(grid, rowIndex, rule, combo.SelectedItem.ToString());
+        }
+
+        private void ShowListEditor(DataGridView grid, int rowIndex, TradeRuleRuntimeSnapshot rule)
+        {
+            using var form = CreateSmallDialog($"{rule.RuleName} List", 520, 320);
+            var text = new TextBox
+            {
+                Dock = DockStyle.Fill,
+                Multiline = true,
+                ScrollBars = ScrollBars.Vertical,
+                Text = string.Join(Environment.NewLine, SplitListValue(FormatValue(rule.PreviewValue ?? rule.ConfiguredValue)))
+            };
+            var ok = new Button { Text = "Apply", Dock = DockStyle.Bottom };
+            StyleButton(ok, Color.FromArgb(46, 160, 94));
+            ok.Click += (_, _) => form.DialogResult = DialogResult.OK;
+            form.Controls.Add(text);
+            form.Controls.Add(ok);
+            if (form.ShowDialog(this) == DialogResult.OK)
+                ApplyPreviewEditorValue(grid, rowIndex, rule, string.Join(", ", SplitListValue(text.Text)));
+        }
+
+        private void ShowSliderEditor(DataGridView grid, int rowIndex, TradeRuleRuntimeSnapshot rule)
+        {
+            double current = ToDouble(rule.PreviewValue ?? rule.ConfiguredValue);
+            double min = rule.MinValue ?? 0;
+            double max = rule.MaxValue ?? 100;
+            double scale = UsesDecimalEditor(rule) ? 100.0 : 1.0;
+
+            using var form = CreateSmallDialog($"{rule.RuleName} Slider", 460, 170);
+            var valueBox = new NumericUpDown
+            {
+                Dock = DockStyle.Top,
+                DecimalPlaces = UsesDecimalEditor(rule) ? 2 : 0,
+                Minimum = (decimal)min,
+                Maximum = (decimal)max,
+                Value = (decimal)Math.Clamp(current, min, max),
+                Increment = UsesDecimalEditor(rule) ? 0.1M : 1M
+            };
+            var slider = new TrackBar
+            {
+                Dock = DockStyle.Top,
+                Minimum = (int)Math.Round(min * scale),
+                Maximum = (int)Math.Round(max * scale),
+                TickFrequency = Math.Max(1, (int)Math.Round((max - min) * scale / 10.0)),
+                Value = (int)Math.Round(Math.Clamp(current, min, max) * scale)
+            };
+            slider.ValueChanged += (_, _) => valueBox.Value = (decimal)(slider.Value / scale);
+            valueBox.ValueChanged += (_, _) => slider.Value = (int)Math.Round((double)valueBox.Value * scale);
+            var ok = new Button { Text = $"Apply {rule.Unit}".TrimEnd(), Dock = DockStyle.Bottom };
+            StyleButton(ok, Color.FromArgb(46, 160, 94));
+            ok.Click += (_, _) => form.DialogResult = DialogResult.OK;
+            form.Controls.Add(ok);
+            form.Controls.Add(slider);
+            form.Controls.Add(valueBox);
+            if (form.ShowDialog(this) == DialogResult.OK)
+                ApplyPreviewEditorValue(grid, rowIndex, rule, valueBox.Value.ToString());
+        }
+
+        private void ApplyPreviewEditorValue(DataGridView grid, int rowIndex, TradeRuleRuntimeSnapshot rule, string? text)
+        {
+            if (!TryParsePreviewValue(rule, text, out object? value, out string warning))
+            {
+                MessageBox.Show(this, warning, "Invalid Rule Value", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
+            rule.PreviewValue = value;
+            grid.Rows[rowIndex].Cells["Preview"].Value = FormatValue(value);
+            AddHistory($"User changed {rule.RuleCode} {rule.RuleName}: {FormatValue(rule.ConfiguredValue)} -> {FormatValue(value)}");
+        }
+
+        private void ToggleAdvancedRowDetails(DataGridView grid, int rowIndex)
+        {
+            if (grid.Rows[rowIndex].Tag is not TradeRuleRuntimeSnapshot rule)
+                return;
+
+            ShowAdvancedDetails(grid);
+            grid.Rows[rowIndex].Cells["Details"].Value = grid.Rows[rowIndex].Cells["Details"].Value?.ToString() == "+" ? "-" : "+";
+            grid.Rows[rowIndex].Height = grid.Rows[rowIndex].Cells["Details"].Value?.ToString() == "-" ? 46 : grid.RowTemplate.Height;
+        }
+
+        private Form CreateSmallDialog(string title, int width, int height) => new()
+        {
+            Text = title,
+            Width = width,
+            Height = height,
+            StartPosition = FormStartPosition.CenterParent,
+            BackColor = BackColor,
+            ForeColor = ForeColor,
+            Padding = new Padding(12)
+        };
+
+        private static IEnumerable<string> GetEnumOptions(TradeRuleRuntimeSnapshot rule) =>
+            rule.RuleCode switch
+            {
+                "COMMON-TRADING-MODE" => Enum.GetNames(typeof(TradingControlMode)),
+                "SCALP-DIRECTION-MODE" => Enum.GetNames(typeof(ScalpingDirectionMode)),
+                "SAFETY-ROLLOUT-STAGE" => ["PaperOnly", "Demo", "TinyLive", "ScaledLive", "RolledBack"],
+                _ => []
+            };
+
+        private static IReadOnlyList<string> SplitListValue(string? value) =>
+            string.IsNullOrWhiteSpace(value) || value == "-"
+                ? []
+                : value.Replace(Environment.NewLine, ",")
+                    .Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+
+        private static bool IsSimpleBoundedNumber(TradeRuleRuntimeSnapshot rule) =>
+            rule.ValueType == TradeRuleValueTypes.Number &&
+            rule.MinValue.HasValue &&
+            rule.MaxValue.HasValue &&
+            rule.MaxValue.Value > rule.MinValue.Value &&
+            rule.RuntimeMode != TradeRuleRuntimeModes.MonitorOnly;
+
+        private static bool UsesDecimalEditor(TradeRuleRuntimeSnapshot rule) =>
+            rule.ConfiguredValue is double or float or decimal || rule.Unit is "fraction" or "%" or "pips";
+
+        private static double ToDouble(object? value) =>
+            value switch
+            {
+                double d => d,
+                float f => f,
+                decimal d => (double)d,
+                int i => i,
+                string s when double.TryParse(s, out double d) => d,
+                _ => 0
+            };
+
+        private static string FormatEditorRange(TradeRuleRuntimeSnapshot rule)
+        {
+            string range = FormatRange(rule);
+            return range == "- / -" ? "." : $" in range {range}.";
         }
 
         private static bool IsYes(string? text) =>
@@ -825,6 +1345,8 @@ namespace MT5TradingBot.UI
         private static bool Contains(string? value, string search) =>
             value?.IndexOf(search, StringComparison.OrdinalIgnoreCase) >= 0;
     }
+
+    internal sealed record RuleGroupRow(string TabName, string GroupName);
 
     internal static class TradeRulesMonitorStringExtensions
     {

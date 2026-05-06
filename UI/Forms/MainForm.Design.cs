@@ -228,9 +228,9 @@ namespace MT5TradingBot.UI
             _btnStopScalping.Text     = "Stop Scalping";
             _btnStopScalping.Enabled  = false;
             _btnStopScalping.Size     = new Size(138, 38);
-            _btnScalpingRules.Text    = "Scalping Rules";
+            _btnScalpingRules.Text    = "⚙ Scalping Rules";
             _btnScalpingRules.Size    = new Size(132, 38);
-            _btnNormalRules.Text      = "Normal Rules";
+            _btnNormalRules.Text      = "⚙ Normal Rules";
             _btnNormalRules.Size      = new Size(124, 38);
             _btnBotSettings.Size    = new Size(130, 38);
             _btnBotInstructions.Size = new Size(150, 38);

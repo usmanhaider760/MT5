@@ -7,6 +7,7 @@ using MT5TradingBot.Modules.NewsFilter;
 using MT5TradingBot.Modules.PairSettings;
 using MT5TradingBot.Modules.RiskManagement;
 using MT5TradingBot.Modules.TradeExecution;
+using MT5TradingBot.Modules.TradeRules;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using Serilog;
@@ -78,6 +79,12 @@ namespace MT5TradingBot.Services
         public event Action<bool>?           OnBotStatusChanged;
         public event Action<EdgeStatus>?     OnEdgeStatusChanged;
         public event Action<SignalCardInfo>? OnSignalUpdate;
+        private static readonly object LastAuditGate = new();
+        private static IReadOnlyList<TradeRuleAuditSnapshot> _lastExecutionAuditSnapshot = [];
+        public static IReadOnlyList<TradeRuleAuditSnapshot> LastExecutionAuditSnapshot
+        {
+            get { lock (LastAuditGate) return _lastExecutionAuditSnapshot.ToList(); }
+        }
 
         public bool IsRunning => _running;
         public bool IsEdgePaused => _edgePaused;
@@ -2190,10 +2197,67 @@ namespace MT5TradingBot.Services
             int passed = audit.Count(l => l.Passed);
             string failed = string.Join(", ", audit.Where(l => !l.Passed).Select(l => l.Layer));
             string details = string.Join(" | ", audit.Select(l => $"{l.Layer}:{(l.Passed ? "PASS" : "BLOCK")}({l.Reason})"));
+            StoreLastExecutionAudit(request, audit);
+            foreach (var blockedLayer in audit.Where(l => !l.Passed))
+                Log($"[EXEC_AUDIT] BLOCK | Rule={MapAuditLayerToRule(blockedLayer.Layer)} | Reason={blockedLayer.Reason}");
             Log($"TRADE_AUDIT_FULL | Rule=EXEC-FINAL-GATE Final Execution Gate | {request.Pair} {request.TradeType} | {passed}/{audit.Count} layers passed | Failed: [{failed}] | Details: {details}");
 
             return firstBlock;
         }
+
+        private static void StoreLastExecutionAudit(TradeRequest request, IReadOnlyList<LayerResult> audit)
+        {
+            DateTime checkedAt = DateTime.UtcNow;
+            var snapshots = audit.Select((layer, index) =>
+            {
+                string mapped = MapAuditLayerToRule(layer.Layer);
+                string[] parts = mapped.Split(' ', 2);
+                return new TradeRuleAuditSnapshot
+                {
+                    RuleCode = parts[0],
+                    RuleName = parts.Length > 1 ? parts[1] : parts[0],
+                    Result = layer.Passed ? TradeRuleResults.Pass : TradeRuleResults.Block,
+                    Reason = layer.Reason,
+                    Order = index + 1,
+                    CheckedAtUtc = checkedAt,
+                    Pair = request.Pair,
+                    RequestId = request.Id
+                };
+            }).ToList();
+
+            lock (LastAuditGate)
+                _lastExecutionAuditSnapshot = snapshots;
+        }
+
+        private static string MapAuditLayerToRule(string layer) =>
+            layer switch
+            {
+                "ROLLOUT_STAGE" => "SAFETY-ROLLOUT-STAGE Rollout Stage",
+                "NO_TRADE_WINDOW" => "SAFETY-NO-TRADE-WINDOW No-Trade Window",
+                "SESSION_GATE" => "SAFETY-SESSION-GATE Pair Session Gate",
+                "SIGNAL_AGE" => "SAFETY-SIGNAL-AGE Signal Age / Expiry",
+                "PAIR_ALLOWLIST" => "SAFETY-PAIR-ALLOWLIST Pair Allowlist",
+                "TRADE_PAGE_LIMIT" => "COMMON-MAX-POSITIONS Max Open Positions",
+                "ACCOUNT_DATA" => "ACCOUNT-DATA Account Data Available",
+                "SYMBOL_DATA" => "BROKER-SYMBOL-DATA Broker Symbol Data",
+                "SESSION_SPREAD" => "SCALP-SPREAD-LIMIT Scalping Spread Limit",
+                "BROKER_STOP_LEVEL" => "BROKER-STOP-LEVEL Broker Stop Level",
+                "BROKER_FREEZE_LEVEL" => "BROKER-FREEZE-LEVEL Broker Freeze Level",
+                "POSITION_DATA" => "ACCOUNT-SYMBOL-EXPOSURE Same Symbol Exposure",
+                "DAILY_LOSS" => "ACCOUNT-DAILY-LOSS Daily Loss Limit",
+                "WEEKLY_LOSS" => "ACCOUNT-WEEKLY-LOSS Weekly Loss Limit",
+                "SYMBOL_EXPOSURE" or "SYMBOL_EXPOSURE_FINAL" => "ACCOUNT-SYMBOL-EXPOSURE Same Symbol Exposure",
+                "MAX_CONCURRENT_POSITIONS" => "ACCOUNT-MAX-CONCURRENT Max Concurrent Positions",
+                "RISK" => "EXEC-RISK-VALIDATION Risk Validation",
+                "BROKER_LOT_SIZE" => "BROKER-LOT-SIZE Broker Lot Size",
+                "COMMISSION_MODEL" => "BROKER-COMMISSION Commission Model",
+                "SLIPPAGE_MODEL" => "BROKER-SLIPPAGE Slippage Model",
+                "PROJECTED_MARGIN" => "ACCOUNT-MARGIN Projected Margin Validation",
+                "CORRELATION" => "COMMON-CORRELATION Correlation Protection",
+                "NEWS" => "SAFETY-NEWS-BLACKOUT News Blackout Filter",
+                "ADX_RANGING" => "SAFETY-ADX-RANGING ADX Ranging Filter",
+                _ => "EXEC-FINAL-GATE Final Execution Gate"
+            };
 
         private TradeResult? CheckPairSessionWindow(
             string requestId,

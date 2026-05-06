@@ -49,6 +49,8 @@ namespace MT5TradingBot.Modules.TradeRules
         public string? WouldHaveResult { get; set; }
         public string Reason { get; set; } = "";
         public string ActualEffect { get; set; } = "";
+        public string RuntimeMode { get; set; } = TradeRuleRuntimeModes.NotAvailable;
+        public string ValueType { get; set; } = TradeRuleValueTypes.Number;
         public DateTime? LastCheckedAtUtc { get; set; }
     }
 
@@ -106,5 +108,32 @@ namespace MT5TradingBot.Modules.TradeRules
         public const string Enum = "Enum";
         public const string Text = "Text";
         public const string List = "List";
+    }
+
+    public static class TradeRuleRuntimeModes
+    {
+        public const string RuntimeControllable = "Runtime Controllable";
+        public const string SaveOnly = "Save Only";
+        public const string MonitorOnly = "Monitor Only";
+        public const string NotAvailable = "Not Available";
+    }
+
+    public sealed class TradeRulesRuntimeApplyResult
+    {
+        public int AppliedCount { get; set; }
+        public int SkippedMonitorOnlyCount { get; set; }
+        public int FailedCount { get; set; }
+    }
+
+    public sealed class TradeRuleAuditSnapshot
+    {
+        public string RuleCode { get; set; } = "";
+        public string RuleName { get; set; } = "";
+        public string Result { get; set; } = TradeRuleResults.NotChecked;
+        public string Reason { get; set; } = "";
+        public int Order { get; set; }
+        public DateTime CheckedAtUtc { get; set; } = DateTime.UtcNow;
+        public string Pair { get; set; } = "";
+        public string RequestId { get; set; } = "";
     }
 }

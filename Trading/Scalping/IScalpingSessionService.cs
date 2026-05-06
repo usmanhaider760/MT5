@@ -10,7 +10,21 @@ namespace MT5TradingBot.Modules.Scalping
         event Action<string>? OnStatusChanged;
         Task StartAsync(ScalpingSessionRequest request, CancellationToken cancellationToken = default);
         Task StopAsync();
+        ScalpingRuntimeSnapshot GetRuntimeSnapshot();
     }
+
+    public sealed record ScalpingRuntimeSnapshot(
+        bool IsRunning,
+        string Pair,
+        DateTime? StartedAtUtc,
+        double? ElapsedSeconds,
+        double? CooldownRemainingSeconds,
+        int? TradesCount,
+        double? SessionProfitUsd,
+        int? LastBuyScore,
+        int? LastSellScore,
+        TradeType? SelectedDirection,
+        string LastNoTradeReason);
 
     public sealed record ScalpingSessionRequest(
         string Pair,

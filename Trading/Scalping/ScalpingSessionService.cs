@@ -21,6 +21,7 @@ namespace MT5TradingBot.Modules.Scalping
         private readonly Queue<double> _atrHistory = new();
         private CancellationTokenSource? _sessionCts;
         private Task? _sessionTask;
+        private ScalpingRuntimeSnapshot _runtimeSnapshot = new(false, "", null, null, null, null, null, null, null, null, "");
 
         public event Action<string>? OnLog;
         public event Action<string>? OnStatusChanged;
@@ -45,6 +46,7 @@ namespace MT5TradingBot.Modules.Scalping
 
                 _sessionCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
                 IsRunning = true;
+                _runtimeSnapshot = new(true, request.Pair, DateTime.UtcNow, 0, null, 0, 0, null, null, request.SignalDirection, "");
                 _sessionTask = Task.Run(() => RunAsync(request, _sessionCts.Token), _sessionCts.Token);
             }
 
@@ -84,6 +86,12 @@ namespace MT5TradingBot.Modules.Scalping
 
             Status("Stopped");
             Log("[SCALP] Stopped.");
+        }
+
+        public ScalpingRuntimeSnapshot GetRuntimeSnapshot()
+        {
+            lock (_gate)
+                return _runtimeSnapshot;
         }
 
         private async Task RunAsync(ScalpingSessionRequest request, CancellationToken ct)
@@ -190,6 +198,7 @@ namespace MT5TradingBot.Modules.Scalping
                     {
                         double secondsLeft = cfg.CooldownSeconds - (DateTime.UtcNow - lastTradeAt).TotalSeconds;
                         LogScalpSeparator();
+                        UpdateRuntime(request, started, lastTradeAt, cfg, openedTrades, sessionPnl, null, $"Cooling down for {Math.Max(0, secondsLeft):F0}s");
                         Log($"[SCALP] Waiting: cooling down after the last trade. Next check in about {Math.Max(0, secondsLeft):F0}s.");
                         await Delay(cfg, ct).ConfigureAwait(false);
                         continue;
@@ -256,12 +265,14 @@ namespace MT5TradingBot.Modules.Scalping
                         ? ResolveScalpingDecision(snapshot, effectiveCfg, probeDirection)
                         : ResolvePriceMovementDecision(effectiveCfg, probeDirection, mid, lastMid);
                     lastMid = mid;
+                    UpdateRuntime(request, started, lastTradeAt, cfg, openedTrades, sessionPnl, decision, decision.Approved ? "" : decision.Reason);
 
                     LogScalpSeparator();
                     Log(BuildDecisionTrace(request, effectiveCfg, symbol, decision, snapshot));
 
                     if (!decision.Approved)
                     {
+                        Log($"[SCALP_DECISION] NO_TRADE | {ExtractRuleForDecisionLog(decision.Reason)} | Reason={decision.Reason}");
                         Log($"[SCALP] Waiting: {decision.Reason}.");
                         await Delay(cfg, ct).ConfigureAwait(false);
                         continue;
@@ -272,6 +283,7 @@ namespace MT5TradingBot.Modules.Scalping
                         var ai = await request.ConfirmWithAiAsync(snapshot, decision.Direction).ConfigureAwait(false);
                         if (!ai.Approved)
                         {
+                            Log($"[SCALP_DECISION] NO_TRADE | Rule=SCALP-AI-CONFIRM Scalping AI Confirmation | Reason={ai.Reason}");
                             Log($"[SCALP] AI said do not trade: {ai.Reason}");
                             await Delay(cfg, ct).ConfigureAwait(false);
                             continue;
@@ -290,10 +302,12 @@ namespace MT5TradingBot.Modules.Scalping
                         openedTrades++;
                         lastTradeAt = DateTime.UtcNow;
                         knownTickets[result.Ticket] = 0;
+                        UpdateRuntime(request, started, lastTradeAt, cfg, openedTrades, sessionPnl, decision, "");
                         Log($"[SCALP] Opened #{result.Ticket} {trade.TradeType} {trade.Pair}.");
                     }
                     else
                     {
+                        Log($"[SCALP_DECISION] NO_TRADE | Rule=EXEC-ORDER-SEND Order Send Result | Reason={result.ErrorMessage} ({result.ErrorCode})");
                         Log($"[SCALP] Trade was not opened: {result.ErrorMessage} ({result.ErrorCode}).");
                         if (IsSessionStoppingError(result.ErrorCode))
                         {
@@ -313,7 +327,11 @@ namespace MT5TradingBot.Modules.Scalping
             }
             finally
             {
-                IsRunning = false;
+                lock (_gate)
+                {
+                    IsRunning = false;
+                    _runtimeSnapshot = _runtimeSnapshot with { IsRunning = false, CooldownRemainingSeconds = null };
+                }
                 Status("Stopped");
             }
         }
@@ -552,6 +570,68 @@ namespace MT5TradingBot.Modules.Scalping
                 ScalpingDirectionMode.SellOnly => TradeType.SELL,
                 _ => signalDirection
             };
+
+        private void UpdateRuntime(
+            ScalpingSessionRequest request,
+            DateTime started,
+            DateTime lastTradeAt,
+            ScalpingConfig cfg,
+            int openedTrades,
+            double sessionPnl,
+            ScalpingDecision? decision,
+            string noTradeReason)
+        {
+            double? cooldown = lastTradeAt == DateTime.MinValue
+                ? null
+                : Math.Max(0, cfg.CooldownSeconds - (DateTime.UtcNow - lastTradeAt).TotalSeconds);
+
+            lock (_gate)
+            {
+                _runtimeSnapshot = new ScalpingRuntimeSnapshot(
+                    IsRunning,
+                    request.Pair,
+                    started,
+                    (DateTime.UtcNow - started).TotalSeconds,
+                    cooldown,
+                    openedTrades,
+                    sessionPnl,
+                    ExtractSideScore(decision, "BUY"),
+                    ExtractSideScore(decision, "SELL"),
+                    decision?.Direction,
+                    noTradeReason);
+            }
+        }
+
+        private static int? ExtractSideScore(ScalpingDecision? decision, string side)
+        {
+            if (decision == null)
+                return null;
+
+            string text = $"{decision.Reason} {decision.Detail}";
+            int index = text.IndexOf(side, StringComparison.OrdinalIgnoreCase);
+            if (index < 0)
+                return decision.Direction.ToString().Equals(side, StringComparison.OrdinalIgnoreCase) ? decision.Score : null;
+
+            string tail = text[(index + side.Length)..].TrimStart();
+            string digits = new(tail.SkipWhile(c => !char.IsDigit(c)).TakeWhile(char.IsDigit).ToArray());
+            return int.TryParse(digits, out int score) ? score : null;
+        }
+
+        private static string ExtractRuleForDecisionLog(string reason)
+        {
+            const string marker = "Rule=";
+            int index = reason.IndexOf(marker, StringComparison.OrdinalIgnoreCase);
+            if (index >= 0)
+            {
+                string tail = reason[(index + marker.Length)..];
+                int end = tail.IndexOf('.');
+                string rule = (end >= 0 ? tail[..end] : tail).Trim();
+                if (!string.IsNullOrWhiteSpace(rule))
+                    return $"Rule={rule}";
+            }
+
+            return "Rule=EXEC-NO-TRADE No Trade Decision";
+        }
 
         private static ScalpingDecision ResolveScalpingDecision(
             JObject snapshot,

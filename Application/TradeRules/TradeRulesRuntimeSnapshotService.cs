@@ -1,8 +1,10 @@
 using MT5TradingBot.Models;
 using MT5TradingBot.Modules.BrokerIntegration;
 using MT5TradingBot.Modules.NormalTrading;
+using MT5TradingBot.Modules.NewsFilter;
 using MT5TradingBot.Modules.PairSettings;
 using MT5TradingBot.Modules.Scalping;
+using MT5TradingBot.Services;
 
 namespace MT5TradingBot.Modules.TradeRules
 {
@@ -14,6 +16,11 @@ namespace MT5TradingBot.Modules.TradeRules
         private readonly IPairSettingsService? _pairSettings;
         private readonly IScalpingSessionService? _scalpingSession;
         private readonly NormalTradeManager? _normalTradeManager;
+        private readonly INewsCalendarService? _newsCalendar;
+        private readonly ApiIntegrationConfig? _apiConfig;
+        private NewsRiskSnapshot? _cachedNews;
+        private string _cachedNewsPair = "";
+        private DateTime _cachedNewsAtUtc = DateTime.MinValue;
 
         public TradeRulesRuntimeSnapshotService(
             AppSettings settings,
@@ -21,7 +28,9 @@ namespace MT5TradingBot.Modules.TradeRules
             MT5Bridge? bridge = null,
             IPairSettingsService? pairSettings = null,
             IScalpingSessionService? scalpingSession = null,
-            NormalTradeManager? normalTradeManager = null)
+            NormalTradeManager? normalTradeManager = null,
+            INewsCalendarService? newsCalendar = null,
+            ApiIntegrationConfig? apiConfig = null)
         {
             _settings = settings;
             _catalog = catalog ?? new TradeRuleCatalog();
@@ -29,6 +38,8 @@ namespace MT5TradingBot.Modules.TradeRules
             _pairSettings = pairSettings;
             _scalpingSession = scalpingSession;
             _normalTradeManager = normalTradeManager;
+            _newsCalendar = newsCalendar;
+            _apiConfig = apiConfig;
         }
 
         public async Task<TradeRulesRuntimeSnapshotResult> BuildAsync(
@@ -55,9 +66,12 @@ namespace MT5TradingBot.Modules.TradeRules
             var pairSettings = !string.IsNullOrWhiteSpace(context.Pair)
                 ? _pairSettings?.GetForPair(context.Pair)
                 : null;
+            var scalpingRuntime = _scalpingSession?.GetRuntimeSnapshot();
+            var lastAudit = AutoBotService.LastExecutionAuditSnapshot;
+            var news = await GetCachedNewsAsync(context.Pair, cancellationToken).ConfigureAwait(false);
 
             var rules = _catalog.GetAll()
-                .Select(item => BuildRule(item, context, account, symbol, position, positions, pairSettings))
+                .Select(item => BuildRule(item, context, account, symbol, position, positions, pairSettings, scalpingRuntime, lastAudit, news))
                 .ToList();
 
             return new TradeRulesRuntimeSnapshotResult
@@ -79,12 +93,21 @@ namespace MT5TradingBot.Modules.TradeRules
             SymbolInfo? symbol,
             LivePosition? position,
             IReadOnlyList<LivePosition> positions,
-            PairTradingSettings? pairSettings)
+            PairTradingSettings? pairSettings,
+            ScalpingRuntimeSnapshot? scalpingRuntime,
+            IReadOnlyList<TradeRuleAuditSnapshot> lastAudit,
+            NewsRiskSnapshot? news)
         {
             object? configured = ResolveConfiguredValue(item.RuleCode, context, pairSettings);
-            object? live = ResolveLiveValue(item.RuleCode, account, symbol, position, positions);
+            object? live = ResolveLiveValue(item.RuleCode, account, symbol, position, positions, scalpingRuntime, news);
             bool enabled = IsEnabled(item.RuleCode);
             string result = ResolveInitialResult(item.RuleCode, configured, live, account, symbol, position);
+            var audit = ResolveAudit(item.RuleCode, context, lastAudit);
+            if (audit != null)
+            {
+                live = $"Order {audit.Order}";
+                result = audit.Result;
+            }
 
             var snapshot = new TradeRuleRuntimeSnapshot
             {
@@ -104,12 +127,68 @@ namespace MT5TradingBot.Modules.TradeRules
                 MinValue = ResolveMinValue(item.RuleCode),
                 MaxValue = ResolveMaxValue(item.RuleCode),
                 Unit = ResolveUnit(item.RuleCode),
-                Reason = BuildReason(item.RuleCode, result, enabled, account, symbol, live),
+                Reason = audit?.Reason ?? BuildReason(item.RuleCode, result, enabled, account, symbol, live, news),
+                RuntimeMode = ResolveRuntimeMode(item, context, configured, live),
+                ValueType = item.ValueType,
                 LastCheckedAtUtc = DateTime.UtcNow
             };
 
             TradeRuleStatusEvaluator.ApplyEnabledState(snapshot, result);
+            if (snapshot.RuntimeMode == TradeRuleRuntimeModes.MonitorOnly)
+                snapshot.ActualEffect += " Monitor Only - live value is displayed but runtime apply is not wired for this rule.";
             return snapshot;
+        }
+
+        private async Task<NewsRiskSnapshot?> GetCachedNewsAsync(string pair, CancellationToken cancellationToken)
+        {
+            if (_newsCalendar == null || _apiConfig == null || string.IsNullOrWhiteSpace(pair))
+                return null;
+
+            if (string.Equals(_cachedNewsPair, pair, StringComparison.OrdinalIgnoreCase) &&
+                _cachedNews != null &&
+                DateTime.UtcNow - _cachedNewsAtUtc < TimeSpan.FromMinutes(5))
+                return _cachedNews;
+
+            try
+            {
+                _cachedNews = await _newsCalendar.GetRiskSnapshotAsync(pair, _apiConfig, cancellationToken).ConfigureAwait(false);
+                _cachedNewsPair = pair;
+                _cachedNewsAtUtc = DateTime.UtcNow;
+                return _cachedNews;
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private static TradeRuleAuditSnapshot? ResolveAudit(
+            string ruleCode,
+            TradeRulesContext context,
+            IReadOnlyList<TradeRuleAuditSnapshot> lastAudit)
+        {
+            if (lastAudit.Count == 0)
+                return null;
+
+            return lastAudit.FirstOrDefault(a =>
+                string.Equals(a.RuleCode, ruleCode, StringComparison.OrdinalIgnoreCase) &&
+                (string.IsNullOrWhiteSpace(context.Pair) || string.Equals(a.Pair, context.Pair, StringComparison.OrdinalIgnoreCase)) &&
+                (string.IsNullOrWhiteSpace(context.RequestId) || string.Equals(a.RequestId, context.RequestId, StringComparison.OrdinalIgnoreCase)))
+                ?? lastAudit.FirstOrDefault(a => string.Equals(a.RuleCode, ruleCode, StringComparison.OrdinalIgnoreCase));
+        }
+
+        private static string ResolveRuntimeMode(TradeRuleCatalogItem item, TradeRulesContext context, object? configured, object? live)
+        {
+            if (TradeRulesRuntimeControlService.IsRuntimeControllableRule(item.RuleCode, context.Strategy))
+                return TradeRuleRuntimeModes.RuntimeControllable;
+
+            if (item.Category == "Pair Rules")
+                return TradeRuleRuntimeModes.SaveOnly;
+
+            if (configured == null && live == null)
+                return TradeRuleRuntimeModes.NotAvailable;
+
+            return TradeRuleRuntimeModes.MonitorOnly;
         }
 
         private object? ResolveConfiguredValue(string ruleCode, TradeRulesContext context, PairTradingSettings? pairSettings)
@@ -188,7 +267,9 @@ namespace MT5TradingBot.Modules.TradeRules
             AccountInfo? account,
             SymbolInfo? symbol,
             LivePosition? position,
-            IReadOnlyList<LivePosition> positions) =>
+            IReadOnlyList<LivePosition> positions,
+            ScalpingRuntimeSnapshot? scalpingRuntime,
+            NewsRiskSnapshot? news) =>
             ruleCode switch
             {
                 "BROKER-SYMBOL-DATA" => symbol == null ? null : $"{symbol.Bid:F5}/{symbol.Ask:F5}",
@@ -201,11 +282,21 @@ namespace MT5TradingBot.Modules.TradeRules
                 "ACCOUNT-MARGIN" => account?.MarginLevel,
                 "ACCOUNT-MAX-CONCURRENT" or "COMMON-MAX-POSITIONS" => positions.Count,
                 "ACCOUNT-SYMBOL-EXPOSURE" => positions.Count,
-                "SCALP-ENABLED" => _scalpingSession?.IsRunning,
+                "SCALP-ENABLED" => scalpingRuntime?.IsRunning ?? _scalpingSession?.IsRunning,
+                "SCALP-MAX-TRADES" => scalpingRuntime?.TradesCount,
+                "SCALP-MAX-MINUTES" => scalpingRuntime?.ElapsedSeconds is null ? null : scalpingRuntime.ElapsedSeconds.Value / 60.0,
+                "SCALP-SESSION-LOSS" => scalpingRuntime?.SessionProfitUsd,
+                "SCALP-COOLDOWN" => scalpingRuntime?.CooldownRemainingSeconds,
+                "SCALP-DIRECTION-MODE" => scalpingRuntime?.SelectedDirection?.ToString(),
+                "SCALP-BUY-SCORE" => scalpingRuntime?.LastBuyScore,
+                "SCALP-SELL-SCORE" => scalpingRuntime?.LastSellScore,
+                "SCALP-DIRECTION-TIE" => scalpingRuntime?.LastNoTradeReason,
                 "NORMAL-ENABLED" => _normalTradeManager?.IsRunning,
+                "SAFETY-NEWS-BLACKOUT" => news == null ? null : $"{news.RiskLevel}; blackout={news.IsBlackoutActive}; highImpact60={news.HighImpactNext60Minutes}",
+                "SAFETY-ADX-RANGING" => null,
                 "EXEC-FINAL-GATE" => "Last audit source not connected yet",
                 "EXEC-RISK-VALIDATION" => "Last risk audit source not connected yet",
-                "EXEC-TRADE_ACCEPTED" => null,
+                "EXEC-TRADE-ACCEPTED" => null,
                 "EXEC-TRADE-REJECTED" => null,
                 "EXEC-NO-TRADE" => null,
                 "PAIR-PIP-SIZE" => symbol?.EffectivePointSize,
@@ -313,15 +404,21 @@ namespace MT5TradingBot.Modules.TradeRules
             bool enabled,
             AccountInfo? account,
             SymbolInfo? symbol,
-            object? live)
+            object? live,
+            NewsRiskSnapshot? news)
         {
             if (result == TradeRuleResults.NotChecked)
                 return ruleCode switch
                 {
                     "ACCOUNT-DATA" when account == null => "Account live data is unavailable.",
                     "BROKER-SYMBOL-DATA" when symbol == null => "Broker symbol data is unavailable.",
+                    "SAFETY-NEWS-BLACKOUT" when news == null => "News source unavailable, unconfigured, or cached snapshot not ready.",
+                    "SAFETY-ADX-RANGING" => "ADX live source not wired yet.",
                     _ => "Live source is not connected yet or this rule has no runtime source in Phase 3."
                 };
+
+            if (ruleCode == "SAFETY-NEWS-BLACKOUT" && news != null)
+                return news.Reason;
 
             if (!enabled)
                 return $"Rule is disabled; would-have-result is {result}.";

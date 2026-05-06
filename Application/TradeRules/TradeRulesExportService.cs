@@ -85,12 +85,18 @@ namespace MT5TradingBot.Modules.TradeRules
                 sb.AppendLine($"  Category: {rule.Category}");
                 sb.AppendLine($"  Group: {rule.GroupName}");
                 sb.AppendLine($"  Enabled: {rule.IsEnabled}");
-                sb.AppendLine($"  Standard: {FormatValue(rule.StandardValue)}");
-                sb.AppendLine($"  Configured: {FormatValue(rule.ConfiguredValue)}");
-                sb.AppendLine($"  Live: {FormatValue(rule.LiveValue)}");
+                sb.AppendLine($"  RuleCode: {rule.RuleCode}");
+                sb.AppendLine($"  RuleName: {rule.RuleName}");
+                sb.AppendLine($"  StandardValue: {FormatRedactedValue(rule.StandardValue)}");
+                sb.AppendLine($"  ConfiguredValue: {FormatRedactedValue(rule.ConfiguredValue)}");
+                sb.AppendLine($"  PreviewValue: {FormatRedactedValue(rule.PreviewValue)}");
+                sb.AppendLine($"  LiveValue: {FormatRedactedValue(rule.LiveValue)}");
                 sb.AppendLine($"  Status: {rule.Result}");
                 sb.AppendLine($"  Would Have Result: {rule.WouldHaveResult ?? "-"}");
+                sb.AppendLine($"  ActualEffect: {rule.ActualEffect}");
+                sb.AppendLine($"  RuntimeMode: {rule.RuntimeMode}");
                 sb.AppendLine($"  Reason: {rule.Reason}");
+                sb.AppendLine($"  LastCheckedAtUtc: {rule.LastCheckedAtUtc:O}");
                 sb.AppendLine($"  Source: {rule.SourceFile}");
             }
             sb.AppendLine();
@@ -99,7 +105,7 @@ namespace MT5TradingBot.Modules.TradeRules
             foreach (string row in history)
                 sb.AppendLine(row);
 
-            return sb.ToString();
+            return RedactSecretText(sb.ToString());
         }
 
         public void WriteJson(string path, TradeRulesRuntimeSnapshotResult snapshot, IReadOnlyList<string> history) =>
@@ -140,5 +146,55 @@ namespace MT5TradingBot.Modules.TradeRules
                 IEnumerable<string> strings => string.Join(", ", strings),
                 _ => value.ToString() ?? "-"
             };
+
+        private static string FormatRedactedValue(object? value)
+        {
+            if (value == null)
+                return "-";
+
+            if (value is string text)
+                return IsSecretValue(text) ? "[REDACTED]" : text;
+
+            if (value.GetType().IsPrimitive || value is decimal)
+                return FormatValue(value);
+
+            try
+            {
+                var token = JToken.FromObject(value);
+                RedactSecrets(token);
+                return token.Type == JTokenType.String
+                    ? token.ToString()
+                    : token.ToString(Formatting.None);
+            }
+            catch
+            {
+                string formatted = FormatValue(value);
+                return IsSecretValue(formatted) ? "[REDACTED]" : formatted;
+            }
+        }
+
+        private static string RedactSecretText(string text)
+        {
+            var lines = text.Replace("\r\n", "\n").Split('\n');
+            for (int i = 0; i < lines.Length; i++)
+            {
+                if (SecretMarkers.Any(marker => lines[i].Contains(marker, StringComparison.OrdinalIgnoreCase)) ||
+                    IsSecretValue(lines[i]))
+                {
+                    int colon = lines[i].IndexOf(':');
+                    lines[i] = colon >= 0
+                        ? lines[i][..(colon + 1)] + " [REDACTED]"
+                        : "[REDACTED]";
+                }
+            }
+
+            return string.Join(Environment.NewLine, lines);
+        }
+
+        private static bool IsSecretValue(string value) =>
+            value.Contains("sk-", StringComparison.OrdinalIgnoreCase) ||
+            value.Contains("xoxb-", StringComparison.OrdinalIgnoreCase) ||
+            value.Contains("xoxp-", StringComparison.OrdinalIgnoreCase) ||
+            value.Contains("Bearer ", StringComparison.OrdinalIgnoreCase);
     }
 }
