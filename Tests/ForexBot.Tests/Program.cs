@@ -16,6 +16,7 @@ using MT5TradingBot.Modules.RiskManagement;
 using MT5TradingBot.Modules.Scalping;
 using MT5TradingBot.Modules.StrategyProof;
 using MT5TradingBot.Modules.TradeExecution;
+using MT5TradingBot.Modules.TradeRules;
 using MT5TradingBot.Services;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
@@ -345,6 +346,10 @@ internal static class Program
         new("take-profit placement rejects wrong side of entry", TakeProfitPlacementRejectsWrongSide),
         new("trade execution rejects validation, risk, and approval failures", TradeExecutionHandlesRejections),
         new("no direct live MT5 order bypass exists outside execution service", NoDirectLiveOrderBypassExists),
+        new("trade rule catalog has unique fixed codes", TradeRuleCatalogHasUniqueFixedCodes),
+        new("disabled trade rule preserves would-have result", DisabledTradeRulePreservesWouldHaveResult),
+        new("trade rule summary counts disabled would block", TradeRuleSummaryCountsDisabledWouldBlock),
+        new("trade rules export redacts secrets", TradeRulesExportRedactsSecrets),
         new("missing account blocks live trade", MissingAccountBlocksLiveTrade),
         new("missing symbol/spread blocks live trade", MissingSymbolDataBlocksLiveTrade),
         new("news unavailable blocks live trade", NewsUnavailableBlocksLiveTrade),
@@ -8391,6 +8396,87 @@ internal static class Program
                 Reason = "news provider unavailable",
                 Source = config.NewsProvider
             });
+    }
+
+    private static Task TradeRuleCatalogHasUniqueFixedCodes()
+    {
+        var rules = new TradeRuleCatalog().GetAll();
+        AssertTrue(rules.Count > 0, "Rule catalog should not be empty.");
+        var duplicate = rules
+            .GroupBy(r => r.RuleCode, StringComparer.OrdinalIgnoreCase)
+            .FirstOrDefault(g => g.Count() > 1);
+
+        if (duplicate != null)
+            throw new InvalidOperationException($"Duplicate rule code found: {duplicate.Key}");
+
+        AssertTrue(rules.Any(r => r.RuleCode == "SCALP-DIRECTION-TIE"), "Catalog should include scalping direction tie rule.");
+        AssertTrue(rules.Any(r => r.RuleCode == "EXEC-FINAL-GATE"), "Catalog should include final execution gate rule.");
+        return Task.CompletedTask;
+    }
+
+    private static Task DisabledTradeRulePreservesWouldHaveResult()
+    {
+        var rule = new TradeRuleRuntimeSnapshot
+        {
+            RuleCode = "SCALP-SPREAD-LIMIT",
+            RuleName = "Scalping Spread Limit",
+            IsEnabled = false
+        };
+
+        TradeRuleStatusEvaluator.ApplyEnabledState(rule, TradeRuleResults.Block);
+
+        AssertEqual(TradeRuleResults.Disabled, rule.Result, "Disabled rule should show DISABLED.");
+        AssertEqual(TradeRuleResults.Block, rule.WouldHaveResult ?? "", "Disabled rule should preserve would-have result.");
+        AssertContains("Ignored", rule.ActualEffect);
+        return Task.CompletedTask;
+    }
+
+    private static Task TradeRuleSummaryCountsDisabledWouldBlock()
+    {
+        var rules = new List<TradeRuleRuntimeSnapshot>
+        {
+            new() { RuleCode = "A", RuleName = "A", Result = TradeRuleResults.Pass },
+            new() { RuleCode = "B", RuleName = "B", Result = TradeRuleResults.Warning },
+            new() { RuleCode = "C", RuleName = "C", Result = TradeRuleResults.Disabled, WouldHaveResult = TradeRuleResults.Block }
+        };
+
+        var summary = TradeRuleStatusEvaluator.BuildSummary(rules);
+
+        AssertEqual(1, summary.Passed, "Passed count should include active pass rules.");
+        AssertEqual(1, summary.Warning, "Warning count should include active warnings.");
+        AssertEqual(1, summary.Disabled, "Disabled count should include disabled rules.");
+        AssertEqual(1, summary.DisabledButWouldBlock, "Disabled-but-would-block count should be tracked.");
+        AssertEqual("High", summary.RiskLevel, "Disabled blocked rule should raise risk to High.");
+        return Task.CompletedTask;
+    }
+
+    private static Task TradeRulesExportRedactsSecrets()
+    {
+        var snapshot = new TradeRulesRuntimeSnapshotResult
+        {
+            Context = new TradeRulesContext { Pair = "XAUUSD", Strategy = TradeRulesStrategy.Scalping },
+            Summary = new TradeRuleDecisionSummary { CurrentDecision = "UNKNOWN" },
+            Rules =
+            [
+                new TradeRuleRuntimeSnapshot
+                {
+                    RuleCode = "COMMON-AI-CONFIRM",
+                    RuleName = "AI Confirmation",
+                    ConfiguredValue = new Dictionary<string, string>
+                    {
+                        ["openai_api_key"] = "sk-secret",
+                        ["safe_value"] = "visible"
+                    },
+                    Result = TradeRuleResults.Pass
+                }
+            ]
+        };
+
+        string json = new TradeRulesExportService().ExportJson(snapshot, []);
+        AssertFalse(json.Contains("sk-secret", StringComparison.Ordinal), "Export should redact API key values.");
+        AssertContains("[REDACTED]", json);
+        AssertContains("visible", json);
+        return Task.CompletedTask;
     }
 
     private sealed class ThrowingRiskManager : IRiskManager

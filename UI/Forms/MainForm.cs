@@ -11,6 +11,7 @@ using MT5TradingBot.Modules.NewsFilter;
 using MT5TradingBot.Modules.NormalTrading;
 using MT5TradingBot.Modules.RiskManagement;
 using MT5TradingBot.Modules.Scalping;
+using MT5TradingBot.Modules.TradeRules;
 using MT5TradingBot.Services;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
@@ -48,9 +49,10 @@ namespace MT5TradingBot.UI
         private readonly ScalpingTradeManager _scalpingTradeManager = new();
         private readonly NormalTradeManager _normalTradeManager = new();
         private readonly Button _btnStopScalping = new();
+        private readonly Button _btnScalpingRules = new();
+        private readonly Button _btnNormalRules = new();
         private const int MaxScreenLogLines = 500;
         private const int MaxScreenLogChars = 180;
-        private const double ScalpingMaxSpreadPercentOfTp = 20.0;
         private readonly List<string> _screenLogFullMessages = [];
 
         // -- Pair analysis feed ------------------------------------
@@ -183,7 +185,9 @@ namespace MT5TradingBot.UI
             bot.OnLog += msg => Log(msg);
             bot.OnTradeExecuted += r =>
             {
-                Log(r.IsSuccess ? $"[BOT] Trade: {r}" : $"[BOT] Rejected: {r.ErrorMessage}",
+                Log(r.IsSuccess
+                        ? $"[BOT] Trade | Rule=EXEC-TRADE-ACCEPTED Trade Accepted | {r}"
+                        : $"[BOT] Rejected | Rule=EXEC-TRADE-REJECTED Trade Rejected | {r.ErrorMessage}",
                     r.IsSuccess ? C_GREEN : C_RED);
                 _ = RefreshBotTradeStatusAsync(r);
             };
@@ -244,6 +248,7 @@ namespace MT5TradingBot.UI
             _btnClosePos.Click    += BtnClosePos_Click;
             _btnCloseAllPos.Click += BtnCloseAllPos_Click;
             _btnRefreshPos.Click  += BtnRefreshPos_Click;
+            _gridPos.CellMouseDown += GridPos_CellMouseDown;
 
             _btnImportHistory.Click += BtnImportHistory_Click;
             _btnClearHistory.Click  += BtnClearHistory_Click;
@@ -252,6 +257,8 @@ namespace MT5TradingBot.UI
 
             _btnStopBot.Click         += BtnStopBot_Click;
             _btnStopScalping.Click    += BtnStopScalping_Click;
+            _btnScalpingRules.Click   += (_, _) => OpenRulesMonitor(BuildPanelRulesContext(TradeRulesStrategy.Scalping, "ScalpingPanel"));
+            _btnNormalRules.Click     += (_, _) => OpenRulesMonitor(BuildPanelRulesContext(TradeRulesStrategy.Normal, "NormalPanel"));
             _btnBotSettings.Click     += BtnBotSettings_Click;
             _btnAnalyzePairs.Click    += BtnAnalyzePairs_Click;
             _btnOpenFolder.Click      += BtnOpenFolder_Click;
@@ -270,6 +277,7 @@ namespace MT5TradingBot.UI
             _btnOpenTradeLogFile.Click += BtnOpenTradeLogFile_Click;
             _btnDeleteLogs.Click += BtnDeleteLogs_Click;
             _txtLog.DoubleClick += TxtLog_DoubleClick;
+            ConfigureRulesMonitorContextMenus();
             _cardTooltip.SetToolTip(_btnLogDetails, "Select or double-click a log line to see why the bot traded, waited, or blocked it.");
             _cardTooltip.SetToolTip(_btnOpenLogFile, "Open the full regular bot diagnostic log for this app session.");
             _cardTooltip.SetToolTip(_btnOpenTradeLogFile, "Open the focused trade log with placed, rejected, closed, and execution-quality events.");
@@ -279,6 +287,17 @@ namespace MT5TradingBot.UI
             _btnPairDelete.Click += BtnPairDelete_Click;
             _btnPairImport.Click += BtnPairImport_Click;
             _gridPairSettings.CellDoubleClick += GridPairSettings_CellDoubleClick;
+        }
+
+        private void GridPos_CellMouseDown(object? sender, DataGridViewCellMouseEventArgs e)
+        {
+            if (e.Button == MouseButtons.Right && e.RowIndex >= 0)
+            {
+                _gridPos.ClearSelection();
+                _gridPos.Rows[e.RowIndex].Selected = true;
+                if (e.ColumnIndex >= 0)
+                    _gridPos.CurrentCell = _gridPos.Rows[e.RowIndex].Cells[e.ColumnIndex];
+            }
         }
 
         // ==========================================================
@@ -2955,6 +2974,19 @@ SAFETY RULES:
             };
             card.Controls.Add(btnJson);
 
+            var btnRules = MakeCardButton("Rules", Color.FromArgb(45, 45, 70), Color.FromArgb(210, 220, 255),
+                "Open Rules Monitor - inspect decision rules for this signal");
+            btnRules.Size     = new Size(44, 22);
+            btnRules.Anchor   = AnchorStyles.Top | AnchorStyles.Right;
+            btnRules.Location = new Point(w - 180, 8);
+            btnRules.Tag      = "rules";
+            btnRules.Click   += (_, _) =>
+            {
+                if (card.Tag is SignalCardInfo ci)
+                    OpenRulesMonitor(BuildSignalRulesContext(ci));
+            };
+            card.Controls.Add(btnRules);
+
             // Thin marquee progress bar - shown while async work is in progress
             var pbBusy = new ProgressBar
             {
@@ -3534,7 +3566,7 @@ SAFETY RULES:
             TradeRequest activeRequest = request;
             using var form = new Form
             {
-                Text = $"Review Trade - {request.TradeType} {request.Pair}",
+                Text = $"Trade Window - {request.TradeType} {request.Pair}",
                 Size = new Size(1280, 900),
                 MinimumSize = new Size(1080, 760),
                 StartPosition = FormStartPosition.CenterParent,
@@ -6498,9 +6530,10 @@ SAFETY RULES:
             double spread = ReadReviewNumber(snapshot, "price.spread_pips");
             if (autoScalpingRequested && !double.IsNaN(spread) && spread > 0)
             {
+                double maxSpreadPercentOfTp = Math.Max(0.1, _cfg.Bot.Scalping.MaxSpreadPercentOfTp);
                 double requiredTpFromLiveRules = Math.Max(
                     effective.SlPips * requiredRr,
-                    spread * (100.0 / ScalpingMaxSpreadPercentOfTp));
+                    spread * (100.0 / maxSpreadPercentOfTp));
                 if (requiredTpFromLiveRules > effective.TpPips + 1e-9)
                 {
                     warnings.Add(new TradeWarningItem(
@@ -6509,7 +6542,7 @@ SAFETY RULES:
                         $"{effective.TpPips:0.0} TP pips",
                         "Scalping trade page TP pips after applying visible inputs",
                         $">= {requiredTpFromLiveRules:0.0} TP pips",
-                        $"Live rule: max(SL {effective.SlPips:0.0} x R:R {requiredRr:0.00}, spread {spread:0.0} / {ScalpingMaxSpreadPercentOfTp:0.#}%)",
+                        $"Live rule: max(SL {effective.SlPips:0.0} x R:R {requiredRr:0.00}, spread {spread:0.0} / {maxSpreadPercentOfTp:0.#}%)",
                         $"Current TP is short by {(requiredTpFromLiveRules - effective.TpPips):0.0} pips for the current live spread/R:R rule."));
                 }
             }
@@ -7968,6 +8001,188 @@ SAFETY RULES:
 
         private void TxtLog_DoubleClick(object? sender, EventArgs e) => ShowSelectedLogDetail();
 
+        private void ConfigureRulesMonitorContextMenus()
+        {
+            var logMenu = new ContextMenuStrip();
+            logMenu.Items.Add("Open Log Details", null, (_, _) => ShowSelectedLogDetail());
+            logMenu.Items.Add("Open Rules Monitor", null, (_, _) =>
+            {
+                string line = GetFullLogLineForDetails(GetSelectedLogLineIndex());
+                if (string.IsNullOrWhiteSpace(line))
+                    line = GetSelectedLogLine();
+
+                if (!IsRulesMonitorEligibleLog(line))
+                {
+                    AppMessageBox.Info(this, "Rules Monitor opens for trade-decision log rows only.");
+                    return;
+                }
+
+                OpenRulesMonitor(BuildLogRulesContext(line));
+            });
+            logMenu.Items.Add("Copy Log", null, (_, _) =>
+            {
+                string line = GetFullLogLineForDetails(GetSelectedLogLineIndex());
+                if (!string.IsNullOrWhiteSpace(line))
+                    Clipboard.SetText(line);
+            });
+            logMenu.Items.Add("Copy Decision Audit", null, (_, _) =>
+            {
+                string line = GetFullLogLineForDetails(GetSelectedLogLineIndex());
+                if (IsRulesMonitorEligibleLog(line))
+                    Clipboard.SetText(line);
+            });
+            _txtLog.ContextMenuStrip = logMenu;
+
+            var positionMenu = new ContextMenuStrip();
+            positionMenu.Items.Add("Open Rules Monitor", null, (_, _) => OpenRulesMonitor(BuildPositionRulesContext()));
+            _gridPos.ContextMenuStrip = positionMenu;
+        }
+
+        private void OpenRulesMonitor(TradeRulesContext context)
+        {
+            var snapshotService = new TradeRulesRuntimeSnapshotService(
+                _cfg,
+                new TradeRuleCatalog(),
+                _bridge,
+                _pairSettings,
+                _scalping,
+                _normalTradeManager);
+            var controlService = new TradeRulesRuntimeControlService(_cfg, _settings);
+
+            Log($"[RULES_MONITOR] Opened | Source={context.OpenedFrom} | Pair={context.Pair} | Strategy={context.Strategy} | Ticket={context.Ticket?.ToString() ?? "-"}", C_ACCENT);
+            using var form = new LiveTradeRulesMonitorControlForm(context, snapshotService, controlService, message => Log(message, C_ACCENT));
+            form.ShowDialog(this);
+        }
+
+        private TradeRulesContext BuildPanelRulesContext(TradeRulesStrategy strategy, string openedFrom)
+        {
+            string pair = strategy == TradeRulesStrategy.Scalping
+                ? (_cmbAllowedPair.Text.DefaultIfBlank(_cmbPair.Text))
+                : _cmbPair.Text;
+
+            return new TradeRulesContext
+            {
+                Pair = pair.Trim().ToUpperInvariant(),
+                Strategy = strategy,
+                IsRunningTrade = strategy == TradeRulesStrategy.Scalping
+                    ? _scalping?.IsRunning == true
+                    : _normalTradeManager.IsRunning,
+                OpenedFrom = openedFrom
+            };
+        }
+
+        private TradeRulesContext BuildPositionRulesContext()
+        {
+            if (_gridPos.SelectedRows.Count == 0)
+                return new TradeRulesContext { OpenedFrom = "RunningTrade", IsRunningTrade = true };
+
+            var row = _gridPos.SelectedRows[0];
+            _ = long.TryParse(row.Cells[0].Value?.ToString(), out long ticket);
+            string pair = row.Cells[1].Value?.ToString() ?? "";
+            string typeText = row.Cells[2].Value?.ToString() ?? "";
+            string comment = row.Cells[11].Value?.ToString() ?? "";
+
+            return new TradeRulesContext
+            {
+                Pair = pair,
+                Strategy = ResolveStrategy(comment),
+                Ticket = ticket > 0 ? ticket : null,
+                TradeType = Enum.TryParse<TradeType>(typeText, true, out var type) ? type : null,
+                IsRunningTrade = true,
+                OpenedFrom = "RunningTrade"
+            };
+        }
+
+        private TradeRulesContext BuildSignalRulesContext(SignalCardInfo info) => new()
+        {
+            Pair = info.Pair,
+            Strategy = ResolveStrategy(info.StatusText),
+            Ticket = info.Ticket > 0 ? info.Ticket : null,
+            TradeType = Enum.TryParse<TradeType>(info.TradeType, true, out var type) ? type : null,
+            RequestId = info.SignalId,
+            IsRunningTrade = info.Ticket > 0,
+            OpenedFrom = "SignalCard"
+        };
+
+        private TradeRulesContext BuildPairAnalysisRulesContext(PairAnalysisInfo info) => new()
+        {
+            Pair = info.Pair,
+            Strategy = string.Equals(info.Status, "Scalping", StringComparison.OrdinalIgnoreCase)
+                ? TradeRulesStrategy.Scalping
+                : TradeRulesStrategy.Unknown,
+            TradeType = Enum.TryParse<TradeType>(info.Direction, true, out var type) ? type : null,
+            OpenedFrom = "SignalCard"
+        };
+
+        private TradeRulesContext BuildLogRulesContext(string line) => new()
+        {
+            Pair = ExtractKnownPair(line),
+            Strategy = ResolveStrategy(line),
+            Ticket = ExtractLongAfter(line, "Ticket #") ?? ExtractLongAfter(line, "#"),
+            RequestId = ExtractTokenAfter(line, "RequestId="),
+            TradeType = line.Contains(" BUY ", StringComparison.OrdinalIgnoreCase) || line.Contains(" BUY", StringComparison.OrdinalIgnoreCase)
+                ? TradeType.BUY
+                : line.Contains(" SELL ", StringComparison.OrdinalIgnoreCase) || line.Contains(" SELL", StringComparison.OrdinalIgnoreCase)
+                    ? TradeType.SELL
+                    : null,
+            IsRunningTrade = false,
+            OpenedFrom = "LogScreen",
+            RawLogLine = line
+        };
+
+        private static bool IsRulesMonitorEligibleLog(string line) =>
+            !string.IsNullOrWhiteSpace(line) &&
+            (line.Contains("[SCALP]", StringComparison.OrdinalIgnoreCase) ||
+             line.Contains("[TRADE_AUDIT_FULL]", StringComparison.OrdinalIgnoreCase) ||
+             line.Contains("TRADE_AUDIT_FULL", StringComparison.OrdinalIgnoreCase) ||
+             line.Contains("[EXEC_AUDIT]", StringComparison.OrdinalIgnoreCase) ||
+             line.Contains("[BOT] Trade", StringComparison.OrdinalIgnoreCase) ||
+             line.Contains("[BOT] Rejected", StringComparison.OrdinalIgnoreCase) ||
+             line.Contains("[AI] Signal", StringComparison.OrdinalIgnoreCase));
+
+        private static TradeRulesStrategy ResolveStrategy(string text)
+        {
+            if (text.Contains("Scalping", StringComparison.OrdinalIgnoreCase) ||
+                text.Contains("[SCALP]", StringComparison.OrdinalIgnoreCase))
+                return TradeRulesStrategy.Scalping;
+
+            if (text.Contains("Normal", StringComparison.OrdinalIgnoreCase))
+                return TradeRulesStrategy.Normal;
+
+            return TradeRulesStrategy.Unknown;
+        }
+
+        private string ExtractKnownPair(string text)
+        {
+            var candidates = _cfg.Bot.AllowedPairs
+                .Concat(_cfg.PairSettings.Keys)
+                .Concat(_cfg.Bot.ScalpingByPair.Keys)
+                .Concat(_cfg.Bot.NormalTradingByPair.Keys)
+                .Distinct(StringComparer.OrdinalIgnoreCase);
+
+            return candidates.FirstOrDefault(pair => text.Contains(pair, StringComparison.OrdinalIgnoreCase)) ?? "";
+        }
+
+        private static long? ExtractLongAfter(string text, string marker)
+        {
+            int index = text.IndexOf(marker, StringComparison.OrdinalIgnoreCase);
+            if (index < 0) return null;
+
+            string tail = text[(index + marker.Length)..];
+            string digits = new(tail.SkipWhile(c => !char.IsDigit(c)).TakeWhile(char.IsDigit).ToArray());
+            return long.TryParse(digits, out long value) ? value : null;
+        }
+
+        private static string? ExtractTokenAfter(string text, string marker)
+        {
+            int index = text.IndexOf(marker, StringComparison.OrdinalIgnoreCase);
+            if (index < 0) return null;
+
+            string tail = text[(index + marker.Length)..].Trim();
+            string token = new(tail.TakeWhile(c => !char.IsWhiteSpace(c) && c != '|').ToArray());
+            return string.IsNullOrWhiteSpace(token) ? null : token;
+        }
+
         private void ShowSelectedLogDetail()
         {
             int lineIndex = GetSelectedLogLineIndex();
@@ -8197,6 +8412,19 @@ SAFETY RULES:
             btnJson.Tag      = "json";
             btnJson.Click   += (_, _) => ShowPairAnalysisJson(card);
             card.Controls.Add(btnJson);
+
+            var btnRules = MakeCardButton("Rules", Color.FromArgb(45, 45, 70), Color.FromArgb(210, 220, 255),
+                "Open Rules Monitor - inspect rules for this pair analysis row");
+            btnRules.Size     = new Size(44, 22);
+            btnRules.Anchor   = AnchorStyles.Top | AnchorStyles.Right;
+            btnRules.Location = new Point(w - 180, 8);
+            btnRules.Tag      = "rules";
+            btnRules.Click   += (_, _) =>
+            {
+                if (card.Tag is PairAnalysisInfo pa)
+                    OpenRulesMonitor(BuildPairAnalysisRulesContext(pa));
+            };
+            card.Controls.Add(btnRules);
 
             card.Controls.Add(new Label
             {
@@ -9080,6 +9308,7 @@ SAFETY RULES:
             TakeProfitPips = config.TakeProfitPips,
             RiskRewardRatio = config.RiskRewardRatio,
             MaxSpreadPips = config.MaxSpreadPips,
+            MaxSpreadPercentOfTp = config.MaxSpreadPercentOfTp,
             DynamicValuesEnabled = config.DynamicValuesEnabled,
             PollIntervalMs = config.PollIntervalMs,
             CooldownSeconds = config.CooldownSeconds,
@@ -9101,6 +9330,7 @@ SAFETY RULES:
             TakeProfitPips = config.TakeProfitPips,
             RiskRewardRatio = config.RiskRewardRatio,
             MaxSpreadPips = config.MaxSpreadPips,
+            MaxSpreadPercentOfTp = config.MaxSpreadPercentOfTp,
             DynamicValuesEnabled = config.DynamicValuesEnabled,
             PollIntervalMs = config.PollIntervalMs,
             CooldownSeconds = config.CooldownSeconds,

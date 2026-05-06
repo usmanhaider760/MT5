@@ -12,7 +12,6 @@ namespace MT5TradingBot.Modules.Scalping
         private const int ProfessionalMaxScalpsPerSession = 6;
         private const int ProfessionalMinDecisionScore = 6;
         private const int AutoDirectionMinScoreGap = 2;
-        private const double ProfessionalMaxSpreadPercentOfTp = 20.0;
         private const double ScalpSignalExpiryMinutes = 0.17;
 
         private readonly MT5Bridge _bridge;
@@ -110,13 +109,13 @@ namespace MT5TradingBot.Modules.Scalping
 
                     if ((DateTime.UtcNow - started).TotalMinutes >= cfg.MaxMinutes)
                     {
-                        Log("[SCALP] Session time limit reached.");
+                        Log("[SCALP] Session time limit reached. Rule=SCALP-MAX-MINUTES Scalping Session Time Limit");
                         break;
                     }
 
                     if (openedTrades >= cfg.MaxTrades)
                     {
-                        Log("[SCALP] Max trades reached.");
+                        Log("[SCALP] Max trades reached. Rule=SCALP-MAX-TRADES Max Scalping Trades");
                         break;
                     }
 
@@ -125,7 +124,7 @@ namespace MT5TradingBot.Modules.Scalping
 
                     if (cfg.MaxSessionLossUsd > 0 && sessionPnl <= -cfg.MaxSessionLossUsd)
                     {
-                        Log($"[SCALP] Max session loss hit: {sessionPnl:F2} USD.");
+                        Log($"[SCALP] Max session loss hit: {sessionPnl:F2} USD. Rule=SCALP-SESSION-LOSS Scalping Session Loss Limit");
                         break;
                     }
 
@@ -157,7 +156,7 @@ namespace MT5TradingBot.Modules.Scalping
                     {
                         LogScalpSeparator();
                         Log(
-                            $"[SCALP] Waiting: spread is too high ({symbol.SpreadPips:F1} pips, allowed {effectiveCfg.MaxSpreadPips:F1}). " +
+                            $"[SCALP] Waiting: spread is too high ({symbol.SpreadPips:F1} pips, allowed {effectiveCfg.MaxSpreadPips:F1}). Rule=SCALP-SPREAD-LIMIT Scalping Spread Limit. " +
                             BuildPriceSummary(request, effectiveCfg, symbol));
                         await Delay(cfg, ct).ConfigureAwait(false);
                         continue;
@@ -328,6 +327,7 @@ namespace MT5TradingBot.Modules.Scalping
             StopLossPips = Math.Max(1, cfg.StopLossPips),
             TakeProfitPips = Math.Max(1, cfg.TakeProfitPips),
             MaxSpreadPips = Math.Max(0.1, cfg.MaxSpreadPips),
+            MaxSpreadPercentOfTp = Math.Max(0.1, cfg.MaxSpreadPercentOfTp),
             DynamicValuesEnabled = cfg.DynamicValuesEnabled,
             PollIntervalMs = Math.Clamp(cfg.PollIntervalMs, 500, 10000),
             CooldownSeconds = Math.Clamp(cfg.CooldownSeconds, 1, 600),
@@ -382,7 +382,8 @@ namespace MT5TradingBot.Modules.Scalping
             }
 
             double preferredRr = Math.Max(0.1, cfg.RiskRewardRatio);
-            double requiredTp = Math.Max(slPips * preferredRr, spread * (100.0 / ProfessionalMaxSpreadPercentOfTp));
+            double maxSpreadPercentOfTp = Math.Max(0.1, cfg.MaxSpreadPercentOfTp);
+            double requiredTp = Math.Max(slPips * preferredRr, spread * (100.0 / maxSpreadPercentOfTp));
             if (requiredTp > tpPips + 1e-9)
             {
                 return new LiveScalpingConfigResult(
@@ -394,7 +395,7 @@ namespace MT5TradingBot.Modules.Scalping
             double maxSpreadPips = RoundHalfPip(Math.Min(
                 cfg.MaxSpreadPips,
                 Math.Min(
-                    tpPips * ProfessionalMaxSpreadPercentOfTp / 100.0,
+                    tpPips * maxSpreadPercentOfTp / 100.0,
                     Math.Max(spread + 1.0, spread * 1.25))));
 
             var effective = CopyScalpingConfig(cfg);
@@ -414,6 +415,7 @@ namespace MT5TradingBot.Modules.Scalping
             StopLossPips = cfg.StopLossPips,
             TakeProfitPips = cfg.TakeProfitPips,
             MaxSpreadPips = cfg.MaxSpreadPips,
+            MaxSpreadPercentOfTp = cfg.MaxSpreadPercentOfTp,
             DynamicValuesEnabled = cfg.DynamicValuesEnabled,
             PollIntervalMs = cfg.PollIntervalMs,
             CooldownSeconds = cfg.CooldownSeconds,
@@ -574,7 +576,7 @@ namespace MT5TradingBot.Modules.Scalping
                     false,
                     buy.Score,
                     signalDirection,
-                    $"{autoSummary} No trade because BUY and SELL are equally strong. Direction conflict: {scoreComparison}.",
+                    $"{autoSummary} No trade because BUY and SELL are equally strong. Rule=SCALP-DIRECTION-TIE Buy/Sell Equal Strength Block. Direction conflict: {scoreComparison}.",
                     $"{bothSides} | BUY details: {buy.Detail} | SELL details: {sell.Detail}");
             }
 
@@ -587,7 +589,7 @@ namespace MT5TradingBot.Modules.Scalping
                 return auditSide with
                 {
                     Approved = false,
-                    Reason = $"{autoSummary} No trade because direction edge is too small. {smallGapComparison}, required gap >= {AutoDirectionMinScoreGap}.",
+                    Reason = $"{autoSummary} No trade because direction edge is too small. Rule=SCALP-DIRECTION-TIE Buy/Sell Equal Strength Block. {smallGapComparison}, required gap >= {AutoDirectionMinScoreGap}.",
                     Detail = $"{bothSides} | BUY details: {buy.Detail} | SELL details: {sell.Detail}"
                 };
             }
@@ -610,7 +612,7 @@ namespace MT5TradingBot.Modules.Scalping
                     false,
                     buy.Score,
                     signalDirection,
-                    $"{autoSummary} No trade because BUY and SELL are equally strong.",
+                    $"{autoSummary} No trade because BUY and SELL are equally strong. Rule=SCALP-DIRECTION-TIE Buy/Sell Equal Strength Block.",
                     $"{bothSides} | BUY details: {buy.Detail} | SELL details: {sell.Detail}");
             }
 

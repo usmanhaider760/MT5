@@ -2190,7 +2190,7 @@ namespace MT5TradingBot.Services
             int passed = audit.Count(l => l.Passed);
             string failed = string.Join(", ", audit.Where(l => !l.Passed).Select(l => l.Layer));
             string details = string.Join(" | ", audit.Select(l => $"{l.Layer}:{(l.Passed ? "PASS" : "BLOCK")}({l.Reason})"));
-            Log($"TRADE_AUDIT_FULL | {request.Pair} {request.TradeType} | {passed}/{audit.Count} layers passed | Failed: [{failed}] | Details: {details}");
+            Log($"TRADE_AUDIT_FULL | Rule=EXEC-FINAL-GATE Final Execution Gate | {request.Pair} {request.TradeType} | {passed}/{audit.Count} layers passed | Failed: [{failed}] | Details: {details}");
 
             return firstBlock;
         }

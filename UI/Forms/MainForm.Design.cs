@@ -228,11 +228,15 @@ namespace MT5TradingBot.UI
             _btnStopScalping.Text     = "Stop Scalping";
             _btnStopScalping.Enabled  = false;
             _btnStopScalping.Size     = new Size(138, 38);
+            _btnScalpingRules.Text    = "Scalping Rules";
+            _btnScalpingRules.Size    = new Size(132, 38);
+            _btnNormalRules.Text      = "Normal Rules";
+            _btnNormalRules.Size      = new Size(124, 38);
             _btnBotSettings.Size    = new Size(130, 38);
             _btnBotInstructions.Size = new Size(150, 38);
             _btnAnalyzePairs.Size   = new Size(150, 38);
             var botButtons = CreateButtonRow("_botButtons",
-                _btnAnalyzePairs, _btnStopScalping, _btnBotSettings, _btnBotInstructions);
+                _btnAnalyzePairs, _btnStopScalping, _btnScalpingRules, _btnNormalRules, _btnBotSettings, _btnBotInstructions);
 
             // ── Row 2: Watch Folder ──────────────────────────────
             var pnlFolder = new Panel
@@ -629,6 +633,8 @@ namespace MT5TradingBot.UI
             StylePrimaryButton(_btnStartBot, C_GREEN);
             StylePrimaryButton(_btnStopBot, C_RED);
             StylePrimaryButton(_btnStopScalping, C_RED);
+            StylePrimaryButton(_btnScalpingRules, C_ACCENT);
+            StylePrimaryButton(_btnNormalRules, C_ACCENT);
             StylePrimaryButton(_btnBotSettings, C_ACCENT);
             StylePrimaryButton(_btnAnalyzePairs, C_ACCENT);
             StylePrimaryButton(_btnStartClaude, C_GREEN);

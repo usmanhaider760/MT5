@@ -398,6 +398,9 @@ namespace MT5TradingBot.Models
         public Dictionary<string, List<SessionSpreadRuleConfig>> SymbolSpecificSpreadRules { get; set; } =
             new(StringComparer.OrdinalIgnoreCase);
 
+        [JsonProperty("trade_rule_enabled")]
+        public Dictionary<string, bool> TradeRuleEnabled { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+
         /// <summary>
         /// Maximum number of simultaneously open positions managed by this bot
         /// (matched by MagicNumber). 0 = disabled (no cap).
@@ -863,6 +866,9 @@ namespace MT5TradingBot.Models
 
         [JsonProperty("max_spread_pips")]
         public double MaxSpreadPips { get; set; } = 3;
+
+        [JsonProperty("max_spread_percent_of_tp")]
+        public double MaxSpreadPercentOfTp { get; set; } = 20.0;
 
         [JsonProperty("dynamic_values_enabled")]
         public bool DynamicValuesEnabled { get; set; } = true;
