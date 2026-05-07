@@ -1,0 +1,124 @@
+# =========================
+
+# Visual Studio / .NET
+
+# =========================
+
+.vs/
+bin/
+obj/
+Debug/
+Release/
+x64/
+x86/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# =========================
+
+# Build results
+
+# =========================
+
+[Bb]uild/
+[Ll]og/
+bin-test/
+**/bin-test/
+*.log
+
+# =========================
+
+# NuGet
+
+# =========================
+
+packages/
+*.nupkg
+*.snupkg
+project.lock.json
+project.fragment.lock.json
+artifacts/
+
+# =========================
+
+# Rider / VS Code
+
+# =========================
+
+.idea/
+.vscode/
+
+# =========================
+
+# OS files
+
+# =========================
+
+.DS_Store
+Thumbs.db
+
+# =========================
+
+# Resharper
+
+# =========================
+
+_ReSharper*/
+*.DotSettings.user
+
+# =========================
+
+# Test results
+
+# =========================
+
+TestResults/
+*.trx
+
+# =========================
+
+# Publish
+
+# =========================
+
+publish/
+*.Publish.xml
+
+# =========================
+
+# Local settings / secrets
+
+# =========================
+
+appsettings.Development.json
+secrets.json
+.env
+.env.*
+Data/Config/settings.local.json
+
+# =========================
+
+# ForexBot runtime data
+
+# =========================
+
+Data/Logs/
+Data/Database/*.db-shm
+Data/Database/*.db-wal
+Data/Database/*.db-journal
+Data/Deployment/ea_deploy_status.local.json
+
+# =========================
+
+# Others
+
+# =========================
+
+*.cache
+*.tmp
+*.pdb
+*.mdb
+*.opendb
+*.VC.db
