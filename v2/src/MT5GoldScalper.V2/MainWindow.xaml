@@ -19,6 +19,9 @@
          ════════════════════════════════════════════════════════════ -->
     <Window.Resources>
         <conv:NullToVisibilityConverter x:Key="NullToVisibilityConverter"/>
+        <conv:PercentageToValueConverter x:Key="PercentageToValueConverter"/>
+        <conv:PercentageToBrushConverter x:Key="PercentageToBrushConverter"/>
+        <conv:SourceToBrushConverter x:Key="SourceToBrushConverter"/>
 
         <!-- ── Dark theme colours ── -->
         <SolidColorBrush x:Key="Bg0"         Color="#0E0E15"/>
@@ -48,12 +51,18 @@
         <SolidColorBrush x:Key="TagAutoBg"  Color="#0A1E28"/>
         <SolidColorBrush x:Key="TagAutoFg"  Color="#3090C0"/>
         <SolidColorBrush x:Key="TagAutoBd"  Color="#1A4060"/>
-        <SolidColorBrush x:Key="TagSemiBg"  Color="#1E1808"/>
-        <SolidColorBrush x:Key="TagSemiFg"  Color="#D0A040"/>
-        <SolidColorBrush x:Key="TagSemiBd"  Color="#403010"/>
-        <SolidColorBrush x:Key="TagApiBg"   Color="#1E0A1E"/>
-        <SolidColorBrush x:Key="TagApiFg"   Color="#C080E0"/>
-        <SolidColorBrush x:Key="TagApiBd"   Color="#401850"/>
+        <SolidColorBrush x:Key="TagSemiBg"  Color="#1B122A"/>
+        <SolidColorBrush x:Key="TagSemiFg"  Color="#A68CFF"/>
+        <SolidColorBrush x:Key="TagSemiBd"  Color="#4D3D7A"/>
+        <SolidColorBrush x:Key="TagApiBg"   Color="#061F24"/>
+        <SolidColorBrush x:Key="TagApiFg"   Color="#42C7D9"/>
+        <SolidColorBrush x:Key="TagApiBd"   Color="#1E5964"/>
+        <SolidColorBrush x:Key="TagManBg"   Color="#171B24"/>
+        <SolidColorBrush x:Key="TagManFg"   Color="#AEB8CC"/>
+        <SolidColorBrush x:Key="TagManBd"   Color="#3E485A"/>
+        <SolidColorBrush x:Key="TagCfgBg"   Color="#14182D"/>
+        <SolidColorBrush x:Key="TagCfgFg"   Color="#8FA3FF"/>
+        <SolidColorBrush x:Key="TagCfgBd"   Color="#3D4B86"/>
 
         <!-- ══════════════════════════════════════
              CONVERTERS  (implement in code-behind)
@@ -171,6 +180,7 @@
         <Style x:Key="S.ConfBar" TargetType="ProgressBar">
             <Setter Property="Height"      Value="6"/>
             <Setter Property="Background"  Value="{DynamicResource Bg3}"/>
+            <Setter Property="Foreground"  Value="{DynamicResource ColGreen}"/>
             <Setter Property="BorderThickness" Value="0"/>
             <Setter Property="Template">
                 <Setter.Value>
@@ -180,7 +190,7 @@
                                 Height="{TemplateBinding Height}">
                             <Border x:Name="PART_Track">
                                 <Border x:Name="PART_Indicator"
-                                        Background="{DynamicResource ColGreen}"
+                                        Background="{TemplateBinding Foreground}"
                                         CornerRadius="3"
                                         HorizontalAlignment="Left"/>
                             </Border>
@@ -517,9 +527,10 @@
                                        Margin="0,0,0,3"/>
                             <ProgressBar Value="{Binding Confidence}"
                                          Maximum="100"
+                                         Foreground="{Binding ConfidencePct, Converter={StaticResource PercentageToBrushConverter}}"
                                          Style="{StaticResource S.ConfBar}"/>
                             <TextBlock Text="{Binding ConfidencePct}"
-                                       Foreground="{DynamicResource ColGreen}"
+                                       Foreground="{Binding ConfidencePct, Converter={StaticResource PercentageToBrushConverter}}"
                                        FontWeight="SemiBold"
                                        FontSize="13"
                                        Margin="0,2,0,0"/>
@@ -618,26 +629,32 @@
                                     <!-- Title row -->
                                     <Grid Grid.Row="0" Margin="0,0,0,6">
                                         <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto"/>
                                             <ColumnDefinition Width="*"/>
                                             <ColumnDefinition Width="Auto"/>
                                         </Grid.ColumnDefinitions>
-                                        <TextBlock Text="{Binding Title}"
+                                        <TextBlock Grid.Column="0"
+                                                   Text="{Binding Icon}"
+                                                   Foreground="{Binding Percentage, Converter={StaticResource PercentageToBrushConverter}}"
+                                                   FontSize="13"
+                                                   FontWeight="SemiBold"
+                                                   Margin="0,0,6,0"
+                                                   VerticalAlignment="Top"/>
+                                        <TextBlock Grid.Column="1"
+                                                   Text="{Binding DisplayTitle}"
                                                    Foreground="{DynamicResource T1}"
                                                    FontSize="11"
                                                    FontWeight="SemiBold"
-                                                   TextWrapping="Wrap"
-                                                   LineHeight="15"/>
+                                                   TextTrimming="CharacterEllipsis"
+                                                   VerticalAlignment="Top"/>
                                         <!-- Status dot -->
-                                        <Ellipse Grid.Column="1"
+                                        <Ellipse Grid.Column="2"
                                                  Width="8" Height="8"
                                                  VerticalAlignment="Top"
                                                  Margin="8,3,0,0">
-                                            <!-- Fill bound from converter in VM -->
-                                            <Ellipse.Style>
-                                                <Style TargetType="Ellipse">
-                                                    <Setter Property="Fill" Value="{DynamicResource ColGreen}"/>
-                                                </Style>
-                                            </Ellipse.Style>
+                                            <Ellipse.Fill>
+                                                <Binding Path="Percentage" Converter="{StaticResource PercentageToBrushConverter}"/>
+                                            </Ellipse.Fill>
                                         </Ellipse>
                                     </Grid>
 
@@ -647,17 +664,24 @@
                                             CornerRadius="4"
                                             Padding="7,3"
                                             Margin="0,0,0,8"
+                                            BorderBrush="{Binding Percentage, Converter={StaticResource PercentageToBrushConverter}}"
                                             BorderThickness="1">
                                         <Border.Style>
                                             <Style TargetType="Border">
                                                 <Setter Property="Background" Value="{DynamicResource Bg3}"/>
-                                                <Setter Property="BorderBrush" Value="{DynamicResource Bd}"/>
                                             </Style>
                                         </Border.Style>
                                         <TextBlock Text="{Binding Status}"
+                                                   Foreground="{Binding Percentage, Converter={StaticResource PercentageToBrushConverter}}"
                                                    FontSize="11"
                                                    FontWeight="SemiBold"/>
                                     </Border>
+                                    <ProgressBar Grid.Row="1"
+                                                 Value="{Binding Percentage, Converter={StaticResource PercentageToValueConverter}}"
+                                                 Maximum="100"
+                                                 Foreground="{Binding Percentage, Converter={StaticResource PercentageToBrushConverter}}"
+                                                 Style="{StaticResource S.ConfBar}"
+                                                 Margin="0,26,0,8"/>
 
                                     <!-- Summary row list -->
                                     <ItemsControl Grid.Row="2"
@@ -671,25 +695,34 @@
                                                         <Grid.ColumnDefinitions>
                                                             <ColumnDefinition Width="*"/>
                                                             <ColumnDefinition Width="Auto"/>
+                                                            <ColumnDefinition Width="38"/>
                                                             <ColumnDefinition Width="Auto"/>
                                                         </Grid.ColumnDefinitions>
                                                         <TextBlock Grid.Column="0"
                                                                    Text="{Binding Label}"
-                                                                   Foreground="{DynamicResource T3}"
+                                                                   Foreground="{Binding Percentage, Converter={StaticResource PercentageToBrushConverter}}"
                                                                    FontSize="9"
                                                                    VerticalAlignment="Center"
                                                                    TextTrimming="CharacterEllipsis"/>
                                                         <TextBlock Grid.Column="1"
                                                                    Text="{Binding Value}"
-                                                                   Foreground="{DynamicResource T1}"
+                                                                   Foreground="{Binding Percentage, Converter={StaticResource PercentageToBrushConverter}}"
                                                                    FontSize="9"
                                                                    FontWeight="SemiBold"
                                                                    VerticalAlignment="Center"
                                                                    Margin="4,0,0,0"
                                                                    MinWidth="44"
                                                                    TextAlignment="Right"/>
+                                                        <ProgressBar Grid.Column="2"
+                                                                     Value="{Binding Percentage, Converter={StaticResource PercentageToValueConverter}}"
+                                                                     Maximum="100"
+                                                                     Foreground="{Binding Percentage, Converter={StaticResource PercentageToBrushConverter}}"
+                                                                     Style="{StaticResource S.ConfBar}"
+                                                                     Height="4"
+                                                                     Margin="5,0,0,0"
+                                                                     VerticalAlignment="Center"/>
                                                         <!-- Source tag -->
-                                                        <Border Grid.Column="2"
+                                                        <Border Grid.Column="3"
                                                                 CornerRadius="2"
                                                                 Padding="3,1"
                                                                 Margin="4,0,0,0"
@@ -699,10 +732,32 @@
                                                                     <Setter Property="Background" Value="{DynamicResource TagAutoBg}"/>
                                                                     <Setter Property="BorderBrush" Value="{DynamicResource TagAutoBd}"/>
                                                                     <Setter Property="BorderThickness" Value="1"/>
+                                                                    <Style.Triggers>
+                                                                        <DataTrigger Binding="{Binding Source}" Value="SEMI">
+                                                                            <Setter Property="Background" Value="{DynamicResource TagSemiBg}"/>
+                                                                            <Setter Property="BorderBrush" Value="{DynamicResource TagSemiBd}"/>
+                                                                        </DataTrigger>
+                                                                        <DataTrigger Binding="{Binding Source}" Value="API">
+                                                                            <Setter Property="Background" Value="{DynamicResource TagApiBg}"/>
+                                                                            <Setter Property="BorderBrush" Value="{DynamicResource TagApiBd}"/>
+                                                                        </DataTrigger>
+                                                                        <DataTrigger Binding="{Binding Source}" Value="MAN">
+                                                                            <Setter Property="Background" Value="{DynamicResource TagManBg}"/>
+                                                                            <Setter Property="BorderBrush" Value="{DynamicResource TagManBd}"/>
+                                                                        </DataTrigger>
+                                                                        <DataTrigger Binding="{Binding Source}" Value="CFG">
+                                                                            <Setter Property="Background" Value="{DynamicResource TagCfgBg}"/>
+                                                                            <Setter Property="BorderBrush" Value="{DynamicResource TagCfgBd}"/>
+                                                                        </DataTrigger>
+                                                                        <DataTrigger Binding="{Binding Source}" Value="SEL">
+                                                                            <Setter Property="Background" Value="{DynamicResource TagManBg}"/>
+                                                                            <Setter Property="BorderBrush" Value="{DynamicResource TagManBd}"/>
+                                                                        </DataTrigger>
+                                                                    </Style.Triggers>
                                                                 </Style>
                                                             </Border.Style>
                                                             <TextBlock Text="{Binding Source}"
-                                                                       Foreground="{DynamicResource TagAutoFg}"
+                                                                       Foreground="{Binding Source, Converter={StaticResource SourceToBrushConverter}}"
                                                                        FontSize="8"
                                                                        FontWeight="SemiBold"/>
                                                         </Border>
@@ -760,16 +815,19 @@
                                         Orientation="Horizontal"
                                         VerticalAlignment="Center">
                                 <Border Background="{DynamicResource TagAutoBg}" BorderBrush="{DynamicResource TagAutoBd}" BorderThickness="1" CornerRadius="3" Padding="6,2" Margin="0,0,5,0">
-                                    <TextBlock Text="AUTO" Foreground="{DynamicResource TagAutoFg}" FontSize="9" FontWeight="SemiBold"/>
+                                    <TextBlock Text="AUTO  MT5 calculated" Foreground="{DynamicResource TagAutoFg}" FontSize="9" FontWeight="SemiBold"/>
                                 </Border>
                                 <Border Background="{DynamicResource TagSemiBg}" BorderBrush="{DynamicResource TagSemiBd}" BorderThickness="1" CornerRadius="3" Padding="6,2" Margin="0,0,5,0">
-                                    <TextBlock Text="SEMI" Foreground="{DynamicResource TagSemiFg}" FontSize="9" FontWeight="SemiBold"/>
+                                    <TextBlock Text="SEMI  rule-based estimate" Foreground="{DynamicResource TagSemiFg}" FontSize="9" FontWeight="SemiBold"/>
                                 </Border>
                                 <Border Background="{DynamicResource TagApiBg}" BorderBrush="{DynamicResource TagApiBd}" BorderThickness="1" CornerRadius="3" Padding="6,2" Margin="0,0,5,0">
-                                    <TextBlock Text="API" Foreground="{DynamicResource TagApiFg}" FontSize="9" FontWeight="SemiBold"/>
+                                    <TextBlock Text="API  external feed" Foreground="{DynamicResource TagApiFg}" FontSize="9" FontWeight="SemiBold"/>
                                 </Border>
-                                <Border Background="{DynamicResource Bg3}" BorderBrush="{DynamicResource Bd}" BorderThickness="1" CornerRadius="3" Padding="6,2">
-                                    <TextBlock Text="MAN / CFG" Foreground="{DynamicResource T2}" FontSize="9" FontWeight="SemiBold"/>
+                                <Border Background="{DynamicResource TagManBg}" BorderBrush="{DynamicResource TagManBd}" BorderThickness="1" CornerRadius="3" Padding="6,2" Margin="0,0,5,0">
+                                    <TextBlock Text="MAN  manual input" Foreground="{DynamicResource TagManFg}" FontSize="9" FontWeight="SemiBold"/>
+                                </Border>
+                                <Border Background="{DynamicResource TagCfgBg}" BorderBrush="{DynamicResource TagCfgBd}" BorderThickness="1" CornerRadius="3" Padding="6,2">
+                                    <TextBlock Text="CFG  user config" Foreground="{DynamicResource TagCfgFg}" FontSize="9" FontWeight="SemiBold"/>
                                 </Border>
                             </StackPanel>
                         </Grid>
@@ -817,27 +875,33 @@
                                                         </Grid.ColumnDefinitions>
                                                         <TextBlock Grid.Column="0"
                                                                    Text="{Binding Label}"
-                                                                   Foreground="{DynamicResource T2}"
+                                                                   Foreground="{Binding Percentage, Converter={StaticResource PercentageToBrushConverter}}"
                                                                    FontSize="11"
                                                                    Margin="10,6"
                                                                    VerticalAlignment="Center"
                                                                    TextTrimming="CharacterEllipsis"/>
                                                         <TextBlock Grid.Column="1"
                                                                    Text="{Binding Value}"
-                                                                   Foreground="{DynamicResource T1}"
+                                                                   Foreground="{Binding Percentage, Converter={StaticResource PercentageToBrushConverter}}"
                                                                    FontSize="11"
                                                                    FontWeight="SemiBold"
                                                                    Margin="10,6"
                                                                    VerticalAlignment="Center"
                                                                    TextTrimming="CharacterEllipsis"/>
-                                                        <TextBlock Grid.Column="2"
-                                                                   Text="{Binding Percentage}"
-                                                                   Foreground="{DynamicResource T1}"
-                                                                   FontSize="11"
-                                                                   FontWeight="SemiBold"
-                                                                   Margin="10,6"
-                                                                   VerticalAlignment="Center"
-                                                                   TextTrimming="CharacterEllipsis"/>
+                                                        <StackPanel Grid.Column="2"
+                                                                    Margin="10,6"
+                                                                    VerticalAlignment="Center">
+                                                            <ProgressBar Value="{Binding Percentage, Converter={StaticResource PercentageToValueConverter}}"
+                                                                         Maximum="100"
+                                                                         Foreground="{Binding Percentage, Converter={StaticResource PercentageToBrushConverter}}"
+                                                                         Style="{StaticResource S.ConfBar}"/>
+                                                            <TextBlock Text="{Binding Percentage}"
+                                                                       Foreground="{Binding Percentage, Converter={StaticResource PercentageToBrushConverter}}"
+                                                                       FontSize="10"
+                                                                       FontWeight="SemiBold"
+                                                                       HorizontalAlignment="Right"
+                                                                       Margin="0,2,0,0"/>
+                                                        </StackPanel>
                                                         <Border Grid.Column="3"
                                                                 CornerRadius="3"
                                                                 BorderThickness="1"
@@ -849,12 +913,34 @@
                                                                 <Style TargetType="Border">
                                                                     <Setter Property="Background" Value="{DynamicResource TagAutoBg}"/>
                                                                     <Setter Property="BorderBrush" Value="{DynamicResource TagAutoBd}"/>
+                                                                    <Style.Triggers>
+                                                                        <DataTrigger Binding="{Binding Source}" Value="SEMI">
+                                                                            <Setter Property="Background" Value="{DynamicResource TagSemiBg}"/>
+                                                                            <Setter Property="BorderBrush" Value="{DynamicResource TagSemiBd}"/>
+                                                                        </DataTrigger>
+                                                                        <DataTrigger Binding="{Binding Source}" Value="API">
+                                                                            <Setter Property="Background" Value="{DynamicResource TagApiBg}"/>
+                                                                            <Setter Property="BorderBrush" Value="{DynamicResource TagApiBd}"/>
+                                                                        </DataTrigger>
+                                                                        <DataTrigger Binding="{Binding Source}" Value="MAN">
+                                                                            <Setter Property="Background" Value="{DynamicResource TagManBg}"/>
+                                                                            <Setter Property="BorderBrush" Value="{DynamicResource TagManBd}"/>
+                                                                        </DataTrigger>
+                                                                        <DataTrigger Binding="{Binding Source}" Value="CFG">
+                                                                            <Setter Property="Background" Value="{DynamicResource TagCfgBg}"/>
+                                                                            <Setter Property="BorderBrush" Value="{DynamicResource TagCfgBd}"/>
+                                                                        </DataTrigger>
+                                                                        <DataTrigger Binding="{Binding Source}" Value="SEL">
+                                                                            <Setter Property="Background" Value="{DynamicResource TagManBg}"/>
+                                                                            <Setter Property="BorderBrush" Value="{DynamicResource TagManBd}"/>
+                                                                        </DataTrigger>
+                                                                    </Style.Triggers>
                                                                 </Style>
                                                             </Border.Style>
                                                             <TextBlock Text="{Binding Source}"
                                                                        FontSize="9"
                                                                        FontWeight="SemiBold"
-                                                                       Foreground="{DynamicResource TagAutoFg}"/>
+                                                                       Foreground="{Binding Source, Converter={StaticResource SourceToBrushConverter}}"/>
                                                         </Border>
                                                         <TextBlock Grid.Column="4"
                                                                    Text="{Binding Note}"
