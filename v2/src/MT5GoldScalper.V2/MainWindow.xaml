@@ -677,7 +677,7 @@
                                                    FontWeight="SemiBold"/>
                                     </Border>
                                     <ProgressBar Grid.Row="1"
-                                                 Value="{Binding Percentage, Converter={StaticResource PercentageToValueConverter}}"
+                                                 Value="{Binding Percentage, Mode=OneWay, Converter={StaticResource PercentageToValueConverter}}"
                                                  Maximum="100"
                                                  Foreground="{Binding Percentage, Converter={StaticResource PercentageToBrushConverter}}"
                                                  Style="{StaticResource S.ConfBar}"
@@ -714,7 +714,7 @@
                                                                    MinWidth="44"
                                                                    TextAlignment="Right"/>
                                                         <ProgressBar Grid.Column="2"
-                                                                     Value="{Binding Percentage, Converter={StaticResource PercentageToValueConverter}}"
+                                                                     Value="{Binding Percentage, Mode=OneWay, Converter={StaticResource PercentageToValueConverter}}"
                                                                      Maximum="100"
                                                                      Foreground="{Binding Percentage, Converter={StaticResource PercentageToBrushConverter}}"
                                                                      Style="{StaticResource S.ConfBar}"
@@ -891,7 +891,7 @@
                                                         <StackPanel Grid.Column="2"
                                                                     Margin="10,6"
                                                                     VerticalAlignment="Center">
-                                                            <ProgressBar Value="{Binding Percentage, Converter={StaticResource PercentageToValueConverter}}"
+                                                            <ProgressBar Value="{Binding Percentage, Mode=OneWay, Converter={StaticResource PercentageToValueConverter}}"
                                                                          Maximum="100"
                                                                          Foreground="{Binding Percentage, Converter={StaticResource PercentageToBrushConverter}}"
                                                                          Style="{StaticResource S.ConfBar}"/>
