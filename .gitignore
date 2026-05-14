@@ -122,3 +122,6 @@ Data/Deployment/ea_deploy_status.local.json
 *.mdb
 *.opendb
 *.VC.db
+*.csv
+*.ipynb
+v2/research/phase0/results/
