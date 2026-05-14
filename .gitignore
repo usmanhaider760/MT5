@@ -125,3 +125,4 @@ Data/Deployment/ea_deploy_status.local.json
 *.csv
 *.ipynb
 v2/research/phase0/results/
+v2/research/phase0/data/*.csv
