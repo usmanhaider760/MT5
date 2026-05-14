@@ -224,9 +224,78 @@ public sealed record DashboardSection(
     string Status,
     string Severity,
     ObservableCollection<MetricItem> Summary,
-    ObservableCollection<DetailItem> Details);
+    ObservableCollection<DetailItem> Details)
+{
+    public string DisplayTitle => Title.Replace("\n", " ");
 
-public sealed record MetricItem(string Label, string Value, string Source);
+    public string Icon => Status switch
+    {
+        "SAFE" => "✓",
+        "OPTIMAL" => "◎",
+        "CAUTION" => "!",
+        "ACCEPTABLE" => "≡",
+        "BULLISH" => "▲",
+        "WATCH" => "◇",
+        "READY" => "◆",
+        "VALID" => "✓",
+        _ => "•"
+    };
+
+    public string Percentage => Status switch
+    {
+        "SAFE" => "100%",
+        "OPTIMAL" => "95%",
+        "CAUTION" => "55%",
+        "ACCEPTABLE" => "82%",
+        "BULLISH" => "88%",
+        "WATCH" => "62%",
+        "READY" => "88%",
+        "VALID" => "78%",
+        _ => "-"
+    };
+}
+
+public sealed record MetricItem(string Label, string Value, string Source, string Percentage)
+{
+    public MetricItem(string label, string value, string source)
+        : this(label, value, source, InferPercentage(label, value))
+    {
+    }
+
+    private static string InferPercentage(string label, string value)
+    {
+        if (value.Contains('%'))
+        {
+            return value.Replace("842%", "100%");
+        }
+
+        if (value.Contains("Bull", StringComparison.OrdinalIgnoreCase) ||
+            value.Contains("High", StringComparison.OrdinalIgnoreCase) ||
+            value.Contains("PASS", StringComparison.OrdinalIgnoreCase) ||
+            value.Contains("Clean", StringComparison.OrdinalIgnoreCase) ||
+            value.Contains("Active", StringComparison.OrdinalIgnoreCase))
+        {
+            return "80%";
+        }
+
+        if (value.Contains("Watch", StringComparison.OrdinalIgnoreCase) ||
+            value.Contains("CPI", StringComparison.OrdinalIgnoreCase) ||
+            value.Contains("Neutral", StringComparison.OrdinalIgnoreCase) ||
+            value.Contains("Pullback", StringComparison.OrdinalIgnoreCase) ||
+            value.Contains("Partial", StringComparison.OrdinalIgnoreCase))
+        {
+            return "55%";
+        }
+
+        if (value.Contains("No", StringComparison.OrdinalIgnoreCase) ||
+            value.Contains("Low", StringComparison.OrdinalIgnoreCase))
+        {
+            return "90%";
+        }
+
+        return label.Contains("SL", StringComparison.OrdinalIgnoreCase) ? "45%" : "-";
+    }
+}
 
 public sealed record DetailItem(string Label, string Value, string Source, string Note, string Percentage)
 {
