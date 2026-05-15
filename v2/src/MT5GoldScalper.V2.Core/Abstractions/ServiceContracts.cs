@@ -27,6 +27,46 @@ public interface IOrderSafetyService
     Task<ExecutionSafetyModel> EvaluateAsync(TradingDecisionSnapshot snapshot, CancellationToken ct = default);
 }
 
+public interface IPipCalculationService
+{
+    decimal GetPipSize(MarketDataModel market);
+    decimal PriceDistanceToPips(MarketDataModel market, decimal priceDistance);
+    int PriceDistanceToPoints(MarketDataModel market, decimal priceDistance);
+}
+
+public interface ISpreadCalculationService
+{
+    void Calculate(TradingDecisionSnapshot snapshot);
+}
+
+public interface IRiskCalculationService
+{
+    void Calculate(TradingDecisionSnapshot snapshot);
+}
+
+public interface ILotSizeCalculationService
+{
+    void Calculate(TradingDecisionSnapshot snapshot);
+    bool IsVolumeValid(AccountRiskModel account, MarketDataModel market);
+}
+
+public interface ITargetCalculationService
+{
+    void Calculate(TradingDecisionSnapshot snapshot);
+    bool AreTargetsValid(TradingDecisionSnapshot snapshot);
+}
+
+public interface IStopValidationService
+{
+    void Calculate(TradingDecisionSnapshot snapshot);
+    bool AreStopsValid(TradingDecisionSnapshot snapshot);
+}
+
+public interface IRewardRiskCalculationService
+{
+    void Calculate(TradingDecisionSnapshot snapshot);
+}
+
 public interface IDecisionEngine
 {
     TradingDecisionSnapshot Evaluate(TradingDecisionSnapshot snapshot);

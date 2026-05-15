@@ -7,6 +7,7 @@ using MT5GoldScalper.V2.Core.Abstractions;
 using MT5GoldScalper.V2.Core.Configuration;
 using MT5GoldScalper.V2.Core.Engines;
 using MT5GoldScalper.V2.Core.Services;
+using MT5GoldScalper.V2.Core.Services.Calculations;
 using MT5GoldScalper.V2.ViewModels;
 using TradingDecisionSystem;
 
@@ -34,6 +35,13 @@ public partial class App : Application
                 services.AddSingleton<IAccountDataService>(sp => sp.GetRequiredService<DummyDataService>());
                 services.AddSingleton<INewsService>(sp => sp.GetRequiredService<DummyDataService>());
                 services.AddSingleton<IIndicatorService>(sp => sp.GetRequiredService<DummyDataService>());
+                services.AddSingleton<IPipCalculationService, PipCalculationService>();
+                services.AddSingleton<ISpreadCalculationService, SpreadCalculationService>();
+                services.AddSingleton<IRiskCalculationService, RiskCalculationService>();
+                services.AddSingleton<ILotSizeCalculationService, LotSizeCalculationService>();
+                services.AddSingleton<ITargetCalculationService, TargetCalculationService>();
+                services.AddSingleton<IStopValidationService, StopValidationService>();
+                services.AddSingleton<IRewardRiskCalculationService, RewardRiskCalculationService>();
                 services.AddSingleton<IOrderSafetyService, OrderSafetyService>();
                 services.AddSingleton<IDecisionEngine, DecisionEngine>();
                 services.AddSingleton<ITradingDecisionSnapshotService, TradingDecisionSnapshotService>();

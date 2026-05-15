@@ -89,6 +89,7 @@ public sealed class MarketDataModel
     public decimal SpreadPrice { get; set; }
     public int SpreadPoints { get; set; }
     public decimal SpreadPips { get; set; }
+    public decimal SpreadPercentOfTp1 { get; set; }
     public DateTime LastTickTimeUtc { get; set; } = DateTime.UtcNow;
     public int LastTickAgeMs { get; set; }
     public decimal MinLot { get; set; }
@@ -183,6 +184,7 @@ public sealed class ExecutionSafetyModel
     public bool RiskLimitPass { get; set; }
     public bool NewsFilterPass { get; set; }
     public bool DuplicateTradePass { get; set; }
+    public bool RiskWithinLimits { get; set; }
     public bool OrderCheckPassed { get; set; }
     public int OrderCheckRetcode { get; set; }
     public string OrderCheckComment { get; set; } = string.Empty;

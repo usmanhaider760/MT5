@@ -4,6 +4,7 @@ using MT5GoldScalper.V2.Core.Configuration;
 using MT5GoldScalper.V2.Core.Engines;
 using MT5GoldScalper.V2.Core.Models;
 using MT5GoldScalper.V2.Core.Services;
+using MT5GoldScalper.V2.Core.Services.Calculations;
 using Xunit;
 
 namespace MT5GoldScalper.V2.Tests;
@@ -20,6 +21,13 @@ public sealed class PrototypeIntegrationTests
         services.AddSingleton<IAccountDataService>(sp => sp.GetRequiredService<DummyDataService>());
         services.AddSingleton<INewsService>(sp => sp.GetRequiredService<DummyDataService>());
         services.AddSingleton<IIndicatorService>(sp => sp.GetRequiredService<DummyDataService>());
+        services.AddSingleton<IPipCalculationService, PipCalculationService>();
+        services.AddSingleton<ISpreadCalculationService, SpreadCalculationService>();
+        services.AddSingleton<IRiskCalculationService, RiskCalculationService>();
+        services.AddSingleton<ILotSizeCalculationService, LotSizeCalculationService>();
+        services.AddSingleton<ITargetCalculationService, TargetCalculationService>();
+        services.AddSingleton<IStopValidationService, StopValidationService>();
+        services.AddSingleton<IRewardRiskCalculationService, RewardRiskCalculationService>();
         services.AddSingleton<IOrderSafetyService, OrderSafetyService>();
         services.AddSingleton<IDecisionEngine, DecisionEngine>();
         services.AddSingleton<ITradingDecisionSnapshotService, TradingDecisionSnapshotService>();
