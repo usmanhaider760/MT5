@@ -19,6 +19,7 @@
          ════════════════════════════════════════════════════════════ -->
     <Window.Resources>
         <conv:NullToVisibilityConverter x:Key="NullToVisibilityConverter"/>
+        <conv:BooleanToConnectionBrushConverter x:Key="ConnectionBrushConverter"/>
         <conv:PercentageToValueConverter x:Key="PercentageToValueConverter"/>
         <conv:PercentageToBrushConverter x:Key="PercentageToBrushConverter"/>
         <conv:SourceToBrushConverter x:Key="SourceToBrushConverter"/>
@@ -400,10 +401,10 @@
                             Orientation="Horizontal"
                             VerticalAlignment="Center">
                     <Ellipse Width="7" Height="7"
-                             Fill="{DynamicResource ColGreen}"
+                             Fill="{Binding IsMt5Connected, Converter={StaticResource ConnectionBrushConverter}}"
                              Margin="0,0,5,0"/>
-                    <TextBlock Text="MT5 Connected"
-                               Foreground="{DynamicResource ColGreen}"
+                    <TextBlock Text="{Binding Mt5ConnectionStatus}"
+                               Foreground="{Binding IsMt5Connected, Converter={StaticResource ConnectionBrushConverter}}"
                                FontSize="10"/>
                 </StackPanel>
             </Grid>
@@ -443,38 +444,36 @@
                                            Foreground="{DynamicResource ColGreen}"
                                            FontSize="9"
                                            Margin="0,0,0,2"/>
-                                <TextBlock Text="{Binding Decision}"
+                                <TextBlock Text="{Binding SignalDecisionDisplay}"
                                            Foreground="{DynamicResource ColGreen}"
                                            FontSize="15"
                                            FontWeight="SemiBold"/>
+                                <TextBlock Text="{Binding ExecutionReadinessDisplay}"
+                                           Foreground="{DynamicResource T2}"
+                                           FontSize="11"
+                                           FontWeight="SemiBold"
+                                           Margin="0,2,0,0"/>
+                                <TextBlock Text="{Binding CanPlaceTradeDisplay, StringFormat=Can place: {0}}"
+                                           Foreground="{DynamicResource T4}"
+                                           FontSize="10"
+                                           Margin="0,2,0,0"/>
                             </StackPanel>
                         </Border>
 
                         <!-- Trade detail values -->
-                        <Grid Grid.Column="1" Margin="14,0">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*"/>
-                                <ColumnDefinition Width="*"/>
-                                <ColumnDefinition Width="*"/>
-                                <ColumnDefinition Width="*"/>
-                                <ColumnDefinition Width="*"/>
-                                <ColumnDefinition Width="*"/>
-                                <ColumnDefinition Width="*"/>
-                                <ColumnDefinition Width="*"/>
-                            </Grid.ColumnDefinitions>
-
-                            <StackPanel Grid.Column="0">
+                        <UniformGrid Grid.Column="1" Columns="8" Rows="2" Margin="14,0">
+                            <StackPanel>
                                 <TextBlock Text="DIRECTION" Style="{StaticResource S.TinyLabel}"/>
                                 <TextBlock Text="{Binding Direction}"
                                            Foreground="{DynamicResource ColGreen}"
                                            FontWeight="SemiBold"
                                            FontSize="12"/>
                             </StackPanel>
-                            <StackPanel Grid.Column="1">
+                            <StackPanel>
                                 <TextBlock Text="ENTRY" Style="{StaticResource S.TinyLabel}"/>
                                 <TextBlock Text="{Binding Entry}" FontSize="12"/>
                             </StackPanel>
-                            <StackPanel Grid.Column="2">
+                            <StackPanel>
                                 <TextBlock Text="STOP LOSS" Style="{StaticResource S.TinyLabel}"/>
                                 <StackPanel Orientation="Horizontal">
                                     <TextBlock Text="{Binding StopLoss}" FontSize="12"/>
@@ -484,39 +483,73 @@
                                                Margin="4,0,0,0"/>
                                 </StackPanel>
                             </StackPanel>
-                            <StackPanel Grid.Column="3">
-                                <TextBlock Text="TAKE PROFIT" Style="{StaticResource S.TinyLabel}"/>
+                            <StackPanel>
+                                <TextBlock Text="TP1" Style="{StaticResource S.TinyLabel}"/>
                                 <StackPanel Orientation="Horizontal">
-                                    <TextBlock Text="{Binding TakeProfit}" FontSize="12"/>
-                                    <TextBlock Text="{Binding TpPips}"
+                                    <TextBlock Text="{Binding Tp1Price}" FontSize="12"/>
+                                    <TextBlock Text="{Binding RiskRewardTp1}"
                                                Foreground="{DynamicResource ColGreen}"
                                                FontSize="11"
                                                Margin="4,0,0,0"/>
                                 </StackPanel>
                             </StackPanel>
-                            <StackPanel Grid.Column="4">
-                                <TextBlock Text="R : R" Style="{StaticResource S.TinyLabel}"/>
-                                <TextBlock Text="{Binding RiskReward}"
+                            <StackPanel>
+                                <TextBlock Text="TP2" Style="{StaticResource S.TinyLabel}"/>
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="{Binding Tp2Price}" FontSize="12"/>
+                                    <TextBlock Text="{Binding RiskRewardTp2}"
+                                               Foreground="{DynamicResource ColGreen}"
+                                               FontSize="11"
+                                               Margin="4,0,0,0"/>
+                                </StackPanel>
+                            </StackPanel>
+                            <StackPanel>
+                                <TextBlock Text="SPREAD" Style="{StaticResource S.TinyLabel}"/>
+                                <TextBlock Text="{Binding SpreadPips}"
                                            Foreground="{DynamicResource ColGreen}"
                                            FontSize="12"/>
                             </StackPanel>
-                            <StackPanel Grid.Column="5">
+                            <StackPanel>
+                                <TextBlock Text="SPREAD PTS" Style="{StaticResource S.TinyLabel}"/>
+                                <TextBlock Text="{Binding SpreadPoints}" FontSize="12"/>
+                            </StackPanel>
+                            <StackPanel>
+                                <TextBlock Text="TICK AGE" Style="{StaticResource S.TinyLabel}"/>
+                                <TextBlock Text="{Binding LastTickAgeMs}" FontSize="12"/>
+                            </StackPanel>
+                            <StackPanel>
+                                <TextBlock Text="NEWS" Style="{StaticResource S.TinyLabel}"/>
+                                <TextBlock Text="{Binding NewsBlackoutActiveDisplay}" FontSize="12"/>
+                            </StackPanel>
+                            <StackPanel>
+                                <TextBlock Text="NEWS STATUS" Style="{StaticResource S.TinyLabel}"/>
+                                <TextBlock Text="{Binding NewsStatus}" FontSize="12" TextTrimming="CharacterEllipsis"/>
+                            </StackPanel>
+                            <StackPanel>
+                                <TextBlock Text="BLOCK CODE" Style="{StaticResource S.TinyLabel}"/>
+                                <TextBlock Text="{Binding PrimaryBlockReasonCodeDisplay}" FontSize="12" TextTrimming="CharacterEllipsis"/>
+                            </StackPanel>
+                            <StackPanel>
+                                <TextBlock Text="BLOCK MESSAGE" Style="{StaticResource S.TinyLabel}"/>
+                                <TextBlock Text="{Binding PrimaryBlockReasonMessageDisplay}" FontSize="12" TextTrimming="CharacterEllipsis"/>
+                            </StackPanel>
+                            <StackPanel>
                                 <TextBlock Text="LOT SIZE" Style="{StaticResource S.TinyLabel}"/>
                                 <TextBlock Text="{Binding LotSize}" FontSize="12"/>
                             </StackPanel>
-                            <StackPanel Grid.Column="6">
+                            <StackPanel>
                                 <TextBlock Text="RISK $" Style="{StaticResource S.TinyLabel}"/>
-                                <TextBlock Text="{Binding RiskDollar}"
-                                           Foreground="{DynamicResource ColGreen}"
-                                           FontSize="12"/>
+                                <TextBlock Text="{Binding RiskDollar}" Foreground="{DynamicResource ColGreen}" FontSize="12"/>
                             </StackPanel>
-                            <StackPanel Grid.Column="7">
+                            <StackPanel>
                                 <TextBlock Text="MAX PROFIT" Style="{StaticResource S.TinyLabel}"/>
-                                <TextBlock Text="{Binding MaxProfit}"
-                                           Foreground="{DynamicResource ColGreen}"
-                                           FontSize="12"/>
+                                <TextBlock Text="{Binding MaxProfit}" Foreground="{DynamicResource ColGreen}" FontSize="12"/>
                             </StackPanel>
-                        </Grid>
+                            <StackPanel>
+                                <TextBlock Text="FINAL" Style="{StaticResource S.TinyLabel}"/>
+                                <TextBlock Text="{Binding Decision}" FontSize="12"/>
+                            </StackPanel>
+                        </UniformGrid>
 
                         <!-- Confidence bar -->
                         <StackPanel Grid.Column="2"

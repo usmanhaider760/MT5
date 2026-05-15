@@ -4,6 +4,10 @@ VisualStudioVersion = 17.14.37111.16 d17.14
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MT5GoldScalper.V2", "v2\src\MT5GoldScalper.V2\MT5GoldScalper.V2.csproj", "{46EF5158-D2F6-7FFE-E8FF-7E9B406E20E1}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MT5GoldScalper.V2.Core", "v2\src\MT5GoldScalper.V2.Core\MT5GoldScalper.V2.Core.csproj", "{2A8D24B1-2CB5-48FB-A0C3-4549916DC60E}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MT5GoldScalper.V2.Tests", "v2\tests\MT5GoldScalper.V2.Tests\MT5GoldScalper.V2.Tests.csproj", "{B370B0C5-1EB3-4FA8-992F-64B68F39DD36}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -14,6 +18,14 @@ Global
 		{46EF5158-D2F6-7FFE-E8FF-7E9B406E20E1}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{46EF5158-D2F6-7FFE-E8FF-7E9B406E20E1}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{46EF5158-D2F6-7FFE-E8FF-7E9B406E20E1}.Release|Any CPU.Build.0 = Release|Any CPU
+		{2A8D24B1-2CB5-48FB-A0C3-4549916DC60E}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{2A8D24B1-2CB5-48FB-A0C3-4549916DC60E}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{2A8D24B1-2CB5-48FB-A0C3-4549916DC60E}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{2A8D24B1-2CB5-48FB-A0C3-4549916DC60E}.Release|Any CPU.Build.0 = Release|Any CPU
+		{B370B0C5-1EB3-4FA8-992F-64B68F39DD36}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{B370B0C5-1EB3-4FA8-992F-64B68F39DD36}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{B370B0C5-1EB3-4FA8-992F-64B68F39DD36}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{B370B0C5-1EB3-4FA8-992F-64B68F39DD36}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

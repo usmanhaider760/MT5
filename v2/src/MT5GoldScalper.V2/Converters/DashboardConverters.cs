@@ -26,6 +26,18 @@ public sealed class NullToVisibilityConverter : IValueConverter
         Binding.DoNothing;
 }
 
+public sealed class BooleanToConnectionBrushConverter : IValueConverter
+{
+    public Brush ConnectedBrush { get; set; } = Brushes.LimeGreen;
+    public Brush DisconnectedBrush { get; set; } = Brushes.IndianRed;
+
+    public object Convert(object value, Type targetType, object parameter, CultureInfo culture) =>
+        value is true ? ConnectedBrush : DisconnectedBrush;
+
+    public object ConvertBack(object value, Type targetType, object parameter, CultureInfo culture) =>
+        Binding.DoNothing;
+}
+
 public sealed class SeverityToBrushConverter : IValueConverter
 {
     public Brush GoodBrush { get; set; } = Brushes.LimeGreen;
