@@ -1,0 +1,87 @@
+using Atlas_Data_Access;
+using Atlas_Data_Access.Repositories;
+using Atlas_Domain.BusinessObjects;
+using Atlas_Execution.MT5;
+using Atlas_Execution.Services;
+using Atlas_Market_Data.Services;
+using Atlas_Risk.Services;
+using Atlas_Strategy;
+
+
+namespace Atlas_Application.Services;
+
+/// <summary>
+/// Wires up all services and returns a ready-to-use Bot_Controller.
+/// Call once at application startup.
+/// </summary>
+public static class Atlas_Bot_Bootstrap
+{
+    public static (Bot_Controller Controller, Database_Schema Db, MT5_Account_Service Account_Service) Create(
+        string mt5_host   = "127.0.0.1",
+        int    mt5_port   = 9090,
+        bool   demo_mode  = true,
+        string db_path    = "atlas_trading.db")
+    {
+        // Database
+        var db = new Database_Schema(db_path);
+        db.Ensure_Created();
+
+        // Repositories
+        var signal_repo   = new Trade_Signal_Repository(db.Connection_String);
+        var result_repo   = new Trade_Result_Repository(db.Connection_String);
+        var account_repo  = new Account_Snapshot_Repository(db.Connection_String);
+        var news_repo     = new News_Event_Repository(db.Connection_String);
+
+        // MT5 bridge
+        var bridge        = new MT5_Bridge_Client(mt5_host, mt5_port);
+        var market_data   = new MT5_Market_Data_Service(bridge);
+        var execution     = new MT5_Execution_Service(bridge, demo_mode);
+        var account_svc   = new MT5_Account_Service(bridge);
+
+        // Risk settings
+        var risk_settings = Risk_Setting_BO.Conservative_Launch();
+
+        // Emergency stop
+        var emergency_stop = new Emergency_Stop_Service();
+
+        // Risk
+        var risk_manager  = new Risk_Manager(risk_settings);
+        var drawdown_guard = new Drawdown_Guard(risk_settings, emergency_stop);
+
+        // Quality scorer
+        var scorer        = new Trade_Quality_Scorer();
+
+        // Market data
+        var regime_detector    = new Market_Regime_Detector();
+        var session_filter     = new Session_Filter_Service();
+        var spread_filter      = new Spread_Filter_Service();
+        var volatility_filter  = new Volatility_Filter_Service();
+        var news_filter        = new News_Filter_Service();
+
+        // Strategy
+        var orchestrator = new Strategy_Orchestrator();
+
+        // Performance monitor
+        var perf_monitor = new Performance_Monitor_Service();
+
+        // Trade manager (breakeven at 1R, trailing SL at 1.5R+)
+        var trade_manager = new Trade_Manager_Service(market_data, execution);
+
+        // Pipeline
+        var pipeline = new Trade_Pipeline_Service(
+            market_data, regime_detector, session_filter, spread_filter,
+            news_filter, volatility_filter, orchestrator, scorer,
+            risk_manager, drawdown_guard, execution, emergency_stop, risk_settings,
+            trade_manager);
+
+        // News calendar (seeded with demo events; no HTTP feed in demo mode)
+        var calendar = new Economic_Calendar_Service(new System.Net.Http.HttpClient());
+
+        // Controller
+        var controller = new Bot_Controller(
+            pipeline, perf_monitor, orchestrator, emergency_stop,
+            risk_settings, result_repo, execution, calendar);
+
+        return (controller, db, account_svc);
+    }
+}
