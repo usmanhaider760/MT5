@@ -26,6 +26,7 @@ public sealed class NullToVisibilityConverter : IValueConverter
         Binding.DoNothing;
 }
 
+<<<<<<< HEAD
 public sealed class BooleanToConnectionBrushConverter : IValueConverter
 {
     public Brush ConnectedBrush { get; set; } = Brushes.LimeGreen;
@@ -38,6 +39,8 @@ public sealed class BooleanToConnectionBrushConverter : IValueConverter
         Binding.DoNothing;
 }
 
+=======
+>>>>>>> 51e2d5bcb0b5db4084d8598cb42f117288d2e977
 public sealed class SeverityToBrushConverter : IValueConverter
 {
     public Brush GoodBrush { get; set; } = Brushes.LimeGreen;

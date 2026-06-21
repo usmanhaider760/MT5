@@ -19,7 +19,10 @@
          ════════════════════════════════════════════════════════════ -->
     <Window.Resources>
         <conv:NullToVisibilityConverter x:Key="NullToVisibilityConverter"/>
+<<<<<<< HEAD
         <conv:BooleanToConnectionBrushConverter x:Key="ConnectionBrushConverter"/>
+=======
+>>>>>>> 51e2d5bcb0b5db4084d8598cb42f117288d2e977
         <conv:PercentageToValueConverter x:Key="PercentageToValueConverter"/>
         <conv:PercentageToBrushConverter x:Key="PercentageToBrushConverter"/>
         <conv:SourceToBrushConverter x:Key="SourceToBrushConverter"/>
@@ -401,10 +404,17 @@
                             Orientation="Horizontal"
                             VerticalAlignment="Center">
                     <Ellipse Width="7" Height="7"
+<<<<<<< HEAD
                              Fill="{Binding IsMt5Connected, Converter={StaticResource ConnectionBrushConverter}}"
                              Margin="0,0,5,0"/>
                     <TextBlock Text="{Binding Mt5ConnectionStatus}"
                                Foreground="{Binding IsMt5Connected, Converter={StaticResource ConnectionBrushConverter}}"
+=======
+                             Fill="{DynamicResource ColGreen}"
+                             Margin="0,0,5,0"/>
+                    <TextBlock Text="MT5 Connected"
+                               Foreground="{DynamicResource ColGreen}"
+>>>>>>> 51e2d5bcb0b5db4084d8598cb42f117288d2e977
                                FontSize="10"/>
                 </StackPanel>
             </Grid>
@@ -444,6 +454,7 @@
                                            Foreground="{DynamicResource ColGreen}"
                                            FontSize="9"
                                            Margin="0,0,0,2"/>
+<<<<<<< HEAD
                                 <TextBlock Text="{Binding SignalDecisionDisplay}"
                                            Foreground="{DynamicResource ColGreen}"
                                            FontSize="15"
@@ -457,23 +468,53 @@
                                            Foreground="{DynamicResource T4}"
                                            FontSize="10"
                                            Margin="0,2,0,0"/>
+=======
+                                <TextBlock Text="{Binding Decision}"
+                                           Foreground="{DynamicResource ColGreen}"
+                                           FontSize="15"
+                                           FontWeight="SemiBold"/>
+>>>>>>> 51e2d5bcb0b5db4084d8598cb42f117288d2e977
                             </StackPanel>
                         </Border>
 
                         <!-- Trade detail values -->
+<<<<<<< HEAD
                         <UniformGrid Grid.Column="1" Columns="8" Rows="2" Margin="14,0">
                             <StackPanel>
+=======
+                        <Grid Grid.Column="1" Margin="14,0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+
+                            <StackPanel Grid.Column="0">
+>>>>>>> 51e2d5bcb0b5db4084d8598cb42f117288d2e977
                                 <TextBlock Text="DIRECTION" Style="{StaticResource S.TinyLabel}"/>
                                 <TextBlock Text="{Binding Direction}"
                                            Foreground="{DynamicResource ColGreen}"
                                            FontWeight="SemiBold"
                                            FontSize="12"/>
                             </StackPanel>
+<<<<<<< HEAD
                             <StackPanel>
                                 <TextBlock Text="ENTRY" Style="{StaticResource S.TinyLabel}"/>
                                 <TextBlock Text="{Binding Entry}" FontSize="12"/>
                             </StackPanel>
                             <StackPanel>
+=======
+                            <StackPanel Grid.Column="1">
+                                <TextBlock Text="ENTRY" Style="{StaticResource S.TinyLabel}"/>
+                                <TextBlock Text="{Binding Entry}" FontSize="12"/>
+                            </StackPanel>
+                            <StackPanel Grid.Column="2">
+>>>>>>> 51e2d5bcb0b5db4084d8598cb42f117288d2e977
                                 <TextBlock Text="STOP LOSS" Style="{StaticResource S.TinyLabel}"/>
                                 <StackPanel Orientation="Horizontal">
                                     <TextBlock Text="{Binding StopLoss}" FontSize="12"/>
@@ -483,16 +524,25 @@
                                                Margin="4,0,0,0"/>
                                 </StackPanel>
                             </StackPanel>
+<<<<<<< HEAD
                             <StackPanel>
                                 <TextBlock Text="TP1" Style="{StaticResource S.TinyLabel}"/>
                                 <StackPanel Orientation="Horizontal">
                                     <TextBlock Text="{Binding Tp1Price}" FontSize="12"/>
                                     <TextBlock Text="{Binding RiskRewardTp1}"
+=======
+                            <StackPanel Grid.Column="3">
+                                <TextBlock Text="TAKE PROFIT" Style="{StaticResource S.TinyLabel}"/>
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="{Binding TakeProfit}" FontSize="12"/>
+                                    <TextBlock Text="{Binding TpPips}"
+>>>>>>> 51e2d5bcb0b5db4084d8598cb42f117288d2e977
                                                Foreground="{DynamicResource ColGreen}"
                                                FontSize="11"
                                                Margin="4,0,0,0"/>
                                 </StackPanel>
                             </StackPanel>
+<<<<<<< HEAD
                             <StackPanel>
                                 <TextBlock Text="TP2" Style="{StaticResource S.TinyLabel}"/>
                                 <StackPanel Orientation="Horizontal">
@@ -550,6 +600,31 @@
                                 <TextBlock Text="{Binding Decision}" FontSize="12"/>
                             </StackPanel>
                         </UniformGrid>
+=======
+                            <StackPanel Grid.Column="4">
+                                <TextBlock Text="R : R" Style="{StaticResource S.TinyLabel}"/>
+                                <TextBlock Text="{Binding RiskReward}"
+                                           Foreground="{DynamicResource ColGreen}"
+                                           FontSize="12"/>
+                            </StackPanel>
+                            <StackPanel Grid.Column="5">
+                                <TextBlock Text="LOT SIZE" Style="{StaticResource S.TinyLabel}"/>
+                                <TextBlock Text="{Binding LotSize}" FontSize="12"/>
+                            </StackPanel>
+                            <StackPanel Grid.Column="6">
+                                <TextBlock Text="RISK $" Style="{StaticResource S.TinyLabel}"/>
+                                <TextBlock Text="{Binding RiskDollar}"
+                                           Foreground="{DynamicResource ColGreen}"
+                                           FontSize="12"/>
+                            </StackPanel>
+                            <StackPanel Grid.Column="7">
+                                <TextBlock Text="MAX PROFIT" Style="{StaticResource S.TinyLabel}"/>
+                                <TextBlock Text="{Binding MaxProfit}"
+                                           Foreground="{DynamicResource ColGreen}"
+                                           FontSize="12"/>
+                            </StackPanel>
+                        </Grid>
+>>>>>>> 51e2d5bcb0b5db4084d8598cb42f117288d2e977
 
                         <!-- Confidence bar -->
                         <StackPanel Grid.Column="2"

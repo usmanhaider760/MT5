@@ -86,11 +86,18 @@ namespace TradingDecisionSystem
             ["TagCfgBd"]          = Color.FromRgb(0x3D, 0x4B, 0x86),
         };
 
+<<<<<<< HEAD
         public MainWindow(MainViewModel viewModel)
         {
             InitializeComponent();
             DataContext = viewModel;
             Loaded += async (_, _) => await viewModel.InitializeAsync();
+=======
+        public MainWindow()
+        {
+            InitializeComponent();
+            DataContext = new DashboardViewModel();
+>>>>>>> 51e2d5bcb0b5db4084d8598cb42f117288d2e977
             // Default dark theme already applied via XAML resources.
         }
 

@@ -1,5 +1,16 @@
+<<<<<<< HEAD
 <Application x:Class="MT5GoldScalper.V2.App"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
     <Application.Resources />
+=======
+﻿<Application x:Class="MT5GoldScalper.V2.App"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:local="clr-namespace:MT5GoldScalper.V2"
+             StartupUri="MainWindow.xaml">
+    <Application.Resources>
+         
+    </Application.Resources>
+>>>>>>> 51e2d5bcb0b5db4084d8598cb42f117288d2e977
 </Application>
