@@ -17,10 +17,20 @@ namespace Atlas_Application.Services;
 public static class Atlas_Bot_Bootstrap
 {
     public static (Bot_Controller Controller, Database_Schema Db, MT5_Account_Service Account_Service) Create(
-        string mt5_host   = "127.0.0.1",
-        int    mt5_port   = 9090,
-        bool   demo_mode  = true,
-        string db_path    = "atlas_trading.db")
+        string mt5_host             = "127.0.0.1",
+        int    mt5_port             = 9090,
+        bool   demo_mode            = true,
+        string db_path              = "atlas_trading.db",
+        string telegram_token       = "",
+        string telegram_chatid      = "",
+        string email_smtp_host      = "",
+        int    email_smtp_port      = 587,
+        string email_username       = "",
+        string email_password       = "",
+        string email_to             = "",
+        string news_feed_url        = "",
+        Risk_Setting_BO? risk_override   = null,
+        decimal spread_multiplier   = 1.0m)
     {
         // Database
         var db = new Database_Schema(db_path);
@@ -31,6 +41,7 @@ public static class Atlas_Bot_Bootstrap
         var result_repo   = new Trade_Result_Repository(db.Connection_String);
         var account_repo  = new Account_Snapshot_Repository(db.Connection_String);
         var news_repo     = new News_Event_Repository(db.Connection_String);
+        var position_repo = new Open_Position_Repository(db.Connection_String);
 
         // MT5 bridge
         var bridge        = new MT5_Bridge_Client(mt5_host, mt5_port);
@@ -38,8 +49,8 @@ public static class Atlas_Bot_Bootstrap
         var execution     = new MT5_Execution_Service(bridge, demo_mode);
         var account_svc   = new MT5_Account_Service(bridge);
 
-        // Risk settings
-        var risk_settings = Risk_Setting_BO.Conservative_Launch();
+        // Risk settings — caller may override individual limits from config
+        var risk_settings = risk_override ?? Risk_Setting_BO.Conservative_Launch();
 
         // Emergency stop
         var emergency_stop = new Emergency_Stop_Service();
@@ -47,6 +58,9 @@ public static class Atlas_Bot_Bootstrap
         // Risk
         var risk_manager  = new Risk_Manager(risk_settings);
         var drawdown_guard = new Drawdown_Guard(risk_settings, emergency_stop);
+
+        // Correlation guard
+        var correlation_guard = new Atlas_Risk.Services.Correlation_Guard();
 
         // Quality scorer
         var scorer        = new Trade_Quality_Scorer();
@@ -72,15 +86,21 @@ public static class Atlas_Bot_Bootstrap
             market_data, regime_detector, session_filter, spread_filter,
             news_filter, volatility_filter, orchestrator, scorer,
             risk_manager, drawdown_guard, execution, emergency_stop, risk_settings,
-            trade_manager);
+            trade_manager, correlation_guard);
 
-        // News calendar (seeded with demo events; no HTTP feed in demo mode)
-        var calendar = new Economic_Calendar_Service(new System.Net.Http.HttpClient());
+        // News calendar — uses live feed URL when configured, demo events otherwise
+        var calendar = new Economic_Calendar_Service(new System.Net.Http.HttpClient(), news_feed_url);
+
+        // Notifiers (each silently no-ops when not configured)
+        var telegram = new Telegram_Notifier(telegram_token, telegram_chatid);
+        var email    = new Email_Notifier(email_smtp_host, email_smtp_port, email_username,
+                                          email_password, email_username, email_to);
 
         // Controller
         var controller = new Bot_Controller(
             pipeline, perf_monitor, orchestrator, emergency_stop,
-            risk_settings, result_repo, execution, calendar);
+            risk_settings, result_repo, execution, calendar, telegram, email, position_repo,
+            spread_multiplier, account_repo, signal_repo, news_repo);
 
         return (controller, db, account_svc);
     }

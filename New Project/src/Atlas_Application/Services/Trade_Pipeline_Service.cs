@@ -27,6 +27,7 @@ public class Trade_Pipeline_Service
     private readonly I_Emergency_Stop_Service _emergency_stop;
     private readonly Risk_Setting_BO _risk_settings;
     private readonly Trade_Manager_Service? _trade_manager;
+    private readonly Correlation_Guard? _correlation_guard;
 
     public event Action<string>? On_Log;
     public event Action<Trade_Signal_BO>? On_Signal_Approved;
@@ -48,7 +49,8 @@ public class Trade_Pipeline_Service
         I_Execution_Service execution,
         I_Emergency_Stop_Service emergency_stop,
         Risk_Setting_BO risk_settings,
-        Trade_Manager_Service? trade_manager = null)
+        Trade_Manager_Service? trade_manager = null,
+        Correlation_Guard? correlation_guard = null)
     {
         _market_data = market_data;
         _regime_detector = regime_detector;
@@ -63,7 +65,8 @@ public class Trade_Pipeline_Service
         _execution = execution;
         _emergency_stop = emergency_stop;
         _risk_settings = risk_settings;
-        _trade_manager = trade_manager;
+        _trade_manager     = trade_manager;
+        _correlation_guard = correlation_guard;
         if (_trade_manager != null)
             _trade_manager.On_Log += msg => On_Log?.Invoke(msg);
     }
@@ -144,16 +147,32 @@ public class Trade_Pipeline_Service
         context.News_Lockout_Active = news_block;
         context.Score_Session_Quality = _session_filter.Get_Session_Quality_Score(session);
         context.Score_Spread_Quality = _spread_filter.Get_Spread_Quality_Score(spread, symbol);
-        context.Score_News_Safety = news_block ? 0 : 10;
+        context.Score_News_Safety        = news_block ? 0 : 10;
+        context.Score_Correlation_Safety = _correlation_guard?.Get_Correlation_Score(
+            symbol.Symbol_Name, open_positions) ?? 10;
 
-        // Recompute total score with real session/spread/news values
+        // Recompute total score with real session/spread/news/correlation values
         context.Regime_Quality_Score =
             context.Score_Trend_Alignment + context.Score_Volatility_Quality +
             context.Score_Session_Quality + context.Score_Spread_Quality +
             context.Score_Structure_Clarity + context.Score_News_Safety +
             context.Score_Correlation_Safety;
 
+        // Session-MTF confluence bonus (+5): all TFs aligned during peak session
+        if (context.Higher_Timeframes_Aligned &&
+            (session == Session_Type.London_NY_Overlap || session == Session_Type.London))
+            context.Regime_Quality_Score += 5;
+
+        context.Regime_Quality_Score = Math.Min(100, context.Regime_Quality_Score);
+
         On_Regime_Updated?.Invoke(symbol.Symbol_Name, context);
+
+        // Gate 5b: Block Gold when drawdown is in recovery mode
+        if (is_gold && !_drawdown_guard.Is_Gold_Allowed(account.Drawdown_From_Peak))
+        {
+            Log($"{symbol.Symbol_Name}: Gold blocked — drawdown {account.Drawdown_From_Peak:F2}% in recovery mode");
+            return;
+        }
 
         bool tradeable = is_gold ? context.Is_Gold_Tradeable : context.Is_Tradeable;
         if (!tradeable)
@@ -171,6 +190,17 @@ public class Trade_Pipeline_Service
         // Gate 7: Score and filter signals
         foreach (var signal in signals)
         {
+            // Hard gate: block same-direction trades on correlated pairs
+            if (_correlation_guard?.Is_Direction_Correlated(signal.Symbol_Name, signal.Direction, open_positions) == true)
+            {
+                signal.Is_Approved = false;
+                signal.Reject_Reason = Signal_Reject_Reason.Correlation_Exposure_Exceeded;
+                signal.Reject_Detail = $"Open position in correlated pair — {signal.Direction} exposure already active";
+                On_Signal_Rejected?.Invoke(signal);
+                Log($"{signal.Symbol_Name} [{signal.Strategy}]: blocked — correlated {signal.Direction} exposure already open");
+                continue;
+            }
+
             var (score, grade) = _quality_scorer.Score_Trade(signal, context);
             signal.Quality_Score = score;
             signal.Quality_Grade = grade;
@@ -198,10 +228,22 @@ public class Trade_Pipeline_Service
                 continue;
             }
 
-            // All gates passed — calculate lot size and execute
-            decimal risk_pct = is_gold
-                ? _risk_settings.Gold_Risk_Per_Trade_Percent
-                : _risk_settings.Forex_Risk_Per_Trade_Percent;
+            // All gates passed — calculate lot size (risk% scaled by symbol tier for Forex)
+            decimal risk_pct = is_gold ? _risk_settings.Gold_Risk_Per_Trade_Percent
+                : symbol.Tier switch
+                {
+                    Symbol_Tier_Type.Tier_2 => Math.Round(_risk_settings.Forex_Risk_Per_Trade_Percent * 0.75m, 4),
+                    Symbol_Tier_Type.Tier_3 => Math.Round(_risk_settings.Forex_Risk_Per_Trade_Percent * 0.60m, 4),
+                    _                       => _risk_settings.Forex_Risk_Per_Trade_Percent
+                };
+
+            // Scale risk down in caution/recovery mode
+            decimal dd_mult = _drawdown_guard.Get_Risk_Multiplier(account.Drawdown_From_Peak);
+            if (dd_mult < 1.0m)
+            {
+                risk_pct = Math.Round(risk_pct * dd_mult, 4);
+                Log($"{symbol.Symbol_Name}: drawdown {account.Drawdown_From_Peak:F2}% — risk scaled to {risk_pct:F4}% (×{dd_mult})");
+            }
             decimal lot = _risk_manager.Calculate_Lot_Size(account.Equity, risk_pct, signal.Stop_Loss_Pips, symbol.Pip_Value_Per_Lot);
 
             if (lot < symbol.Min_Lot_Size)

@@ -101,11 +101,12 @@ string Dispatch(string req)
     if (cmd == "GET_TICK")           return Get_Tick(Json_Get(req, "symbol"));
     if (cmd == "GET_SPREAD")         return Get_Spread(Json_Get(req, "symbol"));
     if (cmd == "IS_MARKET_OPEN")     return Is_Market_Open(Json_Get(req, "symbol"));
-    if (cmd == "GET_CANDLES")        return Get_Candles(Json_Get(req, "symbol"), (int)StringToInteger(Json_Get(req, "timeframe")), (int)StringToInteger(Json_Get(req, "count")));
+    if (cmd == "GET_CANDLES")        return Get_Candles(Json_Get(req, "symbol"), Json_Get(req, "timeframe"), (int)StringToInteger(Json_Get(req, "count")));
     if (cmd == "GET_POSITIONS")      return Get_Positions();
     if (cmd == "SEND_ORDER")         return Send_Order(req);
     if (cmd == "MODIFY_SL")         return Modify_SL(req);
     if (cmd == "CLOSE_POSITION")    return Close_Position(req);
+    if (cmd == "PARTIAL_CLOSE")     return Partial_Close(req);
 
     return "{\"status\":\"error\",\"error\":\"Unknown command\"}";
 }
@@ -158,9 +159,9 @@ string Is_Market_Open(string symbol)
 }
 
 //+------------------------------------------------------------------+
-string Get_Candles(string symbol, int tf_minutes, int count)
+string Get_Candles(string symbol, string tf_str, int count)
 {
-    ENUM_TIMEFRAMES tf = Minutes_To_TF(tf_minutes);
+    ENUM_TIMEFRAMES tf = String_To_TF(tf_str);
     MqlRates rates[];
     ArraySetAsSeries(rates, true);
     int copied = CopyRates(symbol, tf, 0, count, rates);
@@ -272,6 +273,27 @@ string Close_Position(string req)
 }
 
 //+------------------------------------------------------------------+
+string Partial_Close(string req)
+{
+    long   ticket = StringToInteger(Json_Get(req, "ticket"));
+    double lots   = StringToDouble(Json_Get(req, "lot"));
+
+    if (!PositionSelectByTicket(ticket))
+        return "{\"status\":\"error\",\"error\":\"Position not found\"}";
+
+    double available = PositionGetDouble(POSITION_VOLUME);
+    if (lots <= 0 || lots > available)
+        return StringFormat("{\"status\":\"error\",\"error\":\"Invalid lot %.2f (position has %.2f)\"}",
+            lots, available);
+
+    if (!trade.PositionClosePartial(ticket, lots))
+        return StringFormat("{\"status\":\"error\",\"error\":\"PositionClosePartial failed: %d\"}",
+            trade.ResultRetcode());
+
+    return "{\"status\":\"ok\"}";
+}
+
+//+------------------------------------------------------------------+
 string Json_Get(string json, string key)
 {
     string search = "\"" + key + "\":";
@@ -305,6 +327,20 @@ double Get_Pip_Size(string symbol)
     if (digits == 3 || digits == 5) return 0.0001;
     if (digits == 2)                return 0.01;   // XAUUSD
     return 0.0001;
+}
+
+//+------------------------------------------------------------------+
+ENUM_TIMEFRAMES String_To_TF(string tf)
+{
+    if (tf == "M1")  return PERIOD_M1;
+    if (tf == "M5")  return PERIOD_M5;
+    if (tf == "M15") return PERIOD_M15;
+    if (tf == "M30") return PERIOD_M30;
+    if (tf == "H1")  return PERIOD_H1;
+    if (tf == "H4")  return PERIOD_H4;
+    if (tf == "D1")  return PERIOD_D1;
+    if (tf == "W1")  return PERIOD_W1;
+    return PERIOD_H1;
 }
 
 //+------------------------------------------------------------------+

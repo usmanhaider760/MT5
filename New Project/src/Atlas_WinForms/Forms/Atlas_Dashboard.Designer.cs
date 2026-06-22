@@ -36,6 +36,8 @@ partial class Atlas_Dashboard
     private Label          lbl_daily_pnl;
     private Label          lbl_lbl_drawdown;
     private Label          lbl_drawdown;
+    private Label          lbl_lbl_peak_equity;
+    private Label          lbl_peak_equity;
 
     private Panel          pnl_regime;
     private Label          lbl_regime_header;
@@ -55,7 +57,6 @@ partial class Atlas_Dashboard
 
     // Performance tab
     private Panel          pnl_stats;
-    private Label          lbl_stats_header;
     private Label          lbl_lbl_total_trades;
     private Label          lbl_total_trades;
     private Label          lbl_lbl_win_rate;
@@ -69,6 +70,11 @@ partial class Atlas_Dashboard
     private Label          lbl_lbl_total_r;
     private Label          lbl_total_r;
     private DataGridView   grid_strategy_perf;
+    private Panel          pnl_live_equity;
+    private Label          lbl_lbl_sharpe;
+    private Label          lbl_sharpe;
+    private Label          lbl_lbl_sortino;
+    private Label          lbl_sortino;
 
     // Risk tab
     private Panel          pnl_risk_settings;
@@ -110,6 +116,10 @@ partial class Atlas_Dashboard
     private TabPage        tab_history;
     private DataGridView   grid_trade_history;
     private Button         btn_refresh_history;
+    private Button         btn_export_history;
+    private Button         btn_view_detail;
+    private DateTimePicker dtp_history_date;
+    private Button         btn_history_filter;
     private Label          lbl_history_status;
 
     // Symbol manager (Risk tab)
@@ -117,6 +127,10 @@ partial class Atlas_Dashboard
 
     // Walk-forward panel (Backtest tab)
     private DataGridView   grid_wf;
+
+    // Parameter sweep panel (Backtest tab)
+    private Button         btn_bt_sweep;
+    private DataGridView   grid_bt_sweep;
 
     // Log tab
     private RichTextBox    txt_log;
@@ -204,7 +218,7 @@ partial class Atlas_Dashboard
         int w = ClientSize.Width - 24;
 
         // Account panel (top-left)
-        pnl_account = Card(8, 8, 320, 200, BG_CARD);
+        pnl_account = Card(8, 8, 320, 228, BG_CARD);
         lbl_account_header = CardHeader("ACCOUNT", 8, 8, 290, pnl_account);
 
         int ay = 42;
@@ -216,27 +230,29 @@ partial class Atlas_Dashboard
         lbl_free_margin    = StatValue("$0.00",           170, ay,    pnl_account);  ay += 28;
         lbl_lbl_daily_pnl  = StatLabel("Daily P&L:",      10, ay,     pnl_account);
         lbl_daily_pnl      = StatValue("$0.00",           170, ay,    pnl_account);  ay += 28;
-        lbl_lbl_drawdown   = StatLabel("Drawdown:",       10, ay,     pnl_account);
-        lbl_drawdown       = StatValue("0.00%",           170, ay,    pnl_account);
+        lbl_lbl_drawdown    = StatLabel("Drawdown:",       10, ay,    pnl_account);
+        lbl_drawdown        = StatValue("0.00%",          170, ay,   pnl_account);  ay += 28;
+        lbl_lbl_peak_equity = StatLabel("Peak Equity:",   10, ay,    pnl_account);
+        lbl_peak_equity     = StatValue("$0.00",          170, ay,   pnl_account);
 
-        lbl_session = Lbl("Session:  —", 10, 178, 295, 18, TEXT_MUTED, FONT_SMALL);
+        lbl_session = Lbl("Session:  —", 10, 206, 295, 18, TEXT_MUTED, FONT_SMALL);
         pnl_account.Controls.Add(lbl_session);
 
         // Regime panel (top-right of account)
         pnl_regime = Card(336, 8, w - 336, 200, BG_CARD);
-        lbl_regime_header = CardHeader("MARKET REGIME SCORES", 8, 8, pnl_regime.Width - 16, pnl_regime);
+        lbl_regime_header = CardHeader("REGIME + MTF CONFLUENCE", 8, 8, pnl_regime.Width - 16, pnl_regime);
         grid_regime = Build_Grid(pnl_regime, 8, 36, pnl_regime.Width - 16, 152,
-            ["Symbol", "Regime", "Score", "Session", "Spread"]);
-        SetColumnWidths(grid_regime, [80, 170, 60, 100, 80]);
+            ["Symbol", "Regime", "Score", "Session", "Spread", "D1", "H4", "H1", "Aligned"]);
+        SetColumnWidths(grid_regime, [80, 120, 60, 80, 60, 60, 60, 60, 60]);
 
         // Positions panel
-        pnl_positions = Card(8, 216, w, 180, BG_CARD);
+        pnl_positions = Card(8, 244, w, 180, BG_CARD);
         lbl_positions_header = CardHeader("OPEN POSITIONS", 8, 8, w - 16, pnl_positions);
         grid_positions = Build_Grid(pnl_positions, 8, 36, w - 16, 130,
-            ["Symbol", "Direction", "Entry", "Stop Loss", "Take Profit", "P&L", "R-Multiple"]);
-        SetColumnWidths(grid_positions, [80, 80, 90, 90, 90, 90, 90]);
+            ["Symbol", "Direction", "Entry", "Stop Loss", "Take Profit", "P&L", "R-Multiple", "Duration"]);
+        SetColumnWidths(grid_positions, [80, 70, 80, 80, 80, 80, 80, 76]);
 
-        // Replace last column with a close button
+        // Add close button column at col 8
         var col_pos_close = new DataGridViewButtonColumn
         {
             HeaderText = "Close", Name = "col_pos_close", Width = 60,
@@ -249,11 +265,11 @@ partial class Atlas_Dashboard
         col_pos_close.DefaultCellStyle.Font = new Font("Segoe UI", 8, FontStyle.Bold);
         grid_positions.Columns.Add(col_pos_close);
         grid_positions.ReadOnly = false;
-        for (int i = 0; i < 7; i++) grid_positions.Columns[i].ReadOnly = true;
+        for (int i = 0; i < 8; i++) grid_positions.Columns[i].ReadOnly = true;
         grid_positions.CellContentClick += Grid_Positions_CellContentClick;
 
         // Signal log
-        pnl_signals = Card(8, 404, w, 190, BG_CARD);
+        pnl_signals = Card(8, 432, w, 190, BG_CARD);
         lbl_signals_header = CardHeader("SIGNAL LOG", 8, 8, w - 16, pnl_signals);
         grid_signal_log = Build_Grid(pnl_signals, 8, 36, w - 16, 140,
             ["Time", "Signal", "Status", "Detail"]);
@@ -261,7 +277,7 @@ partial class Atlas_Dashboard
         grid_signal_log.Columns[3].AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill;
 
         // News calendar panel
-        pnl_news = Card(8, 602, w, 175, BG_CARD);
+        pnl_news = Card(8, 630, w, 175, BG_CARD);
         lbl_news_header = CardHeader("UPCOMING HIGH-IMPACT NEWS  (next 24h)", 8, 8, w - 16, pnl_news);
         grid_news = Build_Grid(pnl_news, 8, 36, w - 16, 126,
             ["UTC Time", "Ccy", "Event", "In", "Status"]);
@@ -284,7 +300,9 @@ partial class Atlas_Dashboard
         lbl_lbl_avg_r          = StatLabel("Avg R/Trade:",    sx, 40, pnl_stats); lbl_avg_r          = BigStat("—",    sx + 10, 62, pnl_stats); sx += 140;
         lbl_lbl_profit_factor  = StatLabel("Profit Factor:",  sx, 40, pnl_stats); lbl_profit_factor  = BigStat("—",    sx + 10, 62, pnl_stats); sx += 140;
         lbl_lbl_max_dd         = StatLabel("Max Drawdown:",   sx, 40, pnl_stats); lbl_max_dd         = BigStat("0.00%",sx + 10, 62, pnl_stats); sx += 140;
-        lbl_lbl_total_r        = StatLabel("Total R:",        sx, 40, pnl_stats); lbl_total_r        = BigStat("0.0R", sx + 10, 62, pnl_stats);
+        lbl_lbl_total_r        = StatLabel("Total R:",        sx, 40, pnl_stats); lbl_total_r        = BigStat("0.0R", sx + 10, 62, pnl_stats); sx += 140;
+        lbl_lbl_sharpe         = StatLabel("Sharpe R:",       sx, 40, pnl_stats); lbl_sharpe         = BigStat("—",    sx + 10, 62, pnl_stats); sx += 140;
+        lbl_lbl_sortino        = StatLabel("Sortino:",        sx, 40, pnl_stats); lbl_sortino        = BigStat("—",    sx + 10, 62, pnl_stats);
 
         var pnl_strat = Card(8, 136, w, 400, BG_CARD);
         CardHeader("STRATEGY PERFORMANCE", 8, 8, w - 16, pnl_strat);
@@ -315,7 +333,11 @@ partial class Atlas_Dashboard
             grid_strategy_perf.Columns[i].ReadOnly = true;
         grid_strategy_perf.CellContentClick += Grid_Strategy_Perf_CellContentClick;
 
-        tab_performance.Controls.AddRange([pnl_stats, pnl_strat]);
+        pnl_live_equity = Card(8, 544, w, 150, BG_CARD);
+        CardHeader("LIVE EQUITY CURVE", 8, 8, w - 16, pnl_live_equity);
+        pnl_live_equity.Paint += Pnl_Live_Equity_Paint;
+
+        tab_performance.Controls.AddRange([pnl_stats, pnl_strat, pnl_live_equity]);
     }
 
     // ── Risk Tab ─────────────────────────────────────────────────────
@@ -337,8 +359,8 @@ partial class Atlas_Dashboard
         var pnl_symbols = Card(436, 8, 490, 290, BG_CARD);
         CardHeader("SYMBOL UNIVERSE  —  click to pause/enable per pair", 8, 8, 464, pnl_symbols);
         grid_symbols = Build_Grid(pnl_symbols, 8, 36, 474, 242,
-            ["Symbol", "Tier", "Spread", "Status"]);
-        SetColumnWidths(grid_symbols, [80, 70, 80, 90]);
+            ["Symbol", "Tier", "Spread", "Risk%", "Status"]);
+        SetColumnWidths(grid_symbols, [80, 70, 70, 55, 80]);
 
         var col_sym_toggle = new DataGridViewButtonColumn
         {
@@ -353,9 +375,9 @@ partial class Atlas_Dashboard
         col_sym_toggle.DefaultCellStyle.Alignment  = DataGridViewContentAlignment.MiddleCenter;
         col_sym_toggle.DefaultCellStyle.Font       = new Font("Segoe UI", 8, FontStyle.Bold);
         grid_symbols.Columns.Add(col_sym_toggle);
-        grid_symbols.Columns[4].AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill;
+        grid_symbols.Columns[5].AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill;
         grid_symbols.ReadOnly = false;
-        for (int i = 0; i < 4; i++) grid_symbols.Columns[i].ReadOnly = true;
+        for (int i = 0; i < 5; i++) grid_symbols.Columns[i].ReadOnly = true;
         grid_symbols.CellContentClick += Grid_Symbols_CellContentClick;
 
         tab_risk.Controls.AddRange([pnl_risk_settings, pnl_symbols]);
@@ -404,7 +426,10 @@ partial class Atlas_Dashboard
         btn_bt_save_report = Btn("💾 Save Report...",        10, cy, 250, 30, TEXT_SECONDARY, btn_bt_save_report_Click);
         btn_bt_save_report.Enabled = false; cy += 40;
 
-        pnl_bt_config.Controls.AddRange([btn_bt_load_csv, btn_bt_run, btn_bt_monte_carlo, btn_bt_save_report]);
+        btn_bt_sweep = Btn("🔍 Param Sweep",                10, cy, 250, 30, COL_ORANGE, btn_bt_sweep_Click);
+        btn_bt_sweep.Enabled = false; cy += 40;
+
+        pnl_bt_config.Controls.AddRange([btn_bt_load_csv, btn_bt_run, btn_bt_monte_carlo, btn_bt_save_report, btn_bt_sweep]);
 
         lbl_bt_status = new Label { Location = new Point(10, cy), Size = new Size(260, 36),
             ForeColor = TEXT_MUTED, BackColor = Color.Transparent, Font = FONT_SMALL, Text = "Ready" };
@@ -440,7 +465,16 @@ partial class Atlas_Dashboard
         SetColumnWidths(grid_wf, [0, 70, 80, 110, 80, 80]);
         grid_wf.Columns[0].AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill;
 
-        tab_backtest.Controls.AddRange([pnl_bt_config, pnl_bt_equity, pnl_bt_report_container, pnl_wf]);
+        // Parameter sweep panel (below walk-forward)
+        var pnl_bt_sweep = Card(296, 624, w - 296, 180, BG_CARD);
+        CardHeader("PARAMETER SWEEP  —  Quality Score vs Trades/PF  (double-click best to apply)", 8, 8, w - 316, pnl_bt_sweep);
+        grid_bt_sweep = Build_Grid(pnl_bt_sweep, 8, 36, w - 316, 132,
+            ["Min Quality", "Trades", "Win Rate", "Profit Factor", "Avg R", "Net R"]);
+        SetColumnWidths(grid_bt_sweep, [0, 80, 90, 110, 80, 80]);
+        grid_bt_sweep.Columns[0].AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill;
+        grid_bt_sweep.CellDoubleClick += Grid_Bt_Sweep_CellDoubleClick;
+
+        tab_backtest.Controls.AddRange([pnl_bt_config, pnl_bt_equity, pnl_bt_report_container, pnl_wf, pnl_bt_sweep]);
     }
 
     // ── Trade History Tab ─────────────────────────────────────────────
@@ -455,14 +489,31 @@ partial class Atlas_Dashboard
             Size      = new Size(w, 38),
             BackColor = BG_CARD_HEADER
         };
-        btn_refresh_history = Btn("⟳ Refresh from DB", 8, 4, 180, 30, COL_BLUE, btn_refresh_history_Click);
+        btn_refresh_history = Btn("⟳ Refresh from DB",  8,   4, 180, 30, COL_BLUE,        btn_refresh_history_Click);
+        btn_export_history  = Btn("📥 Export CSV...",   196,  4, 150, 30, TEXT_SECONDARY,  btn_export_history_Click);
+        btn_view_detail     = Btn("🔍 Trade Detail",    354,  4, 140, 30, COL_ORANGE,      btn_view_detail_Click);
+        btn_view_detail.Enabled = false;
+        dtp_history_date = new DateTimePicker
+        {
+            Location    = new Point(502, 6),
+            Size        = new Size(130, 26),
+            Format      = DateTimePickerFormat.Short,
+            Value       = DateTime.Today,
+            MaxDate     = DateTime.Today,
+            BackColor   = Color.FromArgb(20, 20, 36),
+            ForeColor   = Color.FromArgb(221, 224, 240),
+            CalendarForeColor  = Color.FromArgb(221, 224, 240),
+            CalendarMonthBackground = Color.FromArgb(25, 25, 42)
+        };
+        btn_history_filter = Btn("Filter (UTC)", 640, 4, 108, 30, COL_BLUE, btn_history_filter_Click);
         lbl_history_status  = new Label
         {
-            Location  = new Point(200, 10), Size = new Size(w - 210, 20),
+            Location  = new Point(748, 10), Size = new Size(w - 758, 20),
             ForeColor = TEXT_MUTED, BackColor = Color.Transparent, Font = FONT_SMALL,
-            Text      = "Last 50 closed trades from SQLite  (click Refresh to load)"
+            Text      = "Last 50 closed trades from SQLite · dates are UTC  (click Refresh to load)"
         };
-        pnl_top.Controls.AddRange([btn_refresh_history, lbl_history_status]);
+        pnl_top.Controls.AddRange([btn_refresh_history, btn_export_history, btn_view_detail,
+            dtp_history_date, btn_history_filter, lbl_history_status]);
 
         // Grid panel
         var pnl_grid = new Panel
@@ -474,10 +525,11 @@ partial class Atlas_Dashboard
         };
 
         grid_trade_history = Build_Grid(pnl_grid, 0, 0, pnl_grid.Width, pnl_grid.Height,
-            ["Closed (UTC)", "Symbol", "Strategy", "Dir", "Entry", "Exit", "R-Mult", "Net P&L", "Reason"]);
-        SetColumnWidths(grid_trade_history, [130, 70, 210, 50, 90, 90, 76, 110, 0]);
-        grid_trade_history.Columns[8].AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill;
+            ["Closed (UTC)", "Symbol", "Strategy", "Dir", "Entry", "Exit", "R-Mult", "Net P&L", "Reason", "Notes"]);
+        SetColumnWidths(grid_trade_history, [130, 70, 210, 50, 90, 90, 76, 110, 120, 0]);
+        grid_trade_history.Columns[9].AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill;
         grid_trade_history.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
+        grid_trade_history.CellDoubleClick += Grid_Trade_History_CellDoubleClick;
 
         tab_history.Controls.AddRange([pnl_top, pnl_grid]);
     }

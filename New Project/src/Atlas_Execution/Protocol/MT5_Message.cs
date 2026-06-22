@@ -14,6 +14,7 @@ public static class MT5_Command
     public const string SEND_ORDER        = "SEND_ORDER";
     public const string MODIFY_SL         = "MODIFY_SL";
     public const string CLOSE_POSITION    = "CLOSE_POSITION";
+    public const string PARTIAL_CLOSE     = "PARTIAL_CLOSE";
     public const string PING              = "PING";
 }
 

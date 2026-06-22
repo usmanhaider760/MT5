@@ -19,6 +19,9 @@ public class Connection_Status_Panel : IDisposable
 
     public bool Is_Connected { get; private set; }
 
+    // Fires when connection state changes: true = just connected, false = just lost connection
+    public event Action<bool>? On_Connection_Changed;
+
     public Connection_Status_Panel(MT5_Bridge_Client bridge, Label lbl_connection)
     {
         _bridge         = bridge;
@@ -38,6 +41,8 @@ public class Connection_Status_Panel : IDisposable
             Command = MT5_Command.PING
         });
 
+        bool was_connected = Is_Connected;
+
         if (response?.Is_Ok == true)
         {
             Is_Connected = true;
@@ -48,6 +53,9 @@ public class Connection_Status_Panel : IDisposable
             Is_Connected = false;
             Set_Status("● MT5 DISCONNECTED", COL_RED);
         }
+
+        if (Is_Connected != was_connected)
+            On_Connection_Changed?.Invoke(Is_Connected);
     }
 
     private void Set_Status(string text, Color color)

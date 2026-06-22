@@ -71,6 +71,20 @@ public class MT5_Execution_Service : I_Execution_Service
         return response?.Is_Ok == true;
     }
 
+    public async Task<bool> Partial_Close_Async(long ticket, decimal lots_to_close)
+    {
+        if (_demo_mode) return true;
+
+        var response = await _bridge.Send_Async<MT5_Order_Response>(new MT5_Request
+        {
+            Command = MT5_Command.PARTIAL_CLOSE,
+            Ticket  = ticket,
+            Lot     = (double)lots_to_close
+        });
+
+        return response?.Is_Ok == true;
+    }
+
     public async Task<List<Position_BO>> Get_Open_Positions_Async()
     {
         if (_demo_mode) return [];
@@ -82,19 +96,26 @@ public class MT5_Execution_Service : I_Execution_Service
 
         if (response?.Is_Ok != true) return [];
 
-        return response.Positions.Select(p => new Position_BO
+        return response.Positions.Select(p =>
         {
-            Broker_Ticket  = p.Ticket,
-            Symbol_Name    = p.Symbol,
-            Direction      = p.Type.Equals("buy", StringComparison.OrdinalIgnoreCase)
-                             ? Trade_Direction_Type.Buy : Trade_Direction_Type.Sell,
-            Lot_Size       = (decimal)p.Lots,
-            Entry_Price    = (decimal)p.Open_Price,
-            Stop_Loss_Price= (decimal)p.Sl,
-            Take_Profit_Price = (decimal)p.Tp,
-            Unrealized_PnL = (decimal)p.Profit,
-            Opened_At_UTC  = DateTimeOffset.FromUnixTimeSeconds(p.Open_Time_Unix).UtcDateTime,
-            Status         = Order_Status_Type.Filled
+            decimal entry  = (decimal)p.Open_Price;
+            decimal sl     = (decimal)p.Sl;
+            decimal sl_dist = sl > 0 ? Math.Abs(entry - sl) : 0m;
+            return new Position_BO
+            {
+                Broker_Ticket              = p.Ticket,
+                Symbol_Name                = p.Symbol,
+                Direction                  = p.Type.Equals("buy", StringComparison.OrdinalIgnoreCase)
+                                             ? Trade_Direction_Type.Buy : Trade_Direction_Type.Sell,
+                Lot_Size                   = (decimal)p.Lots,
+                Entry_Price                = entry,
+                Stop_Loss_Price            = sl,
+                Take_Profit_Price          = (decimal)p.Tp,
+                Unrealized_PnL             = (decimal)p.Profit,
+                Initial_Stop_Distance_Pips = sl_dist,
+                Opened_At_UTC              = DateTimeOffset.FromUnixTimeSeconds(p.Open_Time_Unix).UtcDateTime,
+                Status                     = Order_Status_Type.Filled
+            };
         }).ToList();
     }
 }

@@ -28,7 +28,7 @@ public static class CSV_Data_Loader
                 DateTime dt;
                 int field_offset = 0;
 
-                if (parts[0].Contains('-') && parts[1].Contains(':'))
+                if (parts[0].Contains('.') && parts[1].Contains(':'))
                 {
                     // MT5 format: 2024.01.02,08:00,...
                     dt = DateTime.Parse($"{parts[0].Replace('.', '-')} {parts[1]}",

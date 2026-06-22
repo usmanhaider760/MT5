@@ -34,4 +34,5 @@ public class Trade_Result_BO
 
     public bool Is_Winner => Net_PnL_Currency > 0;
     public string Close_Reason { get; set; } = string.Empty;
+    public string Notes { get; set; } = string.Empty;
 }

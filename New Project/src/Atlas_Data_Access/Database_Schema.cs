@@ -112,6 +112,28 @@ public class Database_Schema
                 open_trades     INTEGER NOT NULL
             );");
 
+        conn.Execute(@"
+            CREATE TABLE IF NOT EXISTS open_positions (
+                broker_ticket              INTEGER PRIMARY KEY,
+                signal_id                  TEXT NOT NULL,
+                symbol_name                TEXT NOT NULL,
+                strategy                   TEXT NOT NULL,
+                direction                  TEXT NOT NULL,
+                lot_size                   REAL NOT NULL,
+                entry_price                REAL NOT NULL,
+                stop_loss_price            REAL NOT NULL,
+                take_profit_price          REAL NOT NULL,
+                risk_amount_currency       REAL NOT NULL,
+                risk_percent               REAL NOT NULL,
+                initial_stop_distance_pips REAL NOT NULL,
+                opened_at                  TEXT NOT NULL,
+                is_at_breakeven            INTEGER NOT NULL DEFAULT 0,
+                partial_profit_taken       INTEGER NOT NULL DEFAULT 0
+            );");
+
+        // Schema migrations for existing databases
+        try { conn.Execute("ALTER TABLE trade_results ADD COLUMN notes TEXT DEFAULT '';"); } catch { /* column already exists */ }
+
         // Indexes for query performance
         conn.Execute("CREATE INDEX IF NOT EXISTS idx_trade_results_symbol ON trade_results(symbol_name);");
         conn.Execute("CREATE INDEX IF NOT EXISTS idx_trade_results_strategy ON trade_results(strategy);");

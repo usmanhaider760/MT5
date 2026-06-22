@@ -37,7 +37,10 @@ public class Trade_Manager_Service
         if (pos.Entry_Price == 0 || pos.Stop_Loss_Price == 0) return;
 
         decimal pip_size     = Get_Pip_Size(pos.Symbol_Name);
-        decimal initial_pips = Math.Abs(pos.Entry_Price - pos.Stop_Loss_Price) / pip_size;
+        // Prefer the recorded initial distance (stays correct even after SL moves to breakeven)
+        decimal initial_pips = pos.Initial_Stop_Distance_Pips > 0
+            ? pos.Initial_Stop_Distance_Pips
+            : Math.Abs(pos.Entry_Price - pos.Stop_Loss_Price) / pip_size;
         if (initial_pips < 1) return;
 
         // Use last 10 M15 candles for current price and swing calculation
@@ -51,9 +54,23 @@ public class Trade_Manager_Service
             : (pos.Entry_Price - current_price) / pip_size;
         decimal r_multiple    = pnl_pips / initial_pips;
 
-        // Rule 1: move SL to breakeven at 1.0R (only once)
+        // Rule 1: at 1.0R — scale out 50% then move SL to breakeven (only once)
         if (r_multiple >= 1.0m && !pos.Is_At_Breakeven)
         {
+            if (!pos.Partial_Profit_Taken && pos.Lot_Size > 0)
+            {
+                decimal half_lots = Math.Round(pos.Lot_Size * 0.5m, 2);
+                if (half_lots > 0)
+                {
+                    bool partial = await _execution.Partial_Close_Async(pos.Broker_Ticket, half_lots);
+                    if (partial)
+                    {
+                        pos.Partial_Profit_Taken = true;
+                        On_Log?.Invoke($"[SCALE] {pos.Symbol_Name} #{pos.Broker_Ticket} → closed {half_lots} lots at 1.0R");
+                    }
+                }
+            }
+
             bool moved = await _execution.Modify_Stop_Loss_Async(pos.Broker_Ticket, pos.Entry_Price);
             if (moved)
             {

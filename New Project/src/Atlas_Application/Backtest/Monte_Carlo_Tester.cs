@@ -24,7 +24,8 @@ public class Monte_Carlo_Tester
             var shuffled = r_multiples.OrderBy(_ => _rng.Next()).ToList();
 
             decimal cumulative_r = 0m;
-            decimal peak_r       = 0m;
+            decimal equity       = 100m;  // notional starting equity in R-units
+            decimal peak_eq      = 100m;
             decimal max_dd       = 0m;
             decimal gross_wins   = 0m;
             decimal gross_losses = 0m;
@@ -32,9 +33,10 @@ public class Monte_Carlo_Tester
             foreach (var r in shuffled)
             {
                 cumulative_r += r;
-                if (cumulative_r > peak_r) peak_r = cumulative_r;
+                equity       += r;
+                if (equity > peak_eq) peak_eq = equity;
 
-                decimal dd = peak_r > 0 ? (peak_r - cumulative_r) / peak_r * 100m : 0m;
+                decimal dd = (peak_eq - equity) / peak_eq * 100m;
                 if (dd > max_dd) max_dd = dd;
 
                 if (r > 0) gross_wins   += r;
@@ -43,7 +45,8 @@ public class Monte_Carlo_Tester
 
             final_r_list.Add(cumulative_r);
             max_dd_list.Add(max_dd);
-            pf_list.Add(gross_losses > 0 ? gross_wins / gross_losses : 0m);
+            // No losers → PF is effectively infinite; use sentinel so stress criteria pass
+            pf_list.Add(gross_losses > 0 ? gross_wins / gross_losses : 99.99m);
         }
 
         final_r_list.Sort();

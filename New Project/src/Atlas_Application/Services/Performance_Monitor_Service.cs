@@ -36,6 +36,35 @@ public class Performance_Monitor_Service
     public IReadOnlyDictionary<Strategy_Type, Strategy_Performance_BO> Get_All_Strategy_Performance() =>
         _performance.AsReadOnly();
 
+    public decimal Calculate_Sharpe_Ratio()
+    {
+        if (_results.Count < 2) return 0;
+        decimal mean = _results.Average(r => r.R_Multiple);
+        decimal variance = _results.Average(r => (r.R_Multiple - mean) * (r.R_Multiple - mean));
+        decimal std_dev  = (decimal)Math.Sqrt((double)variance);
+        return std_dev > 0 ? Math.Round(mean / std_dev, 2) : 0;
+    }
+
+    public decimal Calculate_Sortino_Ratio()
+    {
+        if (_results.Count < 2) return 0;
+        decimal mean = _results.Average(r => r.R_Multiple);
+        var downsides = _results.Where(r => r.R_Multiple < 0).ToList();
+        if (downsides.Count == 0) return 99m; // all winners — arbitrarily high
+        decimal downside_variance = downsides.Average(r => r.R_Multiple * r.R_Multiple);
+        decimal downside_dev      = (decimal)Math.Sqrt((double)downside_variance);
+        return downside_dev > 0 ? Math.Round(mean / downside_dev, 2) : 0;
+    }
+
+    public List<decimal> Get_Equity_Series()
+    {
+        decimal cumulative = 0;
+        return _results
+            .OrderBy(r => r.Closed_At_UTC)
+            .Select(r => { cumulative += r.Net_PnL_Currency; return cumulative; })
+            .ToList();
+    }
+
     public (decimal Win_Rate, decimal Avg_R, decimal Profit_Factor, decimal Max_DD) Get_Overall_Stats()
     {
         if (_results.Count == 0) return (0, 0, 0, 0);

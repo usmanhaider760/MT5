@@ -12,10 +12,21 @@ public partial class Atlas_Settings_Form : Form
 
     private void Load_Values()
     {
-        txt_host.Text      = Atlas_Config.MT5_Host;
-        num_port.Value     = Math.Clamp(Atlas_Config.MT5_Port,               1,    65535);
-        chk_demo.Checked   = Atlas_Config.Demo_Mode;
-        num_interval.Value = Math.Clamp(Atlas_Config.Cycle_Interval_Seconds, 10,   3600);
+        txt_host.Text              = Atlas_Config.MT5_Host;
+        num_port.Value             = Math.Clamp(Atlas_Config.MT5_Port,               1,    65535);
+        chk_demo.Checked           = Atlas_Config.Demo_Mode;
+        num_interval.Value         = Math.Clamp(Atlas_Config.Cycle_Interval_Seconds, 10,   3600);
+        txt_telegram_token.Text    = Atlas_Config.Telegram_Bot_Token;
+        txt_telegram_chatid.Text   = Atlas_Config.Telegram_Chat_Id;
+        txt_email_smtp_host.Text   = Atlas_Config.Email_Smtp_Host;
+        num_email_smtp_port.Value  = Math.Clamp(Atlas_Config.Email_Smtp_Port, 1, 65535);
+        txt_email_username.Text    = Atlas_Config.Email_Username;
+        txt_email_password.Text    = Atlas_Config.Email_Password;
+        txt_email_to.Text          = Atlas_Config.Email_To;
+        num_forex_risk.Value       = Math.Clamp(Atlas_Config.Risk_Forex_Per_Trade,  0.01m, 5.00m);
+        num_daily_loss.Value       = Math.Clamp(Atlas_Config.Risk_Max_Daily_Loss,   0.10m, 10.0m);
+        num_dd_breaker.Value       = Math.Clamp(Atlas_Config.Risk_Max_Drawdown,     0.50m, 30.0m);
+        num_spread_mult.Value      = Math.Clamp(Atlas_Config.Spread_Limit_Multiplier, 0.50m, 3.00m);
     }
 
     private void btn_save_Click(object sender, EventArgs e)
@@ -42,6 +53,33 @@ public partial class Atlas_Settings_Form : Form
             ["Database"] = new Dictionary<string, string>
             {
                 ["Path"] = Atlas_Config.Db_Path
+            },
+            ["Telegram"] = new Dictionary<string, string>
+            {
+                ["BotToken"] = txt_telegram_token.Text.Trim(),
+                ["ChatId"]   = txt_telegram_chatid.Text.Trim()
+            },
+            ["Email"] = new Dictionary<string, string>
+            {
+                ["SmtpHost"] = txt_email_smtp_host.Text.Trim(),
+                ["SmtpPort"] = ((int)num_email_smtp_port.Value).ToString(),
+                ["Username"] = txt_email_username.Text.Trim(),
+                ["Password"] = txt_email_password.Text,
+                ["To"]       = txt_email_to.Text.Trim()
+            },
+            ["NewsFeed"] = new Dictionary<string, string>
+            {
+                ["Url"] = Atlas_Config.News_Feed_Url
+            },
+            ["Risk"] = new Dictionary<string, string>
+            {
+                ["ForexRiskPct"]    = num_forex_risk.Value.ToString("F2"),
+                ["MaxDailyLossPct"] = num_daily_loss.Value.ToString("F2"),
+                ["MaxDrawdownPct"]  = num_dd_breaker.Value.ToString("F2")
+            },
+            ["SpreadLimits"] = new Dictionary<string, string>
+            {
+                ["GlobalMultiplier"] = num_spread_mult.Value.ToString("F2")
             }
         };
 

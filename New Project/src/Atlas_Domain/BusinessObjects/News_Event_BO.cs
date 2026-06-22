@@ -3,6 +3,19 @@ namespace Atlas_Domain.BusinessObjects;
 public class News_Event_BO
 {
     public Guid Event_Id { get; set; } = Guid.NewGuid();
+
+    /// <summary>
+    /// Deterministic ID derived from the event's natural key so that
+    /// INSERT OR REPLACE correctly deduplicates the same event across
+    /// multiple feed fetches instead of accumulating duplicate rows.
+    /// </summary>
+    public static Guid Stable_Id(DateTime event_utc, string currency, string event_name)
+    {
+        string key  = $"{event_utc:yyyyMMddHHmm}|{currency.ToUpperInvariant()}|{event_name}";
+        byte[] hash = System.Security.Cryptography.MD5.HashData(
+                          System.Text.Encoding.UTF8.GetBytes(key));
+        return new Guid(hash);
+    }
     public DateTime Event_UTC { get; set; }
     public string Currency { get; set; } = string.Empty;
     public string Event_Name { get; set; } = string.Empty;

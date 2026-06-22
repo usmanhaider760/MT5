@@ -13,7 +13,7 @@ public class Account_Snapshot_Repository
         _connection_string = connection_string;
     }
 
-    public async Task Save_Snapshot_Async(Account_State_BO account)
+    public virtual async Task Save_Snapshot_Async(Account_State_BO account)
     {
         using var conn = new SqliteConnection(_connection_string);
         await conn.ExecuteAsync(@"
