@@ -125,8 +125,12 @@ Data/Deployment/ea_deploy_status.local.json
 *.csv
 *.ipynb
 v2/research/phase0/results/
-<<<<<<< HEAD
 v2/research/phase0/data/*.csv
-v2/research/phase0/data/*.csv
-=======
->>>>>>> 51e2d5bcb0b5db4084d8598cb42f117288d2e977
+
+# =========================
+
+# ATLAS credentials
+
+# =========================
+
+New Project/src/Atlas_WinForms/appsettings.json

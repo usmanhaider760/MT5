@@ -28,11 +28,14 @@ public class Trade_Result_BO
     public decimal Net_PnL_Currency => Gross_PnL_Currency - Commission - Math.Abs(Swap);
 
     public decimal Initial_Stop_Distance_Pips { get; set; }
-    public decimal R_Multiple => Initial_Stop_Distance_Pips > 0
-        ? Net_PnL_Currency / (Initial_Stop_Distance_Pips * Lot_Size * 10m)
-        : 0;
+    public decimal Pip_Value_Per_Lot { get; set; } = 10m;
+    public decimal R_Multiple =>
+        (Initial_Stop_Distance_Pips > 0 && Pip_Value_Per_Lot > 0 && Lot_Size > 0)
+            ? Math.Round(Net_PnL_Currency / (Initial_Stop_Distance_Pips * Lot_Size * Pip_Value_Per_Lot), 3)
+            : 0;
 
     public bool Is_Winner => Net_PnL_Currency > 0;
+    public Exit_Reason_Type Exit_Reason { get; set; } = Exit_Reason_Type.Unknown;
     public string Close_Reason { get; set; } = string.Empty;
     public string Notes { get; set; } = string.Empty;
 }

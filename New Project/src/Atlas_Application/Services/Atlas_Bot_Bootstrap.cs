@@ -1,6 +1,7 @@
 using Atlas_Data_Access;
 using Atlas_Data_Access.Repositories;
 using Atlas_Domain.BusinessObjects;
+using Atlas_Domain.Interfaces;
 using Atlas_Execution.MT5;
 using Atlas_Execution.Services;
 using Atlas_Market_Data.Services;
@@ -16,7 +17,7 @@ namespace Atlas_Application.Services;
 /// </summary>
 public static class Atlas_Bot_Bootstrap
 {
-    public static (Bot_Controller Controller, Database_Schema Db, MT5_Account_Service Account_Service) Create(
+    public static (Bot_Controller Controller, Database_Schema Db, MT5_Account_Service Account_Service, MT5_Bridge_Client Bridge) Create(
         string mt5_host             = "127.0.0.1",
         int    mt5_port             = 9090,
         bool   demo_mode            = true,
@@ -30,7 +31,8 @@ public static class Atlas_Bot_Bootstrap
         string email_to             = "",
         string news_feed_url        = "",
         Risk_Setting_BO? risk_override   = null,
-        decimal spread_multiplier   = 1.0m)
+        decimal spread_multiplier   = 1.0m,
+        I_Ai_Signal_Filter? ai_filter = null)
     {
         // Database
         var db = new Database_Schema(db_path);
@@ -42,6 +44,7 @@ public static class Atlas_Bot_Bootstrap
         var account_repo  = new Account_Snapshot_Repository(db.Connection_String);
         var news_repo     = new News_Event_Repository(db.Connection_String);
         var position_repo = new Open_Position_Repository(db.Connection_String);
+        var perf_repo     = new Strategy_Performance_Repository(db.Connection_String);
 
         // MT5 bridge
         var bridge        = new MT5_Bridge_Client(mt5_host, mt5_port);
@@ -65,18 +68,23 @@ public static class Atlas_Bot_Bootstrap
         // Quality scorer
         var scorer        = new Trade_Quality_Scorer();
 
+        // News calendar — uses live feed URL when configured, demo events otherwise
+        var calendar = new Economic_Calendar_Service(new System.Net.Http.HttpClient(), news_feed_url);
+
         // Market data
         var regime_detector    = new Market_Regime_Detector();
         var session_filter     = new Session_Filter_Service();
         var spread_filter      = new Spread_Filter_Service();
         var volatility_filter  = new Volatility_Filter_Service();
-        var news_filter        = new News_Filter_Service();
+        var news_filter        = new News_Filter_Service(calendar);
 
         // Strategy
         var orchestrator = new Strategy_Orchestrator();
 
-        // Performance monitor
-        var perf_monitor = new Performance_Monitor_Service();
+        // Performance monitor — replays full trade history from the DB to restore
+        // equity curve, Sharpe/Sortino, and per-strategy stats after a restart
+        var perf_monitor = new Performance_Monitor_Service(perf_repo);
+        perf_monitor.Load_History_From_Db_Async(result_repo).GetAwaiter().GetResult();
 
         // Trade manager (breakeven at 1R, trailing SL at 1.5R+)
         var trade_manager = new Trade_Manager_Service(market_data, execution);
@@ -86,10 +94,7 @@ public static class Atlas_Bot_Bootstrap
             market_data, regime_detector, session_filter, spread_filter,
             news_filter, volatility_filter, orchestrator, scorer,
             risk_manager, drawdown_guard, execution, emergency_stop, risk_settings,
-            trade_manager, correlation_guard);
-
-        // News calendar — uses live feed URL when configured, demo events otherwise
-        var calendar = new Economic_Calendar_Service(new System.Net.Http.HttpClient(), news_feed_url);
+            trade_manager, correlation_guard, account_svc, bridge, ai_filter);
 
         // Notifiers (each silently no-ops when not configured)
         var telegram = new Telegram_Notifier(telegram_token, telegram_chatid);
@@ -102,6 +107,6 @@ public static class Atlas_Bot_Bootstrap
             risk_settings, result_repo, execution, calendar, telegram, email, position_repo,
             spread_multiplier, account_repo, signal_repo, news_repo);
 
-        return (controller, db, account_svc);
+        return (controller, db, account_svc, bridge);
     }
 }

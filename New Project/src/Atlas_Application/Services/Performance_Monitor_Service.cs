@@ -1,3 +1,4 @@
+using Atlas_Data_Access.Repositories;
 using Atlas_Domain.BusinessObjects;
 using Atlas_Domain.Enums;
 
@@ -7,11 +8,50 @@ public class Performance_Monitor_Service
 {
     private readonly List<Trade_Result_BO> _results = [];
     private readonly Dictionary<Strategy_Type, Strategy_Performance_BO> _performance = [];
+    private readonly Strategy_Performance_Repository? _repo;
+    private bool _suppress_persistence;
+
+    public Performance_Monitor_Service(Strategy_Performance_Repository? repo = null)
+    {
+        _repo = repo;
+    }
 
     public void Record_Trade_Result(Trade_Result_BO result)
     {
         _results.Add(result);
         Update_Strategy_Performance(result);
+    }
+
+    /// <summary>Loads the latest known snapshot per strategy from the database, restoring state after a restart.</summary>
+    public async Task Load_From_Repository_Async()
+    {
+        if (_repo == null) return;
+
+        var snapshots = await _repo.Get_All_Async();
+        foreach (var perf in snapshots)
+            _performance[perf.Strategy] = perf;
+    }
+
+    /// <summary>
+    /// Replays full trade history from the DB to rebuild _results and _performance after a restart —
+    /// equity curve, Sharpe/Sortino, and rolling strategy stats are otherwise reset to zero on every run.
+    /// </summary>
+    public async Task Load_History_From_Db_Async(Trade_Result_Repository repo)
+    {
+        var trades = await repo.Get_All_Results_Async();
+        _results.Clear();
+        _performance.Clear();
+
+        _suppress_persistence = true; // don't re-save a snapshot for every historical trade being replayed
+        try
+        {
+            foreach (var t in trades.OrderBy(t => t.Closed_At_UTC))
+                Record_Trade_Result(t);
+        }
+        finally
+        {
+            _suppress_persistence = false;
+        }
     }
 
     public Strategy_Performance_BO Get_Strategy_Performance(Strategy_Type strategy, string symbol)
@@ -125,5 +165,7 @@ public class Performance_Monitor_Service
             decimal g_l = Math.Abs(last_30.Where(r => !r.Is_Winner).Sum(r => r.Net_PnL_Currency));
             perf.Rolling_30_Profit_Factor = g_l > 0 ? g_p / g_l : 0;
         }
+
+        if (_repo != null && !_suppress_persistence) _ = _repo.Save_Snapshot_Async(perf);
     }
 }

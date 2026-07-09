@@ -121,7 +121,7 @@ partial class Atlas_Settings_Form
         var sep3 = Sep(14, 252);
 
         // ── Telegram ─────────────────────────────────────────────────
-        var lbl_telegram = Section("TELEGRAM ALERTS  (optional)", 14, 262);
+        var lbl_telegram = Section("TELEGRAM ALERTS  (optional — env: ATLAS_TELEGRAM_TOKEN)", 14, 262);
 
         var lbl_token = Field("Bot Token:", 14, 286);
         txt_telegram_token = new TextBox
@@ -147,7 +147,7 @@ partial class Atlas_Settings_Form
         var sep4 = Sep(14, 350);
 
         // ── Email Alerts ─────────────────────────────────────────────
-        var lbl_email = Section("EMAIL ALERTS  (optional)", 14, 358);
+        var lbl_email = Section("EMAIL ALERTS  (optional — env: ATLAS_EMAIL_PASSWORD)", 14, 358);
 
         var lbl_smtp_host = Field("SMTP Host:", 14, 380);
         txt_email_smtp_host = new TextBox

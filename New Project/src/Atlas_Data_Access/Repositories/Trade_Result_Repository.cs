@@ -22,12 +22,12 @@ public class Trade_Result_Repository
             (signal_id, broker_ticket, symbol_name, strategy, regime_at_entry, session_at_entry,
              direction, lot_size, entry_price, exit_price, stop_loss_price, take_profit_price,
              opened_at, closed_at, gross_pnl, commission, swap, slippage_pips, net_pnl,
-             r_multiple, is_winner, close_reason, notes)
+             r_multiple, is_winner, close_reason, notes, pip_value_per_lot, exit_reason)
             VALUES
             (@Signal_Id, @Broker_Ticket, @Symbol_Name, @Strategy, @Regime_At_Entry, @Session_At_Entry,
              @Direction, @Lot_Size, @Entry_Price, @Exit_Price, @Stop_Loss_Price, @Take_Profit_Price,
              @Opened_At, @Closed_At, @Gross_PnL, @Commission, @Swap, @Slippage_Pips, @Net_PnL,
-             @R_Multiple, @Is_Winner, @Close_Reason, @Notes);",
+             @R_Multiple, @Is_Winner, @Close_Reason, @Notes, @Pip_Value_Per_Lot, @Exit_Reason);",
         new
         {
             Signal_Id       = result.Signal_Id.ToString(),
@@ -52,7 +52,9 @@ public class Trade_Result_Repository
             R_Multiple      = result.R_Multiple,
             Is_Winner       = result.Is_Winner ? 1 : 0,
             result.Close_Reason,
-            result.Notes
+            result.Notes,
+            result.Pip_Value_Per_Lot,
+            Exit_Reason = result.Exit_Reason.ToString()
         });
     }
 
@@ -134,20 +136,23 @@ public class Trade_Result_Repository
         decimal swap      = (decimal)row.swap;
         decimal net_pnl   = gross_pnl - comm - Math.Abs(swap);
         decimal r_stored  = (decimal)(row.r_multiple ?? 0.0);
+        decimal pip_value = (decimal)(row.pip_value_per_lot ?? 10.0);
 
         // Back-calculate SL pips from stored R and net PnL so the computed R_Multiple property is correct
-        decimal sl_pips = (r_stored != 0 && lot != 0)
-            ? Math.Abs(net_pnl) / (Math.Abs(r_stored) * lot * 10m)
+        decimal sl_pips = (r_stored != 0 && lot != 0 && pip_value != 0)
+            ? Math.Abs(net_pnl) / (Math.Abs(r_stored) * lot * pip_value)
             : 0m;
 
         Strategy_Type        st = default;
         Market_Regime_Type   re = default;
         Session_Type         se = default;
         Trade_Direction_Type di = default;
+        Exit_Reason_Type     er = default;
         Enum.TryParse((string)(row.strategy         ?? ""), out st);
         Enum.TryParse((string)(row.regime_at_entry  ?? ""), out re);
         Enum.TryParse((string)(row.session_at_entry ?? ""), out se);
         Enum.TryParse((string)(row.direction        ?? ""), out di);
+        Enum.TryParse((string)(row.exit_reason       ?? ""), out er);
 
         return new Trade_Result_BO
         {
@@ -170,6 +175,8 @@ public class Trade_Result_Repository
             Swap                       = swap,
             Slippage_Pips              = (decimal)row.slippage_pips,
             Initial_Stop_Distance_Pips = sl_pips,
+            Pip_Value_Per_Lot          = pip_value,
+            Exit_Reason                = er,
             Close_Reason               = row.close_reason ?? string.Empty,
             Notes                      = row.notes         ?? string.Empty
         };

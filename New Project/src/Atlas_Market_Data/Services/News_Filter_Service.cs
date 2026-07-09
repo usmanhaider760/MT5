@@ -7,6 +7,7 @@ namespace Atlas_Market_Data.Services;
 public class News_Filter_Service : I_News_Filter_Service
 {
     private readonly List<News_Event_BO> _calendar = [];
+    private readonly Economic_Calendar_Service? _calendar_service;
     private static readonly Dictionary<string, string[]> Symbol_Currencies = new()
     {
         ["EURUSD"] = ["EUR", "USD"],
@@ -19,19 +20,30 @@ public class News_Filter_Service : I_News_Filter_Service
         ["XAUUSD"] = ["USD", "XAU"]
     };
 
-    public Task<bool> Is_News_Lockout_Active_Async(string symbol_name, bool is_gold = false)
+    public News_Filter_Service(Economic_Calendar_Service? calendar_service = null)
+    {
+        _calendar_service = calendar_service;
+    }
+
+    public async Task<bool> Is_News_Lockout_Active_Async(string symbol_name, bool is_gold = false)
     {
         var now = DateTime.UtcNow;
         var currencies = Get_Currencies(symbol_name);
 
-        foreach (var evt in _calendar.Where(e => e.Is_High_Impact))
+        List<News_Event_BO> events;
+        if (_calendar_service != null)
+            events = await _calendar_service.Get_High_Impact_Events_Async(24);
+        else
+            events = _calendar.Where(e => e.Is_High_Impact).ToList();
+
+        foreach (var evt in events)
         {
             if (!currencies.Contains(evt.Currency)) continue;
             var lockout = Get_Lockout_Window(evt, is_gold);
             if (now >= evt.Event_UTC.AddMinutes(-lockout.before) && now <= evt.Event_UTC.AddMinutes(lockout.after))
-                return Task.FromResult(true);
+                return true;
         }
-        return Task.FromResult(false);
+        return false;
     }
 
     public Task<News_Event_BO?> Get_Next_Event_Async(string currency)

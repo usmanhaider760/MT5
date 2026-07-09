@@ -257,6 +257,9 @@ file sealed class Execution_Spy : I_Execution_Service
         return Task.FromResult(true);
     }
 
+    public Task<bool> Modify_Take_Profit_Async(long ticket, decimal new_take_profit) =>
+        Task.FromResult(true);
+
     public Task<bool> Partial_Close_Async(long ticket, decimal lots)
     {
         Last_Partial_Lots = lots;

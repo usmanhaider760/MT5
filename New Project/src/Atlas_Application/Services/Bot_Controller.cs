@@ -27,6 +27,7 @@ public class Bot_Controller
     private readonly Atlas_Data_Access.Repositories.Trade_Signal_Repository? _signal_repo;
     private readonly Atlas_Data_Access.Repositories.News_Event_Repository? _news_repo;
     private readonly List<Market_Symbol_BO> _symbols;
+    private readonly System_Log_Service _system_log = new();
     private DateTime _last_snapshot_at = DateTime.MinValue;
 
     private CancellationTokenSource? _cts;
@@ -42,6 +43,7 @@ public class Bot_Controller
     public DateTime Last_Cycle_At => _last_cycle_at;
     public Bot_Mode_Type Current_Mode => _emergency_stop.Current_Mode;
     public Risk_Setting_BO Risk_Settings => _risk_settings;
+    public List<Log_Entry_BO> Get_Recent_Logs(int count = 100) => _system_log.Get_Recent(count);
 
     public event Action<string>? On_Log;
     public event Action<bool>?   On_Running_Changed;
@@ -91,7 +93,7 @@ public class Bot_Controller
                 s.Max_Allowed_Spread_Pips = Math.Round(s.Max_Allowed_Spread_Pips * spread_multiplier, 2);
 
         // Wire up pipeline events
-        _pipeline.On_Log              += msg        => On_Log?.Invoke(msg);
+        _pipeline.On_Log              += msg        => Emit_Log(msg);
         _pipeline.On_Signal_Approved  += s =>
         {
             if (_signal_repo != null) _ = _signal_repo.Save_Signal_Async(s);
@@ -146,6 +148,33 @@ public class Bot_Controller
         }
     }
 
+    /// <summary>Raises the raw string On_Log event (unchanged, for the existing UI log tab) and
+    /// also records a leveled entry in System_Log_Service for structured/queryable access.</summary>
+    private void Emit_Log(string message)
+    {
+        On_Log?.Invoke(message);
+        _system_log.Log(Infer_Log_Level(message), message);
+    }
+
+    private static Log_Level_Type Infer_Log_Level(string message)
+    {
+        if (message.Contains("[ERROR]", StringComparison.OrdinalIgnoreCase) ||
+            message.Contains("failed", StringComparison.OrdinalIgnoreCase) ||
+            message.Contains("exception", StringComparison.OrdinalIgnoreCase))
+            return Log_Level_Type.Error;
+
+        if (message.Contains("⚠", StringComparison.Ordinal) ||
+            message.Contains("[AUTO-DISABLE]", StringComparison.OrdinalIgnoreCase) ||
+            message.Contains("STALE", StringComparison.OrdinalIgnoreCase))
+            return Log_Level_Type.Warning;
+
+        if (message.Contains("[DAILY REPORT]", StringComparison.OrdinalIgnoreCase) ||
+            message.Contains("position sync", StringComparison.OrdinalIgnoreCase))
+            return Log_Level_Type.Trade;
+
+        return Log_Level_Type.Info;
+    }
+
     public Task<List<Position_BO>> Get_Last_Known_Positions_Async() =>
         _position_repo?.Get_All_Async() ?? Task.FromResult(new List<Position_BO>());
 
@@ -162,7 +191,7 @@ public class Bot_Controller
     {
         var trades  = await Get_Trades_By_Date_Async(date_utc);
         string text = Daily_Report_Service.Generate(date_utc, trades);
-        On_Log?.Invoke($"[DAILY REPORT] {date_utc:yyyy-MM-dd} — {trades.Count} trades");
+        Emit_Log($"[DAILY REPORT] {date_utc:yyyy-MM-dd} — {trades.Count} trades");
         if (_notifier != null) await _notifier.Send_Async(text);
         if (_email    != null) await _email.Send_Async($"ATLAS Daily Report {date_utc:yyyy-MM-dd}", text);
     }
@@ -187,11 +216,11 @@ public class Bot_Controller
             On_Positions_Updated?.Invoke(positions);
             if (_position_repo != null && positions.Count > 0)
                 await _position_repo.Save_All_Async(positions);
-            On_Log?.Invoke($"[{DateTime.UtcNow:HH:mm:ss}] Position sync: {positions.Count} open position(s) found.");
+            Emit_Log($"[{DateTime.UtcNow:HH:mm:ss}] Position sync: {positions.Count} open position(s) found.");
         }
         catch (Exception ex)
         {
-            On_Log?.Invoke($"[{DateTime.UtcNow:HH:mm:ss}] Position sync failed: {ex.Message}");
+            Emit_Log($"[{DateTime.UtcNow:HH:mm:ss}] Position sync failed: {ex.Message}");
         }
     }
 
@@ -286,7 +315,7 @@ public class Bot_Controller
         var sym = _symbols.FirstOrDefault(s => s.Symbol_Name == symbol_name);
         if (sym == null) return;
         sym.Is_Enabled = enabled;
-        On_Log?.Invoke($"[{DateTime.UtcNow:HH:mm:ss}] Symbol {symbol_name} {(enabled ? "ENABLED" : "DISABLED")} by operator.");
+        Emit_Log($"[{DateTime.UtcNow:HH:mm:ss}] Symbol {symbol_name} {(enabled ? "ENABLED" : "DISABLED")} by operator.");
     }
 
     private async Task Run_Loop_Async(CancellationToken ct, int interval_seconds)
@@ -304,7 +333,7 @@ public class Bot_Controller
             }
             catch (Exception ex)
             {
-                On_Log?.Invoke($"[ERROR] Pipeline cycle exception: {ex.Message}");
+                Emit_Log($"[ERROR] Pipeline cycle exception: {ex.Message}");
             }
 
             try
@@ -341,7 +370,7 @@ public class Bot_Controller
             _strategy_orchestrator.Disable_Strategy(s);
             On_Strategy_State_Changed?.Invoke(s, false);
             string msg = $"[AUTO-DISABLE] {s} disabled — rolling performance deteriorated.";
-            On_Log?.Invoke(msg);
+            Emit_Log(msg);
 
             string alert = $"⚠ ATLAS AUTO-DISABLE\nStrategy: {s}\n{msg}\n\nReview performance before re-enabling.";
             if (_notifier != null) _ = _notifier.Send_Async(alert);

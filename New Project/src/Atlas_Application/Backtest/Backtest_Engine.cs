@@ -126,16 +126,16 @@ public class Backtest_Engine
                 var account = Build_Account_State(equity, day_open_balance, open_positions.Count, config);
                 var positions_bo = open_positions.Select(p => p.As_Position_BO()).ToList();
                 var symbol = Market_Symbol_BO.Default_Universe().First(s => s.Symbol_Name == config.Symbol_Name);
-                var (risk_ok, _) = await risk_manager.Validate_Trade_Risk_Async(signal, account, positions_bo);
+                var (risk_ok, _, _) = await risk_manager.Validate_Trade_Risk_Async(signal, account, positions_bo);
                 if (!risk_ok) { result.Signals_Rejected++; continue; }
 
                 // Lot size
                 decimal lot = risk_manager.Calculate_Lot_Size(
                     equity, config.Risk_Settings.Forex_Risk_Per_Trade_Percent,
-                    signal.Stop_Loss_Pips, symbol.Pip_Value_Per_Lot);
+                    signal.Stop_Loss_Pips, symbol.Pip_Value_Per_Lot, symbol.Lot_Step);
                 if (lot < symbol.Min_Lot_Size) continue;
 
-                open_positions.Add(new Simulated_Position(signal, lot, bar, config));
+                open_positions.Add(new Simulated_Position(signal, lot, bar, config, symbol.Pip_Value_Per_Lot));
             }
         }
 

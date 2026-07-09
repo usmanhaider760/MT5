@@ -21,5 +21,9 @@ public enum Signal_Reject_Reason
     Minimum_Lot_Below_Broker_Minimum,
     Higher_Timeframe_Bias_Unclear,
     No_Valid_Entry_Trigger,
-    Gold_Regime_Score_Below_Threshold
+    Gold_Regime_Score_Below_Threshold,
+    Max_Gold_Trades_Reached,
+    Consecutive_Loss_Pause,
+    Same_Symbol_Already_Open,
+    Ai_Filter_Rejected
 }

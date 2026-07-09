@@ -57,6 +57,20 @@ public class MT5_Execution_Service : I_Execution_Service
         return response?.Is_Ok == true;
     }
 
+    public async Task<bool> Modify_Take_Profit_Async(long ticket, decimal new_take_profit)
+    {
+        if (_demo_mode) return true;
+
+        var response = await _bridge.Send_Async<MT5_Order_Response>(new MT5_Request
+        {
+            Command    = MT5_Command.MODIFY_TP,
+            Ticket     = ticket,
+            TakeProfit = (double)new_take_profit
+        });
+
+        return response?.Is_Ok == true;
+    }
+
     public async Task<bool> Close_Position_Async(long ticket, string reason)
     {
         if (_demo_mode) return true;

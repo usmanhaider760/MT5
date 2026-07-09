@@ -83,7 +83,10 @@ void OnTick()
     StringTrimRight(request);
     if (StringLen(request) == 0) return;
 
+    string req_id = Json_Get(request, "req_id");
     string response = Dispatch(request);
+    if (StringLen(req_id) > 0 && StringLen(response) > 0 && StringGetCharacter(response, 0) == '{')
+        response = "{\"req_id\":\"" + req_id + "\"," + StringSubstr(response, 1);
     response += "\n";
 
     uchar resp_bytes[];
@@ -105,6 +108,7 @@ string Dispatch(string req)
     if (cmd == "GET_POSITIONS")      return Get_Positions();
     if (cmd == "SEND_ORDER")         return Send_Order(req);
     if (cmd == "MODIFY_SL")         return Modify_SL(req);
+    if (cmd == "MODIFY_TP")         return Modify_TP(req);
     if (cmd == "CLOSE_POSITION")    return Close_Position(req);
     if (cmd == "PARTIAL_CLOSE")     return Partial_Close(req);
 
@@ -258,6 +262,19 @@ string Modify_SL(string req)
         return "{\"status\":\"error\",\"error\":\"Position not found\"}";
 
     trade.PositionModify(ticket, new_sl, PositionGetDouble(POSITION_TP));
+    return "{\"status\":\"ok\"}";
+}
+
+//+------------------------------------------------------------------+
+string Modify_TP(string req)
+{
+    long   ticket = StringToInteger(Json_Get(req, "ticket"));
+    double new_tp = StringToDouble(Json_Get(req, "tp"));
+
+    if (!PositionSelectByTicket(ticket))
+        return "{\"status\":\"error\",\"error\":\"Position not found\"}";
+
+    trade.PositionModify(ticket, PositionGetDouble(POSITION_SL), new_tp);
     return "{\"status\":\"ok\"}";
 }
 

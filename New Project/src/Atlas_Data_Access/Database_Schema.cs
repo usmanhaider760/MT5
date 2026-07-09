@@ -133,6 +133,8 @@ public class Database_Schema
 
         // Schema migrations for existing databases
         try { conn.Execute("ALTER TABLE trade_results ADD COLUMN notes TEXT DEFAULT '';"); } catch { /* column already exists */ }
+        try { conn.Execute("ALTER TABLE trade_results ADD COLUMN pip_value_per_lot REAL NOT NULL DEFAULT 10.0;"); } catch { /* column already exists */ }
+        try { conn.Execute("ALTER TABLE trade_results ADD COLUMN exit_reason TEXT NOT NULL DEFAULT 'Unknown';"); } catch { /* column already exists */ }
 
         // Indexes for query performance
         conn.Execute("CREATE INDEX IF NOT EXISTS idx_trade_results_symbol ON trade_results(symbol_name);");

@@ -1,6 +1,7 @@
 using Atlas_Domain.BusinessObjects;
 using Atlas_Domain.Enums;
 using Atlas_Domain.Interfaces;
+using Atlas_Execution.MT5;
 using Atlas_Market_Data.Services;
 using Atlas_Risk.Services;
 using Atlas_Strategy;
@@ -28,6 +29,9 @@ public class Trade_Pipeline_Service
     private readonly Risk_Setting_BO _risk_settings;
     private readonly Trade_Manager_Service? _trade_manager;
     private readonly Correlation_Guard? _correlation_guard;
+    private readonly MT5_Account_Service? _account_service;
+    private readonly I_Ai_Signal_Filter? _ai_filter;
+    private readonly Market_Context_Builder _context_builder;
 
     public event Action<string>? On_Log;
     public event Action<Trade_Signal_BO>? On_Signal_Approved;
@@ -50,7 +54,10 @@ public class Trade_Pipeline_Service
         I_Emergency_Stop_Service emergency_stop,
         Risk_Setting_BO risk_settings,
         Trade_Manager_Service? trade_manager = null,
-        Correlation_Guard? correlation_guard = null)
+        Correlation_Guard? correlation_guard = null,
+        MT5_Account_Service? account_service = null,
+        MT5_Bridge_Client? bridge_client = null,
+        I_Ai_Signal_Filter? ai_filter = null)
     {
         _market_data = market_data;
         _regime_detector = regime_detector;
@@ -67,8 +74,13 @@ public class Trade_Pipeline_Service
         _risk_settings = risk_settings;
         _trade_manager     = trade_manager;
         _correlation_guard = correlation_guard;
+        _account_service   = account_service;
+        _ai_filter         = ai_filter;
+        _context_builder   = new Market_Context_Builder(session_filter, spread_filter);
         if (_trade_manager != null)
             _trade_manager.On_Log += msg => On_Log?.Invoke(msg);
+        if (bridge_client != null)
+            bridge_client.On_Log += msg => On_Log?.Invoke(msg);
     }
 
     public async Task Run_Cycle_Async(List<Market_Symbol_BO> symbols)
@@ -79,14 +91,20 @@ public class Trade_Pipeline_Service
             return;
         }
 
-        // Step 1: Account state + drawdown check
+        // Step 1: Open positions, then live account state (needs open position count) + drawdown check
+        var open_positions = await _execution.Get_Open_Positions_Async();
+        On_Positions_Updated?.Invoke(open_positions);
+
+        if (_account_service != null)
+        {
+            var live = await _account_service.Get_Account_State_Async(open_positions.Count);
+            _risk_manager.Update_Account_State(live);
+        }
+
         var account = await _risk_manager.Get_Account_State_Async();
         await _drawdown_guard.Evaluate_And_Apply_Async(account);
 
         if (_emergency_stop.Kill_Switch_Active) return;
-
-        var open_positions = await _execution.Get_Open_Positions_Async();
-        On_Positions_Updated?.Invoke(open_positions);
 
         if (_trade_manager != null && open_positions.Count > 0)
             await _trade_manager.Manage_Open_Positions_Async(open_positions);
@@ -141,29 +159,8 @@ public class Trade_Pipeline_Service
 
         // Gate 5: Regime detection
         var context = await _regime_detector.Detect_Market_Regime_Async(symbol.Symbol_Name, d1, h4, h1);
-        context.Current_Session = session;
-        context.Current_Spread_Pips = spread;
-        context.Spread_Is_Normal = spread <= symbol.Normal_Spread_Pips * 1.5m;
-        context.News_Lockout_Active = news_block;
-        context.Score_Session_Quality = _session_filter.Get_Session_Quality_Score(session);
-        context.Score_Spread_Quality = _spread_filter.Get_Spread_Quality_Score(spread, symbol);
-        context.Score_News_Safety        = news_block ? 0 : 10;
-        context.Score_Correlation_Safety = _correlation_guard?.Get_Correlation_Score(
-            symbol.Symbol_Name, open_positions) ?? 10;
-
-        // Recompute total score with real session/spread/news/correlation values
-        context.Regime_Quality_Score =
-            context.Score_Trend_Alignment + context.Score_Volatility_Quality +
-            context.Score_Session_Quality + context.Score_Spread_Quality +
-            context.Score_Structure_Clarity + context.Score_News_Safety +
-            context.Score_Correlation_Safety;
-
-        // Session-MTF confluence bonus (+5): all TFs aligned during peak session
-        if (context.Higher_Timeframes_Aligned &&
-            (session == Session_Type.London_NY_Overlap || session == Session_Type.London))
-            context.Regime_Quality_Score += 5;
-
-        context.Regime_Quality_Score = Math.Min(100, context.Regime_Quality_Score);
+        int correlation_score = _correlation_guard?.Get_Correlation_Score(symbol.Symbol_Name, open_positions) ?? 10;
+        context = _context_builder.Enrich(context, session, spread, news_block, correlation_score, symbol);
 
         On_Regime_Updated?.Invoke(symbol.Symbol_Name, context);
 
@@ -216,15 +213,30 @@ public class Trade_Pipeline_Service
                 continue;
             }
 
-            // Gate 8: Risk validation
-            var (risk_ok, risk_reason) = await _risk_manager.Validate_Trade_Risk_Async(signal, account, open_positions);
+            // Gate 8: AI signal filter (pass-through stub until a real model is wired in)
+            if (_ai_filter != null)
+            {
+                var (ai_ok, ai_conf, ai_reason) = await _ai_filter.Evaluate_Async(signal, context);
+                if (!ai_ok)
+                {
+                    signal.Is_Approved = false;
+                    signal.Reject_Reason = Signal_Reject_Reason.Ai_Filter_Rejected;
+                    signal.Reject_Detail = $"AI filter rejected ({ai_conf}% confidence): {ai_reason}";
+                    On_Signal_Rejected?.Invoke(signal);
+                    Log($"{symbol.Symbol_Name} [{signal.Strategy}]: AI filter blocked — {ai_reason}");
+                    continue;
+                }
+            }
+
+            // Gate 9: Risk validation
+            var (risk_ok, risk_reject_reason, risk_detail) = await _risk_manager.Validate_Trade_Risk_Async(signal, account, open_positions);
             if (!risk_ok)
             {
                 signal.Is_Approved = false;
-                signal.Reject_Reason = Signal_Reject_Reason.Daily_Loss_Limit_Reached;
-                signal.Reject_Detail = risk_reason;
+                signal.Reject_Reason = risk_reject_reason;
+                signal.Reject_Detail = risk_detail;
                 On_Signal_Rejected?.Invoke(signal);
-                Log($"{symbol.Symbol_Name} [{signal.Strategy}]: risk blocked — {risk_reason}");
+                Log($"{symbol.Symbol_Name} [{signal.Strategy}]: risk blocked — {risk_detail}");
                 continue;
             }
 
@@ -244,7 +256,8 @@ public class Trade_Pipeline_Service
                 risk_pct = Math.Round(risk_pct * dd_mult, 4);
                 Log($"{symbol.Symbol_Name}: drawdown {account.Drawdown_From_Peak:F2}% — risk scaled to {risk_pct:F4}% (×{dd_mult})");
             }
-            decimal lot = _risk_manager.Calculate_Lot_Size(account.Equity, risk_pct, signal.Stop_Loss_Pips, symbol.Pip_Value_Per_Lot);
+            decimal max_lot = is_gold ? _risk_settings.Max_Lot_Size_Gold : _risk_settings.Max_Lot_Size_Forex;
+            decimal lot = _risk_manager.Calculate_Lot_Size(account.Equity, risk_pct, signal.Stop_Loss_Pips, symbol.Pip_Value_Per_Lot, symbol.Lot_Step, max_lot);
 
             if (lot < symbol.Min_Lot_Size)
             {

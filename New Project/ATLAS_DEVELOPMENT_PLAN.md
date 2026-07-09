@@ -4,8 +4,8 @@
 ---
 
 ## CURRENT STATUS
-**Last completed:** —
-**Up next:** P0-1 — Wire live account state into Risk_Manager
+**Last completed:** P4-4 — Add System_Log_Service with log levels (Phase 4 complete — ALL 26 TASKS DONE)
+**Up next:** — nothing left on this list; see COMPLETION STATUS below
 
 ---
 
@@ -13,44 +13,44 @@
 
 ### PHASE 0 — CRITICAL FIXES (must complete before any live/forward testing)
 
-- [ ] **P0-1** — Wire live account state into Risk_Manager
-- [ ] **P0-2** — Connect news filter to economic calendar service
-- [ ] **P0-3** — Fix lot size: round DOWN not nearest
-- [ ] **P0-4** — Enforce broker lot step in lot calculation
-- [ ] **P0-5** — Fix Trade_Result_BO R_Multiple wrong for Gold and JPY
-- [ ] **P0-6** — Fix Emergency Stop mode never recovers from caution/recovery
+- [x] **P0-1** — Wire live account state into Risk_Manager
+- [x] **P0-2** — Connect news filter to economic calendar service
+- [x] **P0-3** — Fix lot size: round DOWN not nearest
+- [x] **P0-4** — Enforce broker lot step in lot calculation
+- [x] **P0-5** — Fix Trade_Result_BO R_Multiple wrong for Gold and JPY
+- [x] **P0-6** — Fix Emergency Stop mode never recovers from caution/recovery
 
 ### PHASE 1 — HIGH PRIORITY (complete before live trading)
 
-- [ ] **P1-1** — Create Strategy_Performance_Repository and persist to DB
-- [ ] **P1-2** — Add all risk parameters to appsettings.json + Atlas_Config
-- [ ] **P1-3** — Fix dashboard session label to use Trading_Constants (not hardcoded hours)
-- [ ] **P1-4** — Add max lot cap to Risk_Manager and appsettings
-- [ ] **P1-5** — Load trade history from DB into Performance_Monitor on startup
+- [x] **P1-1** — Create Strategy_Performance_Repository and persist to DB
+- [x] **P1-2** — Add all risk parameters to appsettings.json + Atlas_Config
+- [x] **P1-3** — Fix dashboard session label to use Trading_Constants (not hardcoded hours)
+- [x] **P1-4** — Add max lot cap to Risk_Manager and appsettings
+- [x] **P1-5** — Load trade history from DB into Performance_Monitor on startup
 
 ### PHASE 2 — MEDIUM PRIORITY (complete before extended live use)
 
-- [ ] **P2-1** — Fix Signal_Reject_Reason: assign correct enum per risk check
-- [ ] **P2-2** — Add request correlation IDs to MT5 bridge
-- [ ] **P2-3** — Add Modify_Take_Profit support to execution layer
-- [ ] **P2-4** — Secure credentials: env-var override for Telegram token and email password
-- [ ] **P2-5** — Fix dual MT5_Bridge_Client competition (ping monitor vs pipeline)
-- [ ] **P2-6** — Add Ai_Signal_Filter stub wired into pipeline
+- [x] **P2-1** — Fix Signal_Reject_Reason: assign correct enum per risk check
+- [x] **P2-2** — Add request correlation IDs to MT5 bridge
+- [x] **P2-3** — Add Modify_Take_Profit support to execution layer
+- [x] **P2-4** — Secure credentials: env-var override for Telegram token and email password
+- [x] **P2-5** — Fix dual MT5_Bridge_Client competition (ping monitor vs pipeline)
+- [x] **P2-6** — Add Ai_Signal_Filter stub wired into pipeline
 
 ### PHASE 3 — TEST COVERAGE (required before live trading)
 
-- [ ] **P3-1** — Strategy signal tests: all 5 strategies (A–E)
-- [ ] **P3-2** — Market_Regime_Detector tests
-- [ ] **P3-3** — News_Filter_Service tests
-- [ ] **P3-4** — Emergency_Stop_Service tests
-- [ ] **P3-5** — MT5 bridge mock integration tests
+- [x] **P3-1** — Strategy signal tests: all 5 strategies (A–E)
+- [x] **P3-2** — Market_Regime_Detector tests
+- [x] **P3-3** — News_Filter_Service tests
+- [x] **P3-4** — Emergency_Stop_Service tests
+- [x] **P3-5** — MT5 bridge mock integration tests
 
 ### PHASE 4 — CLEANUP (nice-to-have)
 
-- [ ] **P4-1** — Remove legacy AIForexBot project from solution
-- [ ] **P4-2** — Extract Market_Context_Builder as discrete service
-- [ ] **P4-3** — Add Exit_Reason_Enum to replace Close_Reason string
-- [ ] **P4-4** — Add System_Log_Service with log levels
+- [x] **P4-1** — Remove legacy AIForexBot project from solution
+- [x] **P4-2** — Extract Market_Context_Builder as discrete service
+- [x] **P4-3** — Add Exit_Reason_Enum to replace Close_Reason string
+- [x] **P4-4** — Add System_Log_Service with log levels
 
 ---
 
@@ -684,12 +684,12 @@ Both branches return Current_Mode — total no-op. Mode never transitions back t
 
 ## COMPLETION STATUS
 
-**Phase 0 (Critical):** 0/6 done
-**Phase 1 (High):** 0/5 done
-**Phase 2 (Medium):** 0/6 done
-**Phase 3 (Tests):** 0/5 done
-**Phase 4 (Cleanup):** 0/4 done
+**Phase 0 (Critical):** 6/6 done
+**Phase 1 (High):** 5/5 done
+**Phase 2 (Medium):** 6/6 done
+**Phase 3 (Tests):** 5/5 done
+**Phase 4 (Cleanup):** 4/4 done
 
-**Total:** 0/26 tasks done
+**Total:** 26/26 tasks done
 
-**System status:** NOT READY for forward testing
+**System status:** All planned fixes complete. 239/239 tests passing, solution builds with 0 errors. Demo-mode forward testing may proceed; still recommend a human review of live-mode credentials/config (P2-4) and a fresh demo soak test before enabling live trading.

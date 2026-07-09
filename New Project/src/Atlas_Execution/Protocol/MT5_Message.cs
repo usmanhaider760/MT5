@@ -13,6 +13,7 @@ public static class MT5_Command
     public const string GET_POSITIONS     = "GET_POSITIONS";
     public const string SEND_ORDER        = "SEND_ORDER";
     public const string MODIFY_SL         = "MODIFY_SL";
+    public const string MODIFY_TP         = "MODIFY_TP";
     public const string CLOSE_POSITION    = "CLOSE_POSITION";
     public const string PARTIAL_CLOSE     = "PARTIAL_CLOSE";
     public const string PING              = "PING";
@@ -20,6 +21,9 @@ public static class MT5_Command
 
 public class MT5_Request
 {
+    [JsonPropertyName("req_id")]
+    public string Req_Id { get; set; } = Guid.NewGuid().ToString("N")[..8];
+
     [JsonPropertyName("cmd")]
     public string Command { get; set; } = string.Empty;
 
@@ -56,6 +60,9 @@ public class MT5_Request
 
 public class MT5_Response
 {
+    [JsonPropertyName("req_id")]
+    public string? Req_Id { get; set; }
+
     [JsonPropertyName("status")]
     public string Status { get; set; } = string.Empty;
 

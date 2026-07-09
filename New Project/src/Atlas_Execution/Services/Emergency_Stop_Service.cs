@@ -32,7 +32,7 @@ public class Emergency_Stop_Service : I_Emergency_Stop_Service
         else if (dd >= risk_settings.Recovery_Drawdown_Percent)
             new_mode = Bot_Mode_Type.Micro_Live; // Reduced risk mode
         else
-            new_mode = Current_Mode == Bot_Mode_Type.Emergency_Stop ? Current_Mode : Current_Mode;
+            new_mode = risk_settings.Mode; // Drawdown has recovered — return to the configured base mode
 
         if (new_mode != Current_Mode)
         {

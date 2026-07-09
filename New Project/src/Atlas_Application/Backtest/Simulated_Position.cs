@@ -19,7 +19,7 @@ public class Simulated_Position
     public DateTime Opened_At  { get; }
     public bool     Is_Open    { get; private set; } = true;
 
-    public Simulated_Position(Trade_Signal_BO signal, decimal lot, Candle_BO entry_bar, Backtest_Config config)
+    public Simulated_Position(Trade_Signal_BO signal, decimal lot, Candle_BO entry_bar, Backtest_Config config, decimal pip_value_per_lot = 10m)
     {
         _signal  = signal;
         _lot     = lot;
@@ -33,8 +33,8 @@ public class Simulated_Position
 
         _stop_distance_pips = signal.Stop_Loss_Pips;
 
-        // Simplified pip value: $10/pip for standard lot on 5-decimal pairs
-        _pip_value = 10m;
+        // Pip value per lot from the symbol config — $10 for standard 5-decimal pairs, $100 for Gold, ~$9 for JPY pairs
+        _pip_value = pip_value_per_lot;
     }
 
     /// <summary>Returns a closed Trade_Result_BO if SL or TP is hit on this bar, else null.</summary>
@@ -57,16 +57,17 @@ public class Simulated_Position
         {
             decimal exit_price = sl_hit ? _signal.Stop_Loss_Price : _signal.Take_Profit_Price;
             string reason      = sl_hit ? "Stop loss hit" : "Take profit hit";
-            return Close(exit_price, bar.Open_Time_UTC, reason, config);
+            var exit_reason    = sl_hit ? Exit_Reason_Type.Stop_Loss_Hit : Exit_Reason_Type.Take_Profit_Hit;
+            return Close(exit_price, bar.Open_Time_UTC, reason, exit_reason, config);
         }
 
         return null;
     }
 
     public Trade_Result_BO Force_Close(decimal price, string reason, Backtest_Config config) =>
-        Close(price, DateTime.UtcNow, reason, config);
+        Close(price, DateTime.UtcNow, reason, Exit_Reason_Type.Manual_Close, config);
 
-    private Trade_Result_BO Close(decimal exit_price, DateTime closed_at, string reason, Backtest_Config config)
+    private Trade_Result_BO Close(decimal exit_price, DateTime closed_at, string reason, Exit_Reason_Type exit_reason, Backtest_Config config)
     {
         Is_Open = false;
 
@@ -99,6 +100,8 @@ public class Simulated_Position
             Swap                   = 0,
             Slippage_Pips          = config.Slippage_Pips,
             Initial_Stop_Distance_Pips = _stop_distance_pips,
+            Pip_Value_Per_Lot      = _pip_value,
+            Exit_Reason            = exit_reason,
             Close_Reason           = reason
         };
     }

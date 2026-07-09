@@ -21,6 +21,9 @@ public class MT5_Bridge_Client : IDisposable
 
     public bool Is_Connected => _client?.Connected == true;
 
+    /// <summary>Fired (non-blocking) when a response's req_id doesn't match the request that was sent — a debuggability aid, never blocks the call.</summary>
+    public event Action<string>? On_Log;
+
     public MT5_Bridge_Client(string host = "127.0.0.1", int port = 9090, int timeout_ms = 5000)
     {
         _host       = host;
@@ -83,7 +86,12 @@ public class MT5_Bridge_Client : IDisposable
             }
 
             if (sb.Length == 0) return null;
-            return JsonSerializer.Deserialize<T>(sb.ToString().Trim());
+            var response = JsonSerializer.Deserialize<T>(sb.ToString().Trim());
+
+            if (response != null && !string.IsNullOrEmpty(response.Req_Id) && response.Req_Id != request.Req_Id)
+                On_Log?.Invoke($"MT5 bridge: response req_id '{response.Req_Id}' does not match request req_id '{request.Req_Id}' for {request.Command}");
+
+            return response;
         }
         catch
         {

@@ -36,6 +36,10 @@ public class Risk_Setting_BO
     public decimal Protection_Drawdown_Percent { get; set; } = 6.0m;
     public decimal Full_Stop_Drawdown_Percent { get; set; } = 8.0m;
 
+    // Absolute lot size ceilings — a hard cap regardless of computed risk-based size
+    public decimal Max_Lot_Size_Forex { get; set; } = 5.0m;
+    public decimal Max_Lot_Size_Gold { get; set; } = 1.0m;
+
     public static Risk_Setting_BO Conservative_Launch() => new()
     {
         Mode = Bot_Mode_Type.Demo,

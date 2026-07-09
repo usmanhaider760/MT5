@@ -13,7 +13,7 @@ public class Market_Symbol_BO
     public decimal Pip_Value_Per_Lot { get; set; }
     public int Decimal_Places { get; set; }
     public decimal Min_Lot_Size { get; set; }
-    public decimal Lot_Step { get; set; }
+    public decimal Lot_Step { get; set; } = 0.01m;
     public int Max_Simultaneous_Trades { get; set; } = 1;
     public List<Strategy_Type> Allowed_Strategies { get; set; } = [];
 

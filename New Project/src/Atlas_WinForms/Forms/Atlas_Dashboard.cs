@@ -3,6 +3,7 @@ using Atlas_Application.Services;
 using Atlas_Domain.BusinessObjects;
 using Atlas_Domain.Enums;
 using Atlas_Execution.MT5;
+using Atlas_Shared;
 
 namespace Atlas_WinForms.Forms;
 
@@ -78,11 +79,27 @@ public partial class Atlas_Dashboard : Form
         {
             Mode                                     = Atlas_Config.Demo_Mode ? Bot_Mode_Type.Demo : Bot_Mode_Type.Micro_Live,
             Forex_Risk_Per_Trade_Percent             = Atlas_Config.Risk_Forex_Per_Trade,
+            Gold_Risk_Per_Trade_Percent              = Atlas_Config.Risk_Gold_Per_Trade,
             Max_Daily_Loss_Percent                   = Atlas_Config.Risk_Max_Daily_Loss,
+            Max_Weekly_Loss_Percent                  = Atlas_Config.Risk_Max_Weekly_Loss,
             Account_Drawdown_Circuit_Breaker_Percent = Atlas_Config.Risk_Max_Drawdown,
+            Full_Stop_Drawdown_Percent               = Atlas_Config.Risk_Full_Stop_Drawdown,
+            Caution_Drawdown_Percent                 = Atlas_Config.Risk_Caution_Drawdown,
+            Recovery_Drawdown_Percent                = Atlas_Config.Risk_Recovery_Drawdown,
+            Protection_Drawdown_Percent              = Atlas_Config.Risk_Protection_Drawdown,
+            Max_Open_Trades                          = Atlas_Config.Risk_Max_Open_Trades,
+            Max_Gold_Trades                          = Atlas_Config.Risk_Max_Gold_Trades,
+            Max_Consecutive_Losses_Before_Pause      = Atlas_Config.Risk_Max_Consecutive_Losses,
+            Min_Quality_Score_Live                   = Atlas_Config.Risk_Min_Quality_Score_Live,
+            Min_Quality_Score_Gold_Live              = Atlas_Config.Risk_Min_Quality_Score_Gold_Live,
+            Min_Reward_Risk_Forex                    = Atlas_Config.Risk_Min_RR_Forex,
+            Min_Reward_Risk_Gold_Swing               = Atlas_Config.Risk_Min_RR_Gold_Swing,
+            Min_Reward_Risk_Intraday                 = Atlas_Config.Risk_Min_RR_Intraday,
+            Max_Lot_Size_Forex                       = Atlas_Config.Risk_Max_Lot_Forex,
+            Max_Lot_Size_Gold                        = Atlas_Config.Risk_Max_Lot_Gold,
         };
 
-        var (controller, _, account_service) = Atlas_Bot_Bootstrap.Create(
+        var (controller, _, account_service, bridge) = Atlas_Bot_Bootstrap.Create(
             mt5_host:        host,
             mt5_port:        port,
             demo_mode:       Atlas_Config.Demo_Mode,
@@ -115,8 +132,8 @@ public partial class Atlas_Dashboard : Form
         }
         catch { /* non-critical — continue without file logging */ }
 
-        // Wire connection monitor (pings MT5 bridge every 10 seconds)
-        var bridge = new MT5_Bridge_Client(host, port);
+        // Wire connection monitor (pings MT5 bridge every 10 seconds) — reuses the single
+        // shared bridge from Bootstrap instead of opening a second competing connection
         _connection_status = new Connection_Status_Panel(bridge, lbl_connection);
         _ = _connection_status.Ping_Async(); // first ping immediately
 
@@ -1007,41 +1024,33 @@ public partial class Atlas_Dashboard : Form
 
     private void Update_Session_Label()
     {
-        var now = DateTime.UtcNow;
-        int h   = now.Hour;
+        var now  = DateTime.UtcNow;
+        var time = TimeOnly.FromTimeSpan(now.TimeOfDay);
 
-        bool ldn = h >= 8  && h < 17;
-        bool ny  = h >= 13 && h < 22;
+        bool ldn     = time >= Trading_Constants.London_Open && time < Trading_Constants.London_Close;
+        bool ny      = time >= Trading_Constants.NY_Open     && time < Trading_Constants.NY_Close;
+        bool asian   = time >= Trading_Constants.Asian_Open  || time < Trading_Constants.Asian_Close;
         bool overlap = ldn && ny;
+
+        var ldn_close = now.Date.Add(Trading_Constants.London_Close.ToTimeSpan());
+        var ny_close  = now.Date.Add(Trading_Constants.NY_Close.ToTimeSpan());
+        var ldn_open  = now.Date.Add(Trading_Constants.London_Open.ToTimeSpan());
+        if (ldn_open <= now) ldn_open = ldn_open.AddDays(1);
 
         string countdown;
         if (overlap)
-        {
-            var close = now.Date.AddHours(17);
-            countdown = $"Overlap — LDN closes {Format_Hm(close - now)}";
-        }
+            countdown = $"Overlap — LDN closes {Format_Hm(ldn_close - now)}";
         else if (ldn)
-        {
-            var close = now.Date.AddHours(17);
-            countdown = $"LDN closes {Format_Hm(close - now)}";
-        }
+            countdown = $"LDN closes {Format_Hm(ldn_close - now)}";
         else if (ny)
-        {
-            var close = now.Date.AddHours(22);
-            countdown = $"NY closes {Format_Hm(close - now)}";
-        }
+            countdown = $"NY closes {Format_Hm(ny_close - now)}";
         else
-        {
-            var open = now.Date.AddHours(8);
-            if (open <= now) open = open.AddDays(1);
-            countdown = $"LDN opens {Format_Hm(open - now)}";
-        }
+            countdown = $"LDN opens {Format_Hm(ldn_open - now)}";
 
         var names = new List<string>();
-        if (h >= 22 || h < 7)  names.Add("SYD");
-        if (h < 9)              names.Add("TKY");
-        if (ldn)                names.Add("LDN");
-        if (ny)                 names.Add("NY");
+        if (asian) names.Add("ASIAN");
+        if (ldn)   names.Add("LDN");
+        if (ny)    names.Add("NY");
 
         if (names.Count == 0)
         {
