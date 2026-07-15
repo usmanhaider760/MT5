@@ -1,4 +1,3 @@
-using System.Net;
 using System.Net.Sockets;
 using System.Text;
 using Atlas_Execution.MT5;
@@ -8,37 +7,42 @@ using Xunit;
 namespace Atlas_Tests;
 
 /// <summary>
-/// Integration tests for MT5_Bridge_Client against a real loopback TCP server standing in for the MT5 EA.
-/// Covers connect, the read paths (tick/candles/positions), order placement success/failure, and
-/// disconnect/reconnect behavior — none of which had any coverage before P3-5.
+/// Integration tests for MT5_Bridge_Client, which is the TCP listener side of the connection
+/// (MQL5 has no server-socket API — the EA must dial in via SocketConnect, so the C# side has
+/// to be the one that listens). These tests stand in for the EA with plain TcpClient calls
+/// against a bridge bound to an OS-assigned ephemeral port (port 0).
+/// Covers connect, the read paths (tick/candles/positions), order placement success/failure,
+/// and disconnect/reconnect behavior — none of which had any coverage before P3-5.
 /// </summary>
 public class MT5_Bridge_Mock_Tests
 {
     [Fact]
-    public async Task Connect_Async_Succeeds_Against_A_Listening_Server()
+    public async Task Connect_Async_Succeeds_When_The_Ea_Dials_In()
     {
-        using var server = new Mock_MT5_Server();
-        using var client = new MT5_Bridge_Client("127.0.0.1", server.Port);
+        using var bridge = new MT5_Bridge_Client("127.0.0.1", 0);
 
-        var accept_task = server.AcceptOnceAsync();
-        bool connected = await client.Connect_Async();
-        await accept_task;
+        var connect_task = bridge.Connect_Async();
+        int port = bridge.Local_Port;
+        using var ea = await Mock_EA_Client.Connect_Async(port);
+
+        bool connected = await connect_task;
 
         Assert.True(connected);
-        Assert.True(client.Is_Connected);
+        Assert.True(bridge.Is_Connected);
     }
 
     [Fact]
-    public async Task Get_Tick_Populates_Bid_Ask_Spread_From_Server_Response()
+    public async Task Get_Tick_Populates_Bid_Ask_Spread_From_Ea_Response()
     {
-        using var server = new Mock_MT5_Server();
-        using var client = new MT5_Bridge_Client("127.0.0.1", server.Port);
+        using var bridge = new MT5_Bridge_Client("127.0.0.1", 0);
 
-        var server_task = server.Handle_One_Exchange_Async(
+        var send_task = bridge.Send_Async<MT5_Tick_Response>(new MT5_Request { Command = MT5_Command.GET_TICK, Symbol = "EURUSD" });
+        int port = bridge.Local_Port;
+        var ea_task = Mock_EA_Client.Handle_One_Exchange_Async(port,
             "{\"status\":\"ok\",\"bid\":1.10500,\"ask\":1.10520,\"spread_pips\":2.0,\"market_open\":true}");
 
-        var response = await client.Send_Async<MT5_Tick_Response>(new MT5_Request { Command = MT5_Command.GET_TICK, Symbol = "EURUSD" });
-        await server_task;
+        var response = await send_task;
+        await ea_task;
 
         Assert.NotNull(response);
         Assert.True(response!.Is_Ok);
@@ -51,18 +55,19 @@ public class MT5_Bridge_Mock_Tests
     [Fact]
     public async Task Get_Candles_Returns_Correct_Ohlcv_List()
     {
-        using var server = new Mock_MT5_Server();
-        using var client = new MT5_Bridge_Client("127.0.0.1", server.Port);
+        using var bridge = new MT5_Bridge_Client("127.0.0.1", 0);
 
         string candles_json =
             "{\"status\":\"ok\",\"candles\":[" +
             "{\"t\":1000,\"o\":1.1,\"h\":1.2,\"l\":1.0,\"c\":1.15,\"v\":100}," +
             "{\"t\":2000,\"o\":1.15,\"h\":1.25,\"l\":1.10,\"c\":1.20,\"v\":150}," +
             "{\"t\":3000,\"o\":1.20,\"h\":1.30,\"l\":1.15,\"c\":1.25,\"v\":200}]}";
-        var server_task = server.Handle_One_Exchange_Async(candles_json);
+        var send_task = bridge.Send_Async<MT5_Candles_Response>(new MT5_Request { Command = MT5_Command.GET_CANDLES, Symbol = "EURUSD", Timeframe = "H1", Count = 3 });
+        int port = bridge.Local_Port;
+        var ea_task = Mock_EA_Client.Handle_One_Exchange_Async(port, candles_json);
 
-        var response = await client.Send_Async<MT5_Candles_Response>(new MT5_Request { Command = MT5_Command.GET_CANDLES, Symbol = "EURUSD", Timeframe = "H1", Count = 3 });
-        await server_task;
+        var response = await send_task;
+        await ea_task;
 
         Assert.NotNull(response);
         Assert.Equal(3, response!.Candles.Count);
@@ -74,17 +79,18 @@ public class MT5_Bridge_Mock_Tests
     [Fact]
     public async Task Get_Positions_Returns_Correct_Fields_For_Each_Position()
     {
-        using var server = new Mock_MT5_Server();
-        using var client = new MT5_Bridge_Client("127.0.0.1", server.Port);
+        using var bridge = new MT5_Bridge_Client("127.0.0.1", 0);
 
         string positions_json =
             "{\"status\":\"ok\",\"positions\":[" +
             "{\"ticket\":111,\"symbol\":\"EURUSD\",\"type\":\"buy\",\"lots\":0.10,\"open_price\":1.1000,\"sl\":1.0950,\"tp\":1.1100,\"profit\":25.5,\"open_time\":1700000000,\"comment\":\"ATLAS\"}," +
             "{\"ticket\":222,\"symbol\":\"XAUUSD\",\"type\":\"sell\",\"lots\":0.05,\"open_price\":2400.0,\"sl\":2410.0,\"tp\":2380.0,\"profit\":-12.0,\"open_time\":1700001000,\"comment\":\"ATLAS\"}]}";
-        var server_task = server.Handle_One_Exchange_Async(positions_json);
+        var send_task = bridge.Send_Async<MT5_Positions_Response>(new MT5_Request { Command = MT5_Command.GET_POSITIONS });
+        int port = bridge.Local_Port;
+        var ea_task = Mock_EA_Client.Handle_One_Exchange_Async(port, positions_json);
 
-        var response = await client.Send_Async<MT5_Positions_Response>(new MT5_Request { Command = MT5_Command.GET_POSITIONS });
-        await server_task;
+        var response = await send_task;
+        await ea_task;
 
         Assert.NotNull(response);
         Assert.Equal(2, response!.Positions.Count);
@@ -98,12 +104,8 @@ public class MT5_Bridge_Mock_Tests
     [Fact]
     public async Task Send_Order_Success_Returns_Ticket_And_Broker_Message()
     {
-        using var server = new Mock_MT5_Server();
-        using var client = new MT5_Bridge_Client("127.0.0.1", server.Port);
-        var execution = new MT5_Execution_Service(client, demo_mode: false);
-
-        var server_task = server.Handle_One_Exchange_Async(
-            "{\"status\":\"ok\",\"ticket\":12345,\"broker_message\":\"filled\",\"executed_price\":1.10501}");
+        using var bridge = new MT5_Bridge_Client("127.0.0.1", 0);
+        var execution = new MT5_Execution_Service(bridge, demo_mode: false);
 
         var signal = new Atlas_Domain.BusinessObjects.Trade_Signal_BO
         {
@@ -113,8 +115,13 @@ public class MT5_Bridge_Mock_Tests
             Stop_Loss_Price = 1.1000m,
             Take_Profit_Price = 1.1150m
         };
-        var (success, ticket, message) = await execution.Send_Order_Async(signal, 0.10m);
-        await server_task;
+        var send_task = execution.Send_Order_Async(signal, 0.10m);
+        int port = bridge.Local_Port;
+        var ea_task = Mock_EA_Client.Handle_One_Exchange_Async(port,
+            "{\"status\":\"ok\",\"ticket\":12345,\"broker_message\":\"filled\",\"executed_price\":1.10501}");
+
+        var (success, ticket, message) = await send_task;
+        await ea_task;
 
         Assert.True(success);
         Assert.Equal(12345, ticket);
@@ -124,12 +131,8 @@ public class MT5_Bridge_Mock_Tests
     [Fact]
     public async Task Send_Order_Failure_Returns_Broker_Error_Message()
     {
-        using var server = new Mock_MT5_Server();
-        using var client = new MT5_Bridge_Client("127.0.0.1", server.Port);
-        var execution = new MT5_Execution_Service(client, demo_mode: false);
-
-        var server_task = server.Handle_One_Exchange_Async(
-            "{\"status\":\"error\",\"error\":\"Insufficient margin\"}");
+        using var bridge = new MT5_Bridge_Client("127.0.0.1", 0);
+        var execution = new MT5_Execution_Service(bridge, demo_mode: false);
 
         var signal = new Atlas_Domain.BusinessObjects.Trade_Signal_BO
         {
@@ -139,8 +142,13 @@ public class MT5_Bridge_Mock_Tests
             Stop_Loss_Price = 1.1000m,
             Take_Profit_Price = 1.1150m
         };
-        var (success, ticket, message) = await execution.Send_Order_Async(signal, 0.10m);
-        await server_task;
+        var send_task = execution.Send_Order_Async(signal, 0.10m);
+        int port = bridge.Local_Port;
+        var ea_task = Mock_EA_Client.Handle_One_Exchange_Async(port,
+            "{\"status\":\"error\",\"error\":\"Insufficient margin\"}");
+
+        var (success, ticket, message) = await send_task;
+        await ea_task;
 
         Assert.False(success);
         Assert.Equal(0, ticket);
@@ -150,19 +158,14 @@ public class MT5_Bridge_Mock_Tests
     [Fact]
     public async Task Bridge_Disconnect_Mid_Response_Returns_Null()
     {
-        using var server = new Mock_MT5_Server();
-        using var client = new MT5_Bridge_Client("127.0.0.1", server.Port);
+        using var bridge = new MT5_Bridge_Client("127.0.0.1", 0);
 
-        var server_task = Task.Run(async () =>
-        {
-            using var socket = await server.AcceptSocketRawAsync();
-            var buffer = new byte[4096];
-            await socket.ReceiveAsync(buffer, SocketFlags.None); // read the request
-            // then close without ever sending a response
-        });
+        var send_task = bridge.Send_Async<MT5_Response>(new MT5_Request { Command = MT5_Command.PING });
+        int port = bridge.Local_Port;
+        var ea_task = Mock_EA_Client.Connect_Read_Then_Drop_Async(port);
 
-        var response = await client.Send_Async<MT5_Response>(new MT5_Request { Command = MT5_Command.PING });
-        await server_task;
+        var response = await send_task;
+        await ea_task;
 
         Assert.Null(response);
     }
@@ -170,58 +173,61 @@ public class MT5_Bridge_Mock_Tests
     [Fact]
     public async Task Bridge_Auto_Reconnects_On_Next_Send_Async_After_A_Disconnect()
     {
-        using var server = new Mock_MT5_Server();
-        using var client = new MT5_Bridge_Client("127.0.0.1", server.Port);
+        using var bridge = new MT5_Bridge_Client("127.0.0.1", 0);
 
-        var first_server_task = server.Handle_One_Exchange_Async("{\"status\":\"ok\"}");
-        var first_response = await client.Send_Async<MT5_Response>(new MT5_Request { Command = MT5_Command.PING });
-        await first_server_task;
+        var first_send = bridge.Send_Async<MT5_Response>(new MT5_Request { Command = MT5_Command.PING });
+        int port = bridge.Local_Port;
+        var first_ea = Mock_EA_Client.Handle_One_Exchange_Async(port, "{\"status\":\"ok\"}");
+        var first_response = await first_send;
+        await first_ea;
+
         Assert.NotNull(first_response);
-        Assert.True(client.Is_Connected);
+        Assert.True(bridge.Is_Connected);
 
-        client.Disconnect();
-        Assert.False(client.Is_Connected);
+        bridge.Disconnect();
+        Assert.False(bridge.Is_Connected);
 
-        // Send_Async must transparently reconnect because Is_Connected is now false
-        var second_server_task = server.Handle_One_Exchange_Async("{\"status\":\"ok\"}");
-        var second_response = await client.Send_Async<MT5_Response>(new MT5_Request { Command = MT5_Command.PING });
-        await second_server_task;
+        // Send_Async must transparently accept a fresh EA connection because Is_Connected is now false
+        var second_send = bridge.Send_Async<MT5_Response>(new MT5_Request { Command = MT5_Command.PING });
+        var second_ea = Mock_EA_Client.Handle_One_Exchange_Async(port, "{\"status\":\"ok\"}");
+        var second_response = await second_send;
+        await second_ea;
 
         Assert.NotNull(second_response);
         Assert.True(second_response!.Is_Ok);
-        Assert.True(client.Is_Connected);
+        Assert.True(bridge.Is_Connected);
     }
 }
 
-/// <summary>Minimal loopback TCP stand-in for the ATLAS_Bridge MT5 EA.</summary>
-file sealed class Mock_MT5_Server : IDisposable
+/// <summary>Minimal loopback TCP stand-in for the ATLAS_Bridge MT5 EA — connects OUT to the bridge, as the real EA does.</summary>
+file static class Mock_EA_Client
 {
-    private readonly TcpListener _listener;
-    public int Port { get; }
-
-    public Mock_MT5_Server()
+    public static async Task<TcpClient> Connect_Async(int port)
     {
-        _listener = new TcpListener(IPAddress.Loopback, 0);
-        _listener.Start();
-        Port = ((IPEndPoint)_listener.LocalEndpoint).Port;
+        var client = new TcpClient();
+        await client.ConnectAsync("127.0.0.1", port);
+        return client;
     }
 
-    public async Task<Socket> AcceptSocketRawAsync() => await _listener.AcceptSocketAsync();
-
-    public async Task AcceptOnceAsync()
+    /// <summary>Connects, reads one request, writes the given canned response, then disconnects.</summary>
+    public static async Task Handle_One_Exchange_Async(int port, string response_json)
     {
-        using var socket = await _listener.AcceptSocketAsync();
-    }
-
-    /// <summary>Accepts one connection, reads one request, writes the given canned response.</summary>
-    public async Task Handle_One_Exchange_Async(string response_json)
-    {
-        using var socket = await _listener.AcceptSocketAsync();
+        using var client = new TcpClient();
+        await client.ConnectAsync("127.0.0.1", port);
+        var stream = client.GetStream();
         var buffer = new byte[8192];
-        await socket.ReceiveAsync(buffer, SocketFlags.None);
+        await stream.ReadAsync(buffer);
         var bytes = Encoding.UTF8.GetBytes(response_json + "\n");
-        await socket.SendAsync(bytes, SocketFlags.None);
+        await stream.WriteAsync(bytes);
     }
 
-    public void Dispose() => _listener.Stop();
+    /// <summary>Connects, reads one request, then disconnects without ever responding.</summary>
+    public static async Task Connect_Read_Then_Drop_Async(int port)
+    {
+        using var client = new TcpClient();
+        await client.ConnectAsync("127.0.0.1", port);
+        var stream = client.GetStream();
+        var buffer = new byte[4096];
+        await stream.ReadAsync(buffer);
+    }
 }

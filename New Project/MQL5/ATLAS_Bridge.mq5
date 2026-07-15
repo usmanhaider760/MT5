@@ -1,7 +1,10 @@
 //+------------------------------------------------------------------+
 //| ATLAS_Bridge.mq5                                                 |
-//| TCP socket server — bridges ATLAS C# app to MetaTrader 5        |
-//| Attach to any chart. Default port: 9090.                        |
+//| TCP socket client — bridges ATLAS C# app to MetaTrader 5        |
+//| MQL5 has no server-socket API (no bind/listen/accept) — only     |
+//| client sockets — so the C# app is the one that listens and this |
+//| EA dials out to it via SocketConnect, retrying on disconnect.    |
+//| Attach to any chart. Default target port: 9090.                 |
 //+------------------------------------------------------------------+
 #property copyright "ATLAS Trading System"
 #property version   "1.00"
@@ -9,61 +12,86 @@
 
 #include <Trade\Trade.mqh>
 
-input int    Server_Port     = 9090;
-input string Server_Host     = "127.0.0.1";
-input int    Max_Connections = 1;
+input int    Server_Port      = 9090;
+input string Server_Host      = "127.0.0.1";
+input int    Reconnect_Ms     = 2000;
 
 CTrade trade;
-int    server_socket = INVALID_HANDLE;
-int    client_socket = INVALID_HANDLE;
+int    client_socket   = INVALID_HANDLE;
+ulong  last_connect_try = 0;
 
 //+------------------------------------------------------------------+
 int OnInit()
 {
-    server_socket = SocketCreate();
-    if (server_socket == INVALID_HANDLE)
-    {
-        Print("ATLAS_Bridge: failed to create socket");
-        return INIT_FAILED;
-    }
-
-    if (!SocketBind(server_socket, Server_Host, Server_Port))
-    {
-        Print("ATLAS_Bridge: bind failed on port ", Server_Port);
-        SocketClose(server_socket);
-        return INIT_FAILED;
-    }
-
-    if (!SocketListen(server_socket, Max_Connections))
-    {
-        Print("ATLAS_Bridge: listen failed");
-        SocketClose(server_socket);
-        return INIT_FAILED;
-    }
-
-    Print("ATLAS_Bridge: listening on port ", Server_Port);
+    Print("ATLAS_Bridge: OnInit — target ", Server_Host, ":", Server_Port);
+    EventSetTimer(1); // heartbeat so we keep trying to (re)connect even if the symbol isn't ticking
+    Try_Connect();
     return INIT_SUCCEEDED;
 }
 
 //+------------------------------------------------------------------+
 void OnDeinit(const int reason)
 {
+    EventKillTimer();
     if (client_socket != INVALID_HANDLE) SocketClose(client_socket);
-    if (server_socket != INVALID_HANDLE) SocketClose(server_socket);
+}
+
+//+------------------------------------------------------------------+
+void OnTimer()
+{
+    Process();
 }
 
 //+------------------------------------------------------------------+
 void OnTick()
 {
-    // Accept new connection if none active
+    Process();
+}
+
+//+------------------------------------------------------------------+
+void Try_Connect()
+{
+    ulong now = GetTickCount64();
+    if (client_socket != INVALID_HANDLE) return;
+    if (now - last_connect_try < (ulong)Reconnect_Ms) return;
+    last_connect_try = now;
+
+    Print("ATLAS_Bridge: attempting connect to ", Server_Host, ":", Server_Port);
+
+    client_socket = SocketCreate();
     if (client_socket == INVALID_HANDLE)
     {
-        client_socket = SocketAccept(server_socket);
-        if (client_socket != INVALID_HANDLE)
-            Print("ATLAS_Bridge: client connected");
+        Print("ATLAS_Bridge: failed to create socket, error=", GetLastError());
+        return;
     }
 
-    if (client_socket == INVALID_HANDLE) return;
+    if (!SocketConnect(client_socket, Server_Host, Server_Port, 1000))
+    {
+        Print("ATLAS_Bridge: connect failed, error=", GetLastError());
+        SocketClose(client_socket);
+        client_socket = INVALID_HANDLE;
+        return; // ATLAS app not listening yet — Process() will retry on the next tick/timer
+    }
+
+    Print("ATLAS_Bridge: connected to ", Server_Host, ":", Server_Port);
+}
+
+//+------------------------------------------------------------------+
+void Process()
+{
+    if (client_socket == INVALID_HANDLE)
+    {
+        Try_Connect();
+        return;
+    }
+
+    if (!SocketIsConnected(client_socket))
+    {
+        Print("ATLAS_Bridge: disconnected from ATLAS app");
+        SocketClose(client_socket);
+        client_socket = INVALID_HANDLE;
+        return;
+    }
 
     // Read request (newline-terminated JSON)
     string request = "";
@@ -73,7 +101,7 @@ void OnTick()
     uchar buf[];
     if (SocketRead(client_socket, buf, bytes_available, 1000) <= 0)
     {
-        Print("ATLAS_Bridge: client disconnected");
+        Print("ATLAS_Bridge: read failed, disconnecting");
         SocketClose(client_socket);
         client_socket = INVALID_HANDLE;
         return;

@@ -1,3 +1,4 @@
+using System.Net;
 using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
@@ -6,20 +7,27 @@ using Atlas_Execution.Protocol;
 namespace Atlas_Execution.MT5;
 
 /// <summary>
-/// TCP client that communicates with the ATLAS_Bridge EA running in MetaTrader 5.
-/// The EA must be attached to any chart and listening on the configured port.
-/// Protocol: JSON request terminated by newline → JSON response terminated by newline.
+/// TCP server that the ATLAS_Bridge EA (running inside MetaTrader 5) connects out to.
+/// MQL5 has no server-socket API (no bind/listen/accept) — only client-side sockets — so
+/// this side must be the one that listens; the EA dials in via SocketConnect and the same
+/// JSON-request / JSON-response-over-newline protocol runs in whichever direction the byte
+/// stream goes once the connection is established.
 /// </summary>
 public class MT5_Bridge_Client : IDisposable
 {
     private readonly string _host;
     private readonly int    _port;
     private readonly int    _timeout_ms;
+    private TcpListener?    _listener;
+    private Task<TcpClient>? _pending_accept;
     private TcpClient?      _client;
     private NetworkStream?  _stream;
     private readonly SemaphoreSlim _lock = new(1, 1);
 
     public bool Is_Connected => _client?.Connected == true;
+
+    /// <summary>The actual bound listening port — useful when constructed with port 0 (OS-assigned ephemeral port), e.g. in tests.</summary>
+    public int Local_Port => (_listener?.LocalEndpoint as IPEndPoint)?.Port ?? _port;
 
     /// <summary>Fired (non-blocking) when a response's req_id doesn't match the request that was sent — a debuggability aid, never blocks the call.</summary>
     public event Action<string>? On_Log;
@@ -31,14 +39,33 @@ public class MT5_Bridge_Client : IDisposable
         _timeout_ms = timeout_ms;
     }
 
+    /// <summary>Ensures the listener is running and waits (up to timeout_ms) for the EA to connect in.</summary>
     public async Task<bool> Connect_Async()
     {
         try
         {
-            _client = new TcpClient();
+            if (_client?.Connected == true) return true;
+
+            if (_listener == null)
+            {
+                var addr = IPAddress.TryParse(_host, out var parsed) ? parsed : IPAddress.Loopback;
+                _listener = new TcpListener(addr, _port);
+                _listener.Start();
+            }
+
+            // Reuse a still-pending accept across calls instead of racing a fresh one each
+            // time — otherwise a timeout here would leave an orphaned accept that silently
+            // swallows the EA's next connection attempt.
+            _pending_accept ??= _listener.AcceptTcpClientAsync();
+
+            var completed = await Task.WhenAny(_pending_accept, Task.Delay(_timeout_ms));
+            if (completed != _pending_accept)
+                return false; // EA hasn't connected yet — keep waiting on future calls
+
+            _client = await _pending_accept;
+            _pending_accept = null;
             _client.ReceiveTimeout = _timeout_ms;
             _client.SendTimeout    = _timeout_ms;
-            await _client.ConnectAsync(_host, _port);
             _stream = _client.GetStream();
             return true;
         }
@@ -46,10 +73,12 @@ public class MT5_Bridge_Client : IDisposable
         {
             _client?.Dispose();
             _client = null;
+            _pending_accept = null;
             return false;
         }
     }
 
+    /// <summary>Drops the current EA connection. The listener stays up so a future Connect_Async can accept a reconnect.</summary>
     public void Disconnect()
     {
         _stream?.Dispose();
@@ -107,6 +136,7 @@ public class MT5_Bridge_Client : IDisposable
     public void Dispose()
     {
         Disconnect();
+        _listener?.Stop();
         _lock.Dispose();
     }
 }
